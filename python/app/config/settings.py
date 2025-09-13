@@ -40,7 +40,8 @@ WHATSAPP_CONFIG = {
 MESSAGE_PATTERNS = {
     'order_keywords': [
         'order', 'please send', 'i need', 'can i get', 'may i order',
-        'hi here is my order', 'good morning', 'hie pliz send'
+        'hi here is my order', 'good morning', 'hie pliz send',
+        'for maltos', 'cocktail tomatoes', 'good morning...may i please order'
     ],
     'stock_keywords': [
         'stock', 'available', 'do you have', 'in stock', 'availability'

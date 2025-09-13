@@ -14,35 +14,36 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 
 # Import from the new modular structure
-try:
-    from whatsapp_server import WhatsAppCrawler
-except ImportError:
-    # Fallback to modular imports for testing
-    class WhatsAppCrawler:
-        def classify_message(self, content, message_type):
-            """Mock classify_message method for testing."""
-            if not content or not content.strip():
-                return 'other'
-            
-            content_lower = content.lower()
-            
-            # Order detection
-            order_keywords = ['order', 'please send', 'i need', 'can i get', 'may i order', 
-                            'hi here is my order', 'good morning', 'hie pliz send']
-            if any(keyword in content_lower for keyword in order_keywords):
-                return 'order'
-            
-            # Media type passthrough
-            if message_type in ['image', 'voice', 'video', 'document', 'sticker']:
-                return message_type
-            
-            # Instruction detection  
-            instruction_keywords = ['note', 'instruction', 'please', 'remember', 'important',
-                                  'messages and calls are end-to-end encrypted']
-            if any(keyword in content_lower for keyword in instruction_keywords):
-                return 'instruction'
-            
+from app.config.settings import MESSAGE_PATTERNS
+
+class MessageClassifier:
+    """Message classifier using the modular configuration."""
+    
+    def classify_message(self, content, message_type):
+        """Classify message based on content and type."""
+        if not content or not content.strip():
             return 'other'
+        
+        content_lower = content.lower()
+        
+        # Media type passthrough
+        if message_type in ['image', 'voice', 'video', 'document', 'sticker']:
+            return message_type
+        
+        # Order detection
+        if any(keyword in content_lower for keyword in MESSAGE_PATTERNS['order_keywords']):
+            return 'order'
+        
+        # Stock detection
+        if any(keyword in content_lower for keyword in MESSAGE_PATTERNS['stock_keywords']):
+            return 'stock'
+        
+        # Instruction detection  
+        instruction_keywords = MESSAGE_PATTERNS['instruction_keywords'] + ['messages and calls are end-to-end encrypted']
+        if any(keyword in content_lower for keyword in instruction_keywords):
+            return 'instruction'
+        
+        return 'other'
 
 
 class TestMessageParser(unittest.TestCase):
@@ -50,7 +51,7 @@ class TestMessageParser(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.scraper = WhatsAppCrawler()
+        self.scraper = MessageClassifier()
         
         # Load test data
         fixtures_path = os.path.join(os.path.dirname(__file__), '..', 'fixtures', 'sample_messages.json')
@@ -165,7 +166,7 @@ class TestMessageValidation(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.scraper = WhatsAppCrawler()
+        self.scraper = MessageClassifier()
     
     def test_empty_message_handling(self):
         """Test handling of empty or None messages."""

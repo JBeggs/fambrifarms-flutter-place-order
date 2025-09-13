@@ -16,15 +16,12 @@ from datetime import datetime
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'python'))
 
 # Import from the new modular structure
-try:
-    from whatsapp_server import WhatsAppCrawler
-except ImportError:
-    # Use modular imports for testing
-    from app.core.webdriver_manager import WebDriverManager
-    
-    class WhatsAppCrawler:
-        def __init__(self):
-            self.webdriver_manager = WebDriverManager()
+from app.core.webdriver_manager import WebDriverManager
+
+class WhatsAppCrawler:
+    """Test wrapper for the modular WhatsApp system."""
+    def __init__(self):
+        self.webdriver_manager = WebDriverManager()
 
 
 class TestWhatsAppToDjangoIntegration(unittest.TestCase):
@@ -246,9 +243,12 @@ class TestSystemHealthChecks(unittest.TestCase):
         """Test that Chrome WebDriver can be initialized."""
         try:
             scraper = WhatsAppCrawler()
-            # This would test WebDriver initialization
-            # For now, just test that the class can be instantiated
-            self.assertIsNotNone(scraper)
+            # Test that the modular WebDriver manager can be instantiated
+            self.assertIsNotNone(scraper.webdriver_manager)
+            
+            # Test health check
+            health = scraper.webdriver_manager.health_check()
+            self.assertIsInstance(health, dict)
         except Exception as e:
             self.fail(f"Failed to initialize WhatsApp scraper: {e}")
 
