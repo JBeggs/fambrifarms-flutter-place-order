@@ -1,0 +1,44 @@
+name: place_order_final
+description: Modern WhatsApp Order Processing System
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # HTTP & API
+  dio: ^5.3.2
+  retrofit: ^4.0.3
+  
+  # State Management
+  flutter_riverpod: ^2.4.9
+  
+  # UI & Navigation
+  go_router: ^12.1.1
+  flutter_animate: ^4.2.0
+  
+  # Utilities
+  
+  # Local Storage
+  shared_preferences: ^2.2.2
+  
+  # Desktop Integration
+  window_manager: ^0.3.7
+  
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  
+  # Code Generation
+  build_runner: ^2.4.7
+  retrofit_generator: ^8.0.4
+  
+  # Linting
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
