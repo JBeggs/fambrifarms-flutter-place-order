@@ -147,6 +147,7 @@ DEV_CONFIG = {
 
 def get_chrome_options():
     """Get Chrome options based on configuration."""
+    from selenium.webdriver.chrome.options import Options
     options = Options()
     
     if CHROME_CONFIG['headless']:

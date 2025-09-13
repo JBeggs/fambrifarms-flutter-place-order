@@ -58,7 +58,7 @@ import sys
 import os
 sys.path.insert(0, '{project_root / 'python'}')
 
-from whatsapp_server import WhatsAppScraper
+from whatsapp_server import WhatsAppCrawler
 import json
 
 def test_real_html_media_detection():
