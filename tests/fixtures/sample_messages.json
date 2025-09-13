@@ -1,0 +1,139 @@
+{
+  "test_messages": [
+    {
+      "id": "order_mugg_bean",
+      "type": "order",
+      "sender": "Karl",
+      "timestamp": "2025-08-27T10:46:00.000000+00:00",
+      "company": "Mugg and Bean",
+      "content": "Hi Here is my order \n\nTomatoes x3 \nSweet melonx1 \nBananas 2kg \nOnions 10kg \nLemon x2 \nMixed lettuce x3box \nCherry tomatoes x15 200g \nCarrots 2kg \nSpring onion 1kg \nMushrooms x10 \nGrapesx1 \nRed cabage x2\nStrawberry x1\n\nThanks",
+      "is_forwarded": true,
+      "expected_items": [
+        {"name": "Tomatoes", "quantity": "3", "unit": "pieces"},
+        {"name": "Sweet melon", "quantity": "1", "unit": "pieces"},
+        {"name": "Bananas", "quantity": "2", "unit": "kg"},
+        {"name": "Onions", "quantity": "10", "unit": "kg"},
+        {"name": "Lemon", "quantity": "2", "unit": "pieces"},
+        {"name": "Mixed lettuce", "quantity": "3", "unit": "box"},
+        {"name": "Cherry tomatoes", "quantity": "15", "unit": "200g"},
+        {"name": "Carrots", "quantity": "2", "unit": "kg"},
+        {"name": "Spring onion", "quantity": "1", "unit": "kg"},
+        {"name": "Mushrooms", "quantity": "10", "unit": "pieces"},
+        {"name": "Grapes", "quantity": "1", "unit": "pieces"},
+        {"name": "Red cabbage", "quantity": "2", "unit": "pieces"},
+        {"name": "Strawberry", "quantity": "1", "unit": "pieces"}
+      ]
+    },
+    {
+      "id": "order_luma",
+      "type": "order",
+      "sender": "Karl",
+      "timestamp": "2025-08-27T20:25:00.000000+00:00",
+      "company": "Luma",
+      "content": "Hie pliz send for Luma\n6*packets mint\n6* punnets strawberries\n1*box lemons\n1* box lettuce\n6*punnets cherry tomatoes\n3*packets micro herbs\n3kg red pepper\n1* box pineapple",
+      "is_forwarded": true,
+      "expected_items": [
+        {"name": "mint", "quantity": "6", "unit": "packets"},
+        {"name": "strawberries", "quantity": "6", "unit": "punnets"},
+        {"name": "lemons", "quantity": "1", "unit": "box"},
+        {"name": "lettuce", "quantity": "1", "unit": "box"},
+        {"name": "cherry tomatoes", "quantity": "6", "unit": "punnets"},
+        {"name": "micro herbs", "quantity": "3", "unit": "packets"},
+        {"name": "red pepper", "quantity": "3", "unit": "kg"},
+        {"name": "pineapple", "quantity": "1", "unit": "box"}
+      ]
+    },
+    {
+      "id": "order_maltos",
+      "type": "order",
+      "sender": "Karl",
+      "timestamp": "2025-08-27T20:25:00.000000+00:00",
+      "company": "Maltos",
+      "content": "For Maltos\n1* box lettuce\n2*bags onions white\n4*punnets strawberry\n1* box pineapple\n1* bag oranges\n4* packets mint\n1* box lemons\n2* packets parsley\n2* packets rocket\n5kg carrots\n6* heads broccoli\n6* heads cauliflower\n4*box avos",
+      "is_forwarded": true,
+      "expected_items": [
+        {"name": "lettuce", "quantity": "1", "unit": "box"},
+        {"name": "onions white", "quantity": "2", "unit": "bags"},
+        {"name": "strawberry", "quantity": "4", "unit": "punnets"},
+        {"name": "pineapple", "quantity": "1", "unit": "box"},
+        {"name": "oranges", "quantity": "1", "unit": "bag"},
+        {"name": "mint", "quantity": "4", "unit": "packets"},
+        {"name": "lemons", "quantity": "1", "unit": "box"},
+        {"name": "parsley", "quantity": "2", "unit": "packets"},
+        {"name": "rocket", "quantity": "2", "unit": "packets"},
+        {"name": "carrots", "quantity": "5", "unit": "kg"},
+        {"name": "broccoli", "quantity": "6", "unit": "heads"},
+        {"name": "cauliflower", "quantity": "6", "unit": "heads"},
+        {"name": "avos", "quantity": "4", "unit": "box"}
+      ]
+    },
+    {
+      "id": "order_shebeen",
+      "type": "order",
+      "sender": "Karl",
+      "timestamp": "2025-08-27T20:26:00.000000+00:00",
+      "company": "Shebeen",
+      "content": "Cocktail tomatoes 3pkts \nCarrots x10kg \nLemon 1boxe \nRose marry x200g \nParsley x200g \nOnion x10kg",
+      "is_forwarded": true,
+      "expected_items": [
+        {"name": "Cocktail tomatoes", "quantity": "3", "unit": "pkts"},
+        {"name": "Carrots", "quantity": "10", "unit": "kg"},
+        {"name": "Lemon", "quantity": "1", "unit": "box"},
+        {"name": "Rose marry", "quantity": "200", "unit": "g"},
+        {"name": "Parsley", "quantity": "200", "unit": "g"},
+        {"name": "Onion", "quantity": "10", "unit": "kg"}
+      ]
+    },
+    {
+      "id": "order_debonair",
+      "type": "order",
+      "sender": "Karl",
+      "timestamp": "2025-08-27T20:26:00.000000+00:00",
+      "company": "Debonair",
+      "content": "Good morning...may I please order \n3×5kgTomato \n3×5kgMushroom \n10kgOnions \nThat's all tnx",
+      "is_forwarded": true,
+      "expected_items": [
+        {"name": "Tomato", "quantity": "3", "unit": "5kg"},
+        {"name": "Mushroom", "quantity": "3", "unit": "5kg"},
+        {"name": "Onions", "quantity": "10", "unit": "kg"}
+      ]
+    }
+  ],
+  "test_media_messages": [
+    {
+      "id": "image_message_1",
+      "type": "image",
+      "sender": "Karl",
+      "timestamp": "2025-08-27T11:22:00.000000+00:00",
+      "content": "[📷 Image]",
+      "media_url": "https://media-jnb2-1.cdn.whatsapp.net/v/t61.24694-24/250360393_494332945412950_3507013304149718733_n.jpg?stp=dst-jpg_s96x96_tt6&ccb=11-4&oh=01_Q5Aa2gE8lsPfps397LYC8nEV55pekhQrwSfUJrrEsLJlnRQ3Kg&oe=68D049B3&_nc_sid=5e03e0&_nc_cat=105",
+      "media_type": "image",
+      "media_info": "https://media-jnb2-1.cdn.whatsapp.net/v/t61.24694-24/250360393_494332945412950_3507013304149718733_n.jpg?stp=dst-jpg_s96x96_tt6&ccb=11-4&oh=01_Q5Aa2gE8lsPfps397LYC8nEV55pekhQrwSfUJrrEsLJlnRQ3Kg&oe=68D049B3&_nc_sid=5e03e0&_nc_cat=105"
+    },
+    {
+      "id": "voice_message_1",
+      "type": "voice",
+      "sender": "Karl",
+      "timestamp": "2025-08-27T11:22:00.000000+00:00",
+      "content": "[🎵 Voice Message]",
+      "media_type": "voice",
+      "media_info": "0:19"
+    }
+  ],
+  "test_noise_messages": [
+    {
+      "id": "encryption_notice",
+      "type": "other",
+      "sender": "System",
+      "content": "Messages and calls are end-to-end encrypted. Only people in this chat can read, listen to, or share them. Click to learn more",
+      "should_filter": true
+    },
+    {
+      "id": "group_info",
+      "type": "other", 
+      "sender": "System",
+      "content": "Added by Karl",
+      "should_filter": true
+    }
+  ]
+}
