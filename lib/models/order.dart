@@ -32,10 +32,20 @@ class Order {
   });
 
   factory Order.fromJson(Map<String, dynamic> json) {
+    // Handle Django API format where restaurant info is flattened
+    final restaurant = Customer(
+      id: json['restaurant'] as int,
+      email: json['restaurant_email'] as String? ?? '',
+      firstName: json['restaurant_name'] as String?,
+      lastName: null,
+      userType: 'restaurant',
+      isActive: true,
+    );
+
     return Order(
       id: json['id'] as int,
       orderNumber: json['order_number'] as String,
-      restaurant: Customer.fromJson(json['restaurant']),
+      restaurant: restaurant,
       orderDate: json['order_date'] as String,
       deliveryDate: json['delivery_date'] as String,
       status: json['status'] as String,
