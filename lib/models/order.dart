@@ -55,8 +55,8 @@ class Order {
       originalMessage: json['original_message'] as String?,
       whatsappMessageId: json['whatsapp_message_id'] as String?,
       parsedByAi: json['parsed_by_ai'] as bool?,
-      subtotal: (json['subtotal'] as num?)?.toDouble(),
-      totalAmount: (json['total_amount'] as num?)?.toDouble(),
+      subtotal: _parseDouble(json['subtotal']),
+      totalAmount: _parseDouble(json['total_amount']),
       createdAt: DateTime.parse(json['created_at']),
       updatedAt: DateTime.parse(json['updated_at']),
     );
@@ -145,7 +145,7 @@ class OrderItem {
     final product = Product(
       id: json['product'] as int,
       name: json['product_name'] as String? ?? '',
-      price: (json['price'] as num).toDouble(),
+      price: _parseDouble(json['price']) ?? 0.0,
       isActive: true,
       description: json['product_description'] as String?,
       department: json['product_department'] != null 
@@ -159,10 +159,10 @@ class OrderItem {
     return OrderItem(
       id: json['id'] as int,
       product: product,
-      quantity: (json['quantity'] as num).toDouble(),
+      quantity: _parseDouble(json['quantity']) ?? 0.0,
       unit: json['unit'] as String?,
-      price: (json['price'] as num).toDouble(),
-      totalPrice: (json['total_price'] as num).toDouble(),
+      price: _parseDouble(json['price']) ?? 0.0,
+      totalPrice: _parseDouble(json['total_price']) ?? 0.0,
       originalText: json['original_text'] as String?,
       confidenceScore: (json['confidence_score'] as num?)?.toDouble(),
       manuallyCorrected: json['manually_corrected'] as bool?,
@@ -308,4 +308,14 @@ class Customer {
     }
     return email.split('@').first;
   }
+}
+
+// Helper function to parse string or number to double
+double? _parseDouble(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  if (value is String) {
+    return double.tryParse(value);
+  }
+  return null;
 }
