@@ -141,9 +141,24 @@ class OrderItem {
   });
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
+    // Handle Django API format where product info is flattened
+    final product = Product(
+      id: json['product'] as int,
+      name: json['product_name'] as String? ?? '',
+      price: (json['price'] as num).toDouble(),
+      isActive: true,
+      description: json['product_description'] as String?,
+      department: json['product_department'] != null 
+          ? Department(
+              id: 0, // We don't have the department ID
+              name: json['product_department'] as String,
+            )
+          : null,
+    );
+
     return OrderItem(
       id: json['id'] as int,
-      product: Product.fromJson(json['product']),
+      product: product,
       quantity: (json['quantity'] as num).toDouble(),
       unit: json['unit'] as String?,
       price: (json['price'] as num).toDouble(),
