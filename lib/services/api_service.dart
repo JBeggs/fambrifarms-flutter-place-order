@@ -135,8 +135,23 @@ class ApiService {
   Future<List<Order>> getOrders() async {
     try {
       final response = await _djangoDio.get('/orders/');
-      final List<dynamic> ordersJson = response.data;
-      return ordersJson.map((json) => Order.fromJson(json)).toList();
+      
+      // Handle Django REST Framework pagination format
+      if (response.data is Map<String, dynamic>) {
+        final Map<String, dynamic> responseData = response.data;
+        if (responseData.containsKey('results')) {
+          final List<dynamic> ordersJson = responseData['results'];
+          return ordersJson.map((json) => Order.fromJson(json)).toList();
+        }
+      }
+      
+      // Handle direct array response
+      if (response.data is List<dynamic>) {
+        final List<dynamic> ordersJson = response.data;
+        return ordersJson.map((json) => Order.fromJson(json)).toList();
+      }
+      
+      throw ApiException('Unexpected response format from orders API');
     } catch (e) {
       throw ApiException('Failed to get orders: $e');
     }
