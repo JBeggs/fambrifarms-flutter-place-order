@@ -23,6 +23,10 @@ class DashboardPage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Alerts Section
+            _buildAlertsSection(context, messagesState),
+            
+            const SizedBox(height: 24),
             // Stats Cards
             Row(
               children: [
@@ -260,6 +264,110 @@ class DashboardPage extends ConsumerWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAlertsSection(BuildContext context, messagesState) {
+    List<Widget> alerts = [];
+    
+    // Check for WhatsApp connection issues
+    if (!messagesState.whatsappRunning) {
+      alerts.add(_buildAlert(
+        context,
+        'WhatsApp Disconnected',
+        'WhatsApp scraper is not running. Start it to receive new messages.',
+        Icons.warning,
+        Colors.orange,
+        () => context.go('/messages'),
+      ));
+    }
+    
+    // Check for unprocessed messages
+    final unprocessedCount = messagesState.messages.where((m) => !m.processed).length;
+    if (unprocessedCount > 0) {
+      alerts.add(_buildAlert(
+        context,
+        'Unprocessed Messages',
+        '$unprocessedCount messages need to be processed into orders.',
+        Icons.notification_important,
+        Colors.blue,
+        () => context.go('/messages'),
+      ));
+    }
+    
+    // Check for failed orders (processed messages with no orders)
+    final failedOrderCount = messagesState.messages.where((m) => 
+      m.processed && m.type.name == 'order' && (m.orderDetails == null)).length;
+    if (failedOrderCount > 0) {
+      alerts.add(_buildAlert(
+        context,
+        'Failed Order Creation',
+        '$failedOrderCount messages were processed but no orders were created. Check for product issues.',
+        Icons.error,
+        Colors.red,
+        () => context.go('/messages'),
+      ));
+    }
+    
+    if (alerts.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Alerts',
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 12),
+        ...alerts,
+      ],
+    );
+  }
+  
+  Widget _buildAlert(BuildContext context, String title, String message, 
+                    IconData icon, Color color, VoidCallback onTap) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Card(
+        color: color.withOpacity(0.1),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Icon(icon, color: color, size: 24),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: color,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        message,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.arrow_forward_ios, color: color, size: 16),
+              ],
+            ),
+          ),
         ),
       ),
     );

@@ -192,7 +192,7 @@ class _ActionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: 200,
-      height: 140,
+      height: 152, // Increased from 140 to 152 to fix 12-pixel overflow
       child: Card(
         child: InkWell(
           onTap: onTap,

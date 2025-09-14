@@ -48,6 +48,9 @@ class OrderCard extends StatelessWidget {
                   PopupMenuButton<String>(
                     onSelected: (value) {
                       switch (value) {
+                        case 'edit':
+                          _showEditOrderDialog(context);
+                          break;
                         case 'status':
                           _showStatusChangeDialog(context);
                           break;
@@ -58,10 +61,20 @@ class OrderCard extends StatelessWidget {
                     },
                     itemBuilder: (context) => [
                       const PopupMenuItem(
-                        value: 'status',
+                        value: 'edit',
                         child: Row(
                           children: [
                             Icon(Icons.edit),
+                            SizedBox(width: 8),
+                            Text('Edit Order'),
+                          ],  
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'status',
+                        child: Row(
+                          children: [
+                            Icon(Icons.swap_horiz),
                             SizedBox(width: 8),
                             Text('Change Status'),
                           ],
@@ -145,6 +158,24 @@ class OrderCard extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   
+                  // Product Issues Indicator
+                  if (_hasProductIssues()) ...[
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.warning,
+                      size: 16,
+                      color: Colors.orange,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Issues',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.orange,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                  
                   if (order.totalAmount != null) ...[
                     const Spacer(),
                     Text(
@@ -196,6 +227,203 @@ class OrderCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  void _showEditOrderDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit Order ${order.orderNumber}'),
+        content: SizedBox(
+          width: 500,
+          height: 400,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Restaurant Info
+              Text(
+                'Restaurant: ${order.restaurant.displayName}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 16),
+              
+              // Order Items
+              Text(
+                'Order Items:',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              
+              Expanded(
+                child: ListView.builder(
+                  itemCount: order.items.length,
+                  itemBuilder: (context, index) {
+                    final item = order.items[index];
+                    return Card(
+                      child: ListTile(
+                        title: Text(item.product.name),
+                        subtitle: Text('${item.quantity} ${item.unit}'),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('\$${item.totalPrice.toStringAsFixed(2)}'),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              icon: const Icon(Icons.edit, size: 16),
+                              onPressed: () {
+                                _showEditItemDialog(context, item);
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete, size: 16, color: Colors.red),
+                              onPressed: () {
+                                // TODO: Remove item
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              
+              // Add Item Button
+              ElevatedButton.icon(
+                onPressed: () {
+                  _showAddItemDialog(context);
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Add Item'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              // TODO: Save order changes
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Order updated successfully')),
+              );
+            },
+            child: const Text('Save Changes'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  void _showEditItemDialog(BuildContext context, OrderItem item) {
+    final quantityController = TextEditingController(text: item.quantity.toString());
+    final priceController = TextEditingController(text: item.price.toString());
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit ${item.product.name}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: quantityController,
+              decoration: const InputDecoration(
+                labelText: 'Quantity',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: priceController,
+              decoration: const InputDecoration(
+                labelText: 'Price per unit',
+                border: OutlineInputBorder(),
+                prefixText: '\$',
+              ),
+              keyboardType: TextInputType.number,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              // TODO: Update item
+              Navigator.of(context).pop();
+            },
+            child: const Text('Update'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  void _showAddItemDialog(BuildContext context) {
+    final productController = TextEditingController();
+    final quantityController = TextEditingController();
+    final priceController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add New Item'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: productController,
+              decoration: const InputDecoration(
+                labelText: 'Product Name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: quantityController,
+              decoration: const InputDecoration(
+                labelText: 'Quantity',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: priceController,
+              decoration: const InputDecoration(
+                labelText: 'Price per unit',
+                border: OutlineInputBorder(),
+                prefixText: '\$',
+              ),
+              keyboardType: TextInputType.number,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              // TODO: Add new item
+              Navigator.of(context).pop();
+            },
+            child: const Text('Add Item'),
+          ),
+        ],
       ),
     );
   }
@@ -260,5 +488,30 @@ class OrderCard extends StatelessWidget {
         ],
       ),
     );
+  }
+  
+  bool _hasProductIssues() {
+    return order.items.any((item) => _hasItemIssues(item));
+  }
+  
+  bool _hasItemIssues(OrderItem item) {
+    // Check for common product issues
+    return item.price <= 0 || // No price set
+           item.product.name.toLowerCase().contains('needs setup') || // Auto-created product
+           item.totalPrice <= 0; // Invalid total
+  }
+  
+  String _getProductIssuesSummary() {
+    final issueCount = order.items.where((item) => _hasItemIssues(item)).length;
+    final issues = <String>[];
+    
+    if (order.items.any((item) => item.price <= 0)) {
+      issues.add('missing prices');
+    }
+    if (order.items.any((item) => item.product.name.toLowerCase().contains('needs setup'))) {
+      issues.add('auto-created products');
+    }
+    
+    return '$issueCount ${issueCount == 1 ? 'item has' : 'items have'} ${issues.join(', ')}';
   }
 }

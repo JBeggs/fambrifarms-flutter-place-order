@@ -1,0 +1,34 @@
+{
+  "company_aliases": {
+    "mugg and bean": "Mugg and Bean",
+    "mugg bean": "Mugg and Bean", 
+    "mugg": "Mugg and Bean",
+    "venue": "Venue",
+    "debonairs": "Debonairs",
+    "t-junction": "T-junction",
+    "t junction": "T-junction",
+    "wimpy": "Wimpy",
+    "wimpy mooinooi": "Wimpy",
+    "shebeen": "Shebeen",
+    "casa bella": "Casa Bella",
+    "casabella": "Casa Bella",
+    "luma": "Luma",
+    "marco": "Marco",
+    "maltos": "Maltos"
+  },
+  "quantity_patterns": [
+    "\\d+\\s*x\\s*\\d*\\s*kg",
+    "\\d+\\s*kg",
+    "\\d+\\s*box",
+    "\\d+\\s*boxes",
+    "x\\d+",
+    "\\d+x",
+    "\\d+\\*",
+    "\\d+\\s*pcs",
+    "\\d+\\s*pieces",
+    "\\d+\\s*pkts",
+    "\\d+\\s*packets",
+    "\\d+\\s*heads",
+    "\\d+\\s*bunches"
+  ]
+}

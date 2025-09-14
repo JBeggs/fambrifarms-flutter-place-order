@@ -1,0 +1,278 @@
+from flask import Blueprint, jsonify, request
+from datetime import datetime
+import os
+import requests
+from app.core.whatsapp_crawler import WhatsAppCrawler
+from app.core.message_parser import MessageParser
+from selenium.webdriver.common.by import By
+
+whatsapp_bp = Blueprint('whatsapp', __name__)
+
+# Global instances
+crawler = WhatsAppCrawler()
+parser = MessageParser()
+
+@whatsapp_bp.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    payload = {
+        "status": "ok",
+        "crawler_running": crawler.is_running,
+        "driver_active": crawler.driver is not None,
+        "message_count": len(crawler.messages)
+    }
+    print(f"[PY][HEALTH] {payload}")
+    return jsonify(payload)
+
+@whatsapp_bp.route('/api/whatsapp/start', methods=['POST'])
+def start_whatsapp():
+    """Start WhatsApp crawler"""
+    if not crawler.driver:
+        crawler.initialize_driver()
+    
+    result = crawler.start_whatsapp()
+    crawler.is_running = True
+    print(f"[PY][START] result={result}")
+    return jsonify(result)
+
+@whatsapp_bp.route('/api/whatsapp/stop', methods=['POST'])
+def stop_whatsapp():
+    """Stop WhatsApp crawler"""
+    crawler.stop()
+    return jsonify({"status": "stopped"})
+
+@whatsapp_bp.route('/api/messages', methods=['GET'])
+def get_messages():
+    """Get all scraped messages with enhanced parsing"""
+    if not crawler.driver or not crawler.is_running:
+        return jsonify({"error": "Crawler not running"}), 400
+    
+    # Always scrape fresh messages when requested
+    messages = crawler.scrape_messages()
+    
+    # Enhance messages with parsing information
+    enhanced_messages = []
+    for message in messages:
+        # Extract company name if present
+        company = parser.to_canonical_company(message['content'])
+        if company:
+            message['company_name'] = company
+        
+        # Extract order items if it's an order message
+        if message['message_type'] == 'order':
+            items = parser.extract_order_items(message['content'])
+            instructions = parser.extract_instructions(message['content'])
+            message['parsed_items'] = items
+            message['instructions'] = '\n'.join(instructions) if instructions else ""
+        
+        enhanced_messages.append(message)
+    
+    print(f"[PY][API]/messages -> count={len(enhanced_messages)}")
+    return jsonify(enhanced_messages)
+
+@whatsapp_bp.route('/api/messages/refresh', methods=['POST'])
+def refresh_messages():
+    """Manually refresh messages with enhanced parsing"""
+    if not crawler.driver or not crawler.is_running:
+        return jsonify({"error": "Crawler not running"}), 400
+    
+    messages = crawler.scrape_messages()
+    
+    # Enhance messages with parsing information
+    enhanced_messages = []
+    for message in messages:
+        # Extract company name if present
+        company = parser.to_canonical_company(message['content'])
+        if company:
+            message['company_name'] = company
+        
+        # Extract order items if it's an order message
+        if message['message_type'] == 'order':
+            items = parser.extract_order_items(message['content'])
+            instructions = parser.extract_instructions(message['content'])
+            message['parsed_items'] = items
+            message['instructions'] = '\n'.join(instructions) if instructions else ""
+        
+        enhanced_messages.append(message)
+    
+    print(f"[PY][API]/messages/refresh -> count={len(enhanced_messages)}")
+    return jsonify({
+        "status": "success",
+        "message_count": len(enhanced_messages),
+        "messages": enhanced_messages
+    })
+
+
+@whatsapp_bp.route('/api/debug/analyze', methods=['GET'])
+def analyze_page():
+    """Analyze current WhatsApp DOM for selector diagnostics (read-only)."""
+    if not crawler.driver:
+        return jsonify({"error": "Driver not initialized"}), 400
+
+    analysis = {}
+    selectors = {
+        'sidebar_search_input_xpath': "//div[@id='side']//div[@role='textbox' and @aria-label='Search input textbox']",
+        'chat_title_xpath': f"//div[@id='pane-side']//span[@title='{os.environ.get('TARGET_GROUP_NAME', '')}']",
+        'header_title_xpath': f"//header//*[normalize-space()='{os.environ.get('TARGET_GROUP_NAME', '')}']",
+        'rows_in_main': '#main [role="row"]',
+        'copyable_text': '.copyable-text',
+        'secondary_text': 'div._akbu ._ao3e.selectable-text',
+        'fallback_text': 'span._ao3e.selectable-text, span.x1lliihq',
+        'voice_buttons': "button[aria-label='Play voice message'], [aria-label='Voice message']",
+        'open_picture_imgs': "[aria-label='Open picture'] img[src]"
+    }
+
+    # Count matches
+    for key, sel in selectors.items():
+        if sel.startswith('//'):
+            count = len(crawler.driver.find_elements(By.XPATH, sel))
+        else:
+            count = len(crawler.driver.find_elements(By.CSS_SELECTOR, sel))
+        analysis[key] = { 'count': count }
+
+    # Sample first few row previews
+    rows = crawler.driver.find_elements(By.CSS_SELECTOR, '#main [role="row"]')
+    previews = []
+    for i, row in enumerate(rows[:5]):
+        text_nodes = row.find_elements(By.CSS_SELECTOR, selectors['copyable_text']) or \
+                     row.find_elements(By.CSS_SELECTOR, selectors['secondary_text']) or \
+                     row.find_elements(By.CSS_SELECTOR, selectors['fallback_text'])
+        lines = []
+        for n in text_nodes:
+            t = (n.text or '').strip()
+            if t:
+                lines.append(t)
+        previews.append({'row': i, 'lines': len(lines), 'preview': '\n'.join(lines)[:120]})
+
+    return jsonify({
+        'status': 'ok',
+        'analysis': analysis,
+        'previews': previews
+    })
+
+
+@whatsapp_bp.route('/api/messages/edit', methods=['POST'])
+def edit_message():
+    """Edit a message content"""
+    data = request.get_json()
+    message_id = data.get('message_id')
+    edited_content = data.get('edited_content')
+    print(f"[PY][EDIT] id={message_id} len={len(edited_content or '')}")
+    # Find and update message
+    for message in crawler.messages:
+        if message['id'] == message_id:
+            message['original_content'] = message['content']
+            message['content'] = edited_content
+            message['edited'] = True
+            message['edited_at'] = datetime.now().isoformat()
+            message['type'] = crawler.classify_message(edited_content)
+            
+            return jsonify({
+                "status": "success",
+                "message": message
+            })
+    
+    return jsonify({"error": "Message not found"}), 404
+
+@whatsapp_bp.route('/api/messages/process', methods=['POST'])
+def process_messages():
+    """Process selected messages"""
+    data = request.get_json()
+    message_ids = data.get('message_ids', [])
+    
+    processed = []
+    stock_updates = []
+    orders = []
+    
+    for msg_id in message_ids:
+        message = next((m for m in crawler.messages if m['id'] == msg_id), None)
+        if not message:
+            continue
+        
+        if message['type'] == 'stock_update':
+            stock_updates.append({
+                "id": f"stock_{len(stock_updates)}",
+                "message": message,
+                "items": extract_stock_items(message['content']),
+                "processed_at": datetime.now().isoformat()
+            })
+        elif message['type'] == 'order':
+            orders.append({
+                "id": f"order_{len(orders)}",
+                "message": message,
+                "items": extract_order_items(message['content']),
+                "processed_at": datetime.now().isoformat()
+            })
+        
+        processed.append(message)
+    
+    return jsonify({
+        "status": "success",
+        "processed_count": len(processed),
+        "stock_updates": stock_updates,
+        "orders": orders
+    })
+
+@whatsapp_bp.route('/api/messages/parse-orders', methods=['POST'])
+def parse_messages_to_orders():
+    """Parse messages into orders with company assignments"""
+    try:
+        data = request.get_json()
+        messages = data.get('messages', [])
+        
+        if not messages:
+            # Use current scraped messages if none provided
+            messages = crawler.messages
+        
+        # Parse messages into orders
+        orders = parser.parse_messages_to_orders(messages)
+        
+        print(f"[PY][PARSE] Parsed {len(messages)} messages into {len(orders)} orders")
+        for order in orders:
+            print(f"[PY][ORDER] {order['company_name']}: {len(order['items_text'])} items")
+        
+        return jsonify({
+            "status": "success",
+            "message_count": len(messages),
+            "order_count": len(orders),
+            "orders": orders
+        })
+        
+    except Exception as e:
+        print(f"❌ Error parsing messages to orders: {e}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
+        return jsonify({"error": str(e)}), 500
+
+def extract_stock_items(content):
+    """Extract stock items from message content"""
+    lines = content.split('\n')
+    items = []
+    
+    for line in lines:
+        line = line.strip()
+        if any(char.isdigit() for char in line) and len(line) > 3:
+            items.append({
+                "raw_text": line,
+                "product": extract_product_name(line),
+                "quantity": extract_quantity(line)
+            })
+    
+    return items
+
+def extract_order_items(content):
+    """Extract order items from message content"""
+    return extract_stock_items(content)
+
+def extract_product_name(text):
+    """Extract product name from text"""
+    import re
+    cleaned = re.sub(r'\d+', '', text)
+    cleaned = re.sub(r'(kg|box|boxes|pcs|pieces)', '', cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+def extract_quantity(text):
+    """Extract quantity from text"""
+    import re
+    numbers = re.findall(r'\d+', text)
+    return numbers[0] if numbers else "1"
