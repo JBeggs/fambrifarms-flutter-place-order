@@ -50,6 +50,10 @@ Place Order Final automates the processing of WhatsApp messages from restaurant 
 - Modern desktop user interface
 - Message display and editing
 - Order management and processing
+- **Intelligent Pricing Dashboard** - AI-powered market volatility management
+- **Dynamic Pricing Management** - Customer segment-based pricing
+- **Market Intelligence** - Real-time price volatility tracking
+- **Business Intelligence** - Comprehensive weekly reports
 - Real-time communication with Python server and Django backend
 - Native desktop performance
 
@@ -57,6 +61,10 @@ Place Order Final automates the processing of WhatsApp messages from restaurant 
 - Landing page with quick actions
 - Message processing interface
 - Order management dashboard
+- **Dynamic Pricing Dashboard** - Complete intelligent pricing system UI
+- **Market Volatility Visualization** - Real-time price change monitoring
+- **Customer Price List Management** - Automated price list generation and distribution
+- **Pricing Rules Configuration** - Customer segment-based pricing strategies
 - Real-time status updates
 
 ### 3. Django Backend

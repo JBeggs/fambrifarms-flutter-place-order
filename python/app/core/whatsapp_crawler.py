@@ -140,6 +140,8 @@ class WhatsAppCrawler:
     
     def scrape_messages(self):
         """Scrape messages from WhatsApp"""
+        print("🚨🚨🚨 [SCRAPER] scrape_messages() CALLED - STARTING SCRAPE")
+        print(f"🚨 [SCRAPER] Current self.messages length: {len(self.messages)}")
         print("🔍 Starting message scraping...")
         
         # Try to ensure we're in the target group
@@ -172,13 +174,15 @@ class WhatsAppCrawler:
         if len(message_elements) == 0:
             raise Exception("No messages found in open chat")
 
-        messages = []
+        self.messages = []
+        messages = self.messages
         seen_ids = set()
         for i, msg_elem in enumerate(message_elements):
             # Deduplicate based on WhatsApp's stable data-id when present
             data_id_nodes = msg_elem.find_elements(By.CSS_SELECTOR, '[data-id]')
             row_id = data_id_nodes[0].get_attribute('data-id') if data_id_nodes else None
             if row_id and row_id in seen_ids:
+                print(f"🚨 [SKIP] Duplicate message at position {i}: ID={row_id}")
                 continue
             if row_id:
                 seen_ids.add(row_id)
@@ -197,30 +201,115 @@ class WhatsAppCrawler:
             sel_primary = '.copyable-text'
             sel_secondary = 'div._akbu ._ao3e.selectable-text'
             sel_fallback = 'span._ao3e.selectable-text, span.x1lliihq'
+            # Use ONLY the primary selector to avoid duplicates
             text_elems = msg_elem.find_elements(By.CSS_SELECTOR, sel_primary)
             source_selector = sel_primary if text_elems else ''
+            
+            # Only try other selectors if primary finds nothing
             if not text_elems:
                 text_elems = msg_elem.find_elements(By.CSS_SELECTOR, sel_secondary)
-                source_selector = sel_secondary if text_elems else source_selector
+                source_selector = sel_secondary if text_elems else ''
+                
             if not text_elems:
                 text_elems = msg_elem.find_elements(By.CSS_SELECTOR, sel_fallback)
-                source_selector = sel_fallback if text_elems else source_selector
+                source_selector = sel_fallback if text_elems else ''
             message_lines = []
             prev_line = None
+            message_was_expanded = False
             for elem in text_elems:
-                txt = (elem.text or '').strip()
+                # If we already expanded this message, stop processing more elements
+                if message_was_expanded:
+                    print(f"🚨 [SKIP] Already expanded - skipping remaining text elements")
+                    break
+                    
+                # Get raw text content, stripping HTML
+                txt = elem.get_attribute('textContent') or elem.text or ''
+                txt = txt.strip()
+                
                 if not txt:
                     continue
+                
+                # CRITICAL: Check for truncated text and expand it
+                if '…' in txt or '...' in txt:
+                    print(f"🔍 [TRUNCATE] Detected truncated text: '{txt[:50]}...'")
+                    print(f"🚨 [TRUNCATE] message_was_expanded={message_was_expanded}, current message_lines length={len(message_lines)}")
+                    if message_was_expanded:
+                        print(f"🚨 [TRUNCATE] SKIPPING expansion - already expanded this message")
+                        continue
+                    # Look for expand button in the message element
+                    try:
+                        # Try multiple selectors for expand buttons
+                        expand_buttons = msg_elem.find_elements(By.CSS_SELECTOR, 'div[role="button"]')
+                        if not expand_buttons:
+                            expand_buttons = msg_elem.find_elements(By.CSS_SELECTOR, '.read-more-button')
+                        
+                        # Filter to find the actual expand button (contains "Read more" or similar text)
+                        actual_expand_button = None
+                        for btn in expand_buttons:
+                            btn_text = btn.text.strip().lower()
+                            if 'read more' in btn_text or 'more' in btn_text or btn_text == '':
+                                actual_expand_button = btn
+                                break
+                        
+                        if actual_expand_button:
+                            print(f"🔍 [EXPAND] Found expand button with text: '{actual_expand_button.text.strip()}'")
+                            self.driver.execute_script("arguments[0].click();", actual_expand_button)
+                            time.sleep(2.0)  # Wait longer for expansion
+                            
+                            # Re-extract text using the most direct approach - get the full text content
+                            # After expansion, just get the text content directly from the copyable-text element
+                            copyable_text_elem = msg_elem.find_element(By.CSS_SELECTOR, '.copyable-text')
+                            if copyable_text_elem:
+                                expanded_text_elems = [copyable_text_elem]  # Single element with full content
+                            else:
+                                expanded_text_elems = []
+                            
+                            print(f"🚨 [EXPAND] Found {len(expanded_text_elems)} text elements after expansion")
+                            
+                            # Rebuild message_lines with expanded content
+                            if expanded_text_elems:
+                                # Get raw text content from expanded element
+                                expanded_elem = expanded_text_elems[0]
+                                full_text = expanded_elem.get_attribute('textContent') or expanded_elem.text or ''
+                                full_text = full_text.strip()
+                                
+                                # Split the full text into lines and clean them
+                                expanded_lines = []
+                                for line in full_text.split('\n'):
+                                    line = line.strip()
+                                    if line and not re.match(r'^([01]?\d|2[0-3]):[0-5]\d$', line):
+                                        expanded_lines.append(line)
+                            else:
+                                expanded_lines = []
+                            
+                            if expanded_lines:
+                                # Replace current message_lines with expanded content
+                                message_lines = expanded_lines
+                                message_was_expanded = True
+                                print(f"✅ [EXPAND] Successfully expanded to {len(expanded_lines)} lines, total chars: {sum(len(line) for line in expanded_lines)}")
+                                print(f"🚨 [EXPAND] BREAKING OUT OF LOOP - expansion complete")
+                                # Skip processing remaining elements since we've rebuilt the entire message
+                                break
+                            else:
+                                print(f"⚠️ [EXPAND] No expanded content found")
+                        else:
+                            print(f"❌ [EXPAND] No expand button found for truncated text (found {len(expand_buttons)} buttons but none were expand buttons)")
+                            raise Exception(f"TRUNCATED TEXT DETECTED BUT NO EXPAND BUTTON: {txt[:50]}")
+                    except Exception as e:
+                        print(f"❌ [EXPAND] EXPANSION FAILED: {e}")
+                        raise Exception(f"TRUNCATED MESSAGE EXPANSION FAILED: {e}")
                 # Skip standalone time badges (e.g., 12:46)
                 if re.match(r'^\d{1,2}:\d{2}$', txt):
                     continue
                 # Remove only consecutive duplicates within the same bubble
                 if prev_line is not None and txt == prev_line:
                     continue
-                message_lines.append(txt)
+                # Only add to message_lines if we haven't already expanded this message
+                if not message_was_expanded:
+                    message_lines.append(txt)
                 prev_line = txt
             message_text = '\n'.join(message_lines) if message_lines else ""
-            print(f"[DEBUG] Row {i}: text_lines={len(message_lines)} selector='{source_selector}' preview='{message_text[:60]}'")
+            print(f"[DEBUG] Row {i}: text_lines={len(message_lines)} selector='{source_selector}' expanded={message_was_expanded} preview='{message_text[:60]}'")
             
             # Independent, deterministic detection (no nested if/else chains)
             # 1) Voice: explicit button aria-labels
@@ -334,10 +423,26 @@ class WhatsAppCrawler:
                 "parsed_items": []   # Will be filled by parser
             }
 
-            messages.append(message)
-            print(f"📝 Found message from {sender}: type={classified_type}, media_type={media_type}, url={'set' if media_url else 'none'}, ts_source={ts_source}, text='{message_text[:50]}'")
+            # Check for duplicate content before adding (match on first 100 chars + type)
+            duplicate_found = False
+            for existing_msg in messages:
+                # Match on first 100 characters and message type to catch expanded vs non-expanded versions
+                existing_preview = existing_msg['content'][:100]
+                current_preview = message_text[:100]
+                if existing_preview == current_preview and existing_msg['message_type'] == classified_type:
+                    duplicate_found = True
+                    print(f"🚨 [DUPLICATE] Skipping duplicate message: '{message_text[:50]}...' (matches existing: '{existing_msg['content'][:50]}...')")
+                    break
+            
+            if not duplicate_found:
+                messages.append(message)
+                print(f"📝 Found message from {sender}: type={classified_type}, media_type={media_type}, url={'set' if media_url else 'none'}, ts_source={ts_source}, text='{message_text[:50]}'")
+            else:
+                print(f"⚠️ [SKIP] Duplicate message not added to final list")
 
         self.messages = messages
+        print(f"🚨 [SCRAPER] FINISHED - Setting self.messages to {len(messages)} messages")
+        print(f"🚨 [SCRAPER] self.messages now has {len(self.messages)} messages")
         print(f"[PY][SCRAPE] total_messages={len(messages)}")
         return messages
     

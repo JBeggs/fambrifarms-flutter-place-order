@@ -121,18 +121,16 @@ class DashboardPage extends ConsumerWidget {
                 Expanded(
                   child: Card(
                     child: InkWell(
-                      onTap: () {
-                        // TODO: Navigate to inventory
-                      },
+                      onTap: () => context.go('/pricing'),
                       borderRadius: BorderRadius.circular(12),
                       child: const Padding(
                         padding: EdgeInsets.all(20),
                         child: Column(
                           children: [
-                            Icon(Icons.inventory, size: 48, color: Colors.orange),
+                            Icon(Icons.trending_up, size: 48, color: Color(0xFF6366F1)),
                             SizedBox(height: 12),
                             Text(
-                              'Manage Inventory',
+                              'Dynamic Pricing',
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
@@ -140,7 +138,7 @@ class DashboardPage extends ConsumerWidget {
                             ),
                             SizedBox(height: 4),
                             Text(
-                              'Update stock levels and products',
+                              'AI-powered market volatility management',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 12,
@@ -241,7 +239,7 @@ class DashboardPage extends ConsumerWidget {
                             final message = messagesState.messages[index];
                             return ListTile(
                               leading: CircleAvatar(
-                                backgroundColor: _getTypeColor(message.type.name).withOpacity(0.2),
+                                backgroundColor: _getTypeColor(message.type.name).withValues(alpha: 0.2),
                                 child: Text(
                                   message.type.icon,
                                   style: const TextStyle(fontSize: 16),
@@ -335,7 +333,7 @@ class DashboardPage extends ConsumerWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       child: Card(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(8),

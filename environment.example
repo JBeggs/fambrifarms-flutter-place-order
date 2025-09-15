@@ -1,0 +1,89 @@
+# Flutter App Environment Configuration
+# 
+# IMPORTANT: Most configuration is now loaded from database via API
+# Only the Django base URL needs to be hardcoded in Flutter (to avoid circular dependency)
+# All other settings (WhatsApp URL, pricing defaults, customer segments, etc.) 
+# are managed through Django admin and loaded automatically
+
+# Backend API Configuration
+# DJANGO_BASE_URL is hardcoded in Flutter at: lib/services/api_service.dart
+# Change it there if needed, or use Django admin to change other settings
+DJANGO_BASE_URL=http://127.0.0.1:8000/api  # (Hardcoded in Flutter - for reference only)
+
+# All other settings are now database-driven:
+# - WHATSAPP_BASE_URL (managed in Django admin)
+# - Customer segments (managed in Django admin)  
+# - Pricing defaults (managed in Django admin)
+# - API timeouts and limits (managed in Django admin)
+
+# Database Configuration (if needed for direct connections)
+DATABASE_URL=postgresql://user:password@localhost:5432/fambrifarms_db
+
+# Authentication Configuration
+JWT_SECRET_KEY=your-jwt-secret-key-here
+API_KEY=your-api-key-here
+
+# Business Configuration (Future Implementation)
+# These will be used when business settings API is implemented
+DEFAULT_BASE_MARKUP=1.25
+DEFAULT_VOLATILITY_ADJUSTMENT=0.15
+DEFAULT_TREND_MULTIPLIER=1.10
+
+# Customer Segments (Future Implementation)
+# These will be loaded from API instead of hardcoded
+CUSTOMER_SEGMENTS=premium,standard,budget
+
+# WhatsApp Configuration
+TARGET_GROUP_NAME=ORDERS Restaurants
+WHATSAPP_TIMEOUT=60000
+
+# Development/Debug Settings
+DEBUG_MODE=true
+LOG_LEVEL=info
+
+# Production Settings (for deployment)
+PRODUCTION_DJANGO_URL=https://your-production-api.com/api
+PRODUCTION_WHATSAPP_URL=https://your-production-whatsapp.com/api
+
+# Security Settings
+ENABLE_SSL=false
+SSL_CERT_PATH=
+SSL_KEY_PATH=
+
+# Performance Settings
+API_TIMEOUT=30000
+MAX_RETRY_ATTEMPTS=3
+CACHE_DURATION=300000
+
+# Feature Flags
+ENABLE_OFFLINE_MODE=false
+ENABLE_DEBUG_LOGGING=true
+ENABLE_ANALYTICS=false
+
+# ============================================================================
+# HOW TO USE THESE ENVIRONMENT VARIABLES WITH FLUTTER
+# ============================================================================
+#
+# Method 1: Command Line (for development)
+# flutter run --dart-define=DJANGO_BASE_URL=http://localhost:8000/api --dart-define=WHATSAPP_BASE_URL=http://localhost:5001/api
+#
+# Method 2: VS Code launch.json (recommended for debugging)
+# Add to .vscode/launch.json:
+# {
+#   "name": "Flutter (Debug)",
+#   "type": "dart",
+#   "request": "launch",
+#   "program": "lib/main.dart",
+#   "toolArgs": [
+#     "--dart-define=DJANGO_BASE_URL=http://127.0.0.1:8000/api",
+#     "--dart-define=WHATSAPP_BASE_URL=http://127.0.0.1:5001/api"
+#   ]
+# }
+#
+# Method 3: Build-time configuration (for production)
+# flutter build macos --dart-define=DJANGO_BASE_URL=https://api.production.com/api
+#
+# ACCESSING IN DART CODE:
+# const String.fromEnvironment('DJANGO_BASE_URL', defaultValue: 'fallback_url')
+#
+# ============================================================================

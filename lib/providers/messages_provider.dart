@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/whatsapp_message.dart';
 import '../services/api_service.dart';
@@ -86,9 +87,9 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
       }
       
       final messages = await _apiService.getMessages();
-      // Sort by WhatsApp ISO timestamp (DateTime) descending
+      // Sort by WhatsApp ISO timestamp (DateTime) ascending (oldest first, latest at bottom)
       messages.sort((a, b) =>
-          DateTime.parse(b.timestamp).compareTo(DateTime.parse(a.timestamp)));
+          DateTime.parse(a.timestamp).compareTo(DateTime.parse(b.timestamp)));
       state = state.copyWith(
         messages: messages,
         isLoading: false,
@@ -106,10 +107,10 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
     if (!state.whatsappRunning) return;
     
     try {
-      final result = await _apiService.refreshMessages();
+      await _apiService.refreshMessages();
       final messages = await _apiService.getMessages();
       messages.sort((a, b) =>
-          DateTime.parse(b.timestamp).compareTo(DateTime.parse(a.timestamp)));
+          DateTime.parse(a.timestamp).compareTo(DateTime.parse(b.timestamp)));
       state = state.copyWith(messages: messages);
     } catch (e) {
       state = state.copyWith(error: e.toString());
@@ -139,7 +140,7 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
   }
 
   // Edit message
-  Future<void> editMessage(String databaseId, String editedContent) async {
+  Future<void> editMessage(String databaseId, String editedContent, {bool? processed}) async {
     try {
       // Find the message to get the WhatsApp messageId
       final message = state.messages.firstWhere((msg) => msg.id == databaseId);
@@ -149,7 +150,7 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
         throw Exception('Message does not have a WhatsApp message ID');
       }
       
-      final updatedMessage = await _apiService.editMessage(whatsappMessageId, editedContent);
+      final updatedMessage = await _apiService.editMessage(whatsappMessageId, editedContent, processed: processed);
       
       final updatedMessages = state.messages.map((message) {
         return message.id == databaseId ? updatedMessage : message;
@@ -266,9 +267,9 @@ class MessagesNotifier extends StateNotifier<MessagesState> {
       );
       
       // Show success message or handle result
-      print('Processed: ${result['processed_count']} messages');
-      print('Orders: ${result['orders']?.length ?? 0}');
-      print('Stock updates: ${result['stock_updates']?.length ?? 0}');
+      debugPrint('Processed: ${result['processed_count']} messages');
+      debugPrint('Orders: ${result['orders']?.length ?? 0}');
+      debugPrint('Stock updates: ${result['stock_updates']?.length ?? 0}');
       
     } catch (e) {
       state = state.copyWith(

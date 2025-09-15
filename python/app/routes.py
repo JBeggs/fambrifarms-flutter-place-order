@@ -11,6 +11,9 @@ whatsapp_bp = Blueprint('whatsapp', __name__)
 # Global instances
 crawler = WhatsAppCrawler()
 parser = MessageParser()
+print(f"🚨 [INIT] Created crawler instance: {id(crawler)}")
+print(f"🚨 [INIT] Crawler messages attr exists: {hasattr(crawler, 'messages')}")
+print(f"🚨 [INIT] Crawler messages length: {len(crawler.messages)}")
 
 @whatsapp_bp.route('/api/health', methods=['GET'])
 def health_check():
@@ -44,11 +47,26 @@ def stop_whatsapp():
 @whatsapp_bp.route('/api/messages', methods=['GET'])
 def get_messages():
     """Get all scraped messages with enhanced parsing"""
+    import time
+    timestamp = time.time()
+    print(f"🚨🚨🚨 [API] /api/messages called at {timestamp} - checking cache")
+    print(f"🚨 [API] crawler instance ID: {id(crawler)}")
+    print(f"🚨 [API] crawler.messages exists: {hasattr(crawler, 'messages')}")
+    print(f"🚨 [API] crawler.messages length: {len(crawler.messages) if hasattr(crawler, 'messages') else 'NO ATTR'}")
+    print(f"🚨 [API] crawler.messages empty check: {not crawler.messages if hasattr(crawler, 'messages') else 'NO ATTR'}")
+    print(f"🚨 [API] crawler.messages is list: {isinstance(crawler.messages, list) if hasattr(crawler, 'messages') else 'NO ATTR'}")
+    
     if not crawler.driver or not crawler.is_running:
         return jsonify({"error": "Crawler not running"}), 400
     
-    # Always scrape fresh messages when requested
-    messages = crawler.scrape_messages()
+    # Use cached messages if available, only scrape if empty
+    if not crawler.messages:
+        print(f"🚨 [API] CACHE MISS - calling scrape_messages()")
+        messages = crawler.scrape_messages()
+        print(f"🚨 [API] scrape_messages() returned {len(messages)} messages")
+    else:
+        print(f"🚨 [API] CACHE HIT - using cached {len(crawler.messages)} messages")
+        messages = crawler.messages
     
     # Enhance messages with parsing information
     enhanced_messages = []
@@ -73,10 +91,14 @@ def get_messages():
 @whatsapp_bp.route('/api/messages/refresh', methods=['POST'])
 def refresh_messages():
     """Manually refresh messages with enhanced parsing"""
+    print(f"🚨 [API] /api/messages/refresh called - FORCE REFRESH")
+    
     if not crawler.driver or not crawler.is_running:
         return jsonify({"error": "Crawler not running"}), 400
     
+    print(f"🚨 [API] REFRESH - calling scrape_messages()")
     messages = crawler.scrape_messages()
+    print(f"🚨 [API] REFRESH - scrape_messages() returned {len(messages)} messages")
     
     # Enhance messages with parsing information
     enhanced_messages = []

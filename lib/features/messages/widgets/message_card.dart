@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../models/whatsapp_message.dart';
 import 'customer_dropdown.dart';
@@ -66,8 +66,10 @@ class _MessageCardState extends State<MessageCard> {
       child: Card(
         elevation: widget.isSelected ? 4 : 1,
         color: widget.isSelected 
-            ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
-            : null,
+            ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3)
+            : widget.message.processed
+                ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
+                : null,
         child: InkWell(
           onTap: widget.onToggleSelection,
           borderRadius: BorderRadius.circular(12),
@@ -91,10 +93,10 @@ class _MessageCardState extends State<MessageCard> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: _getTypeColor(widget.message.type).withOpacity(0.2),
+                        color: _getTypeColor(widget.message.type).withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: _getTypeColor(widget.message.type).withOpacity(0.5),
+                          color: _getTypeColor(widget.message.type).withValues(alpha: 0.5),
                         ),
                       ),
                       child: Row(
@@ -119,12 +121,41 @@ class _MessageCardState extends State<MessageCard> {
                     
                     const Spacer(),
                     
+                    // Processed Indicator
+                    if (widget.message.processed)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.check_circle,
+                              size: 12,
+                              color: Colors.green.shade700,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'PROCESSED',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    
                     // Edited Indicator
                     if (widget.message.edited)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.secondary.withOpacity(0.2),
+                          color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
@@ -137,7 +168,9 @@ class _MessageCardState extends State<MessageCard> {
                         ),
                       ),
                     
-                    const SizedBox(width: 8),
+                    // Add spacing between indicators
+                    if (widget.message.processed || widget.message.edited)
+                      const SizedBox(width: 8),
                     
                     // Edit Button
                     IconButton(
@@ -202,7 +235,7 @@ class _MessageCardState extends State<MessageCard> {
                     color: Theme.of(context).colorScheme.surface,
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                      color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
                     ),
                   ),
                   child: Column(
@@ -322,7 +355,7 @@ class _MessageCardState extends State<MessageCard> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: Colors.blue.withOpacity(0.1),
+                      color: Colors.blue.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Row(
@@ -360,7 +393,7 @@ class _MessageCardState extends State<MessageCard> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.1),
+                      color: Colors.green.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Row(
@@ -389,10 +422,10 @@ class _MessageCardState extends State<MessageCard> {
                     Container(
                       padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.1),
+                        color: Colors.orange.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                          color: Colors.orange.withOpacity(0.3),
+                          color: Colors.orange.withValues(alpha: 0.3),
                           width: 1,
                         ),
                       ),
@@ -484,63 +517,13 @@ class _MessageCardState extends State<MessageCard> {
     }
   }
 
-  Color _getMediaTypeColor(String mediaType) {
-    switch (mediaType.toLowerCase()) {
-      case 'image':
-        return Colors.pink;
-      case 'voice':
-        return Colors.deepPurple;
-      case 'video':
-        return Colors.red;
-      case 'document':
-        return Colors.indigo;
-      case 'sticker':
-        return Colors.amber;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  IconData _getMediaTypeIcon(String mediaType) {
-    switch (mediaType.toLowerCase()) {
-      case 'image':
-        return Icons.image;
-      case 'voice':
-        return Icons.mic;
-      case 'video':
-        return Icons.videocam;
-      case 'document':
-        return Icons.description;
-      case 'sticker':
-        return Icons.emoji_emotions;
-      default:
-        return Icons.attachment;
-    }
-  }
-
-  String _getMediaTypeLabel(String mediaType) {
-    switch (mediaType.toLowerCase()) {
-      case 'image':
-        return 'Image';
-      case 'voice':
-        return 'Voice Message';
-      case 'video':
-        return 'Video';
-      case 'document':
-        return 'Document';
-      case 'sticker':
-        return 'Sticker';
-      default:
-        return 'Media';
-    }
-  }
 
   Widget _buildMediaWidget(BuildContext context, WhatsAppMessage message) {
     final mediaType = widget.message.messageType?.toLowerCase() ?? 'other';
     
     // Debug media details (non-throwing)
     // Using mediaUrl for images; mediaInfo is auxiliary text
-    print('🖼️ MEDIA DEBUG type=${widget.message.messageType} url=${widget.message.mediaUrl} info=${widget.message.mediaInfo}');
+    debugPrint('🖼️ MEDIA DEBUG type=${widget.message.messageType} url=${widget.message.mediaUrl} info=${widget.message.mediaInfo}');
     
     switch (mediaType) {
       case 'image':
@@ -578,7 +561,7 @@ class _MessageCardState extends State<MessageCard> {
             Container(
               width: double.infinity,
               height: 200,
-              color: Colors.pink.withOpacity(0.1),
+              color: Colors.pink.withValues(alpha: 0.1),
               child: _buildActualImage(message),
             ),
             // Media info
@@ -645,9 +628,9 @@ class _MessageCardState extends State<MessageCard> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.deepPurple.withOpacity(0.1),
+        color: Colors.deepPurple.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.deepPurple.withOpacity(0.3)),
+        border: Border.all(color: Colors.deepPurple.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
@@ -727,7 +710,7 @@ class _MessageCardState extends State<MessageCard> {
                         height: (index % 3 + 1) * 6.0,
                         margin: const EdgeInsets.symmetric(horizontal: 1),
                         decoration: BoxDecoration(
-                          color: Colors.deepPurple.withOpacity(0.5),
+                          color: Colors.deepPurple.withValues(alpha: 0.5),
                           borderRadius: BorderRadius.circular(1),
                         ),
                       ),
@@ -758,8 +741,8 @@ class _MessageCardState extends State<MessageCard> {
       ),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        color: Colors.red.withOpacity(0.1),
-        border: Border.all(color: Colors.red.withOpacity(0.3)),
+        color: Colors.red.withValues(alpha: 0.1),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
       ),
       child: Column(
         children: [
@@ -777,14 +760,14 @@ class _MessageCardState extends State<MessageCard> {
                 Icon(
                   Icons.videocam,
                   size: 48,
-                  color: Colors.white.withOpacity(0.7),
+                  color: Colors.white.withValues(alpha: 0.7),
                 ),
                 // Play button overlay
                 Container(
                   width: 64,
                   height: 64,
                   decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.8),
+                    color: Colors.red.withValues(alpha: 0.8),
                     shape: BoxShape.circle,
                   ),
                   child: IconButton(
@@ -841,9 +824,9 @@ class _MessageCardState extends State<MessageCard> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.indigo.withOpacity(0.1),
+        color: Colors.indigo.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.indigo.withOpacity(0.3)),
+        border: Border.all(color: Colors.indigo.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
@@ -909,8 +892,8 @@ class _MessageCardState extends State<MessageCard> {
       height: 150,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        color: Colors.amber.withOpacity(0.1),
-        border: Border.all(color: Colors.amber.withOpacity(0.3)),
+        color: Colors.amber.withValues(alpha: 0.1),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -948,9 +931,9 @@ class _MessageCardState extends State<MessageCard> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey.withOpacity(0.1),
+        color: Colors.grey.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.withOpacity(0.3)),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
@@ -993,7 +976,7 @@ class _MessageCardState extends State<MessageCard> {
     // Prefer mediaUrl (direct URL). Fallback to mediaInfo if it looks like a URL/base64
     final candidate = widget.message.mediaUrl ?? widget.message.mediaInfo;
     final imageUrl = candidate ?? '';
-    final hasValidUrl = imageUrl != null && imageUrl.length > 10;
+    final hasValidUrl = imageUrl.length > 10;
     
     if (hasValidUrl) {
       // Handle different image URL types

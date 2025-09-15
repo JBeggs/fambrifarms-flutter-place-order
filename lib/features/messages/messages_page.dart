@@ -15,6 +15,7 @@ class MessagesPage extends ConsumerStatefulWidget {
 
 class _MessagesPageState extends ConsumerState<MessagesPage> {
   WhatsAppMessage? selectedMessageForEditing;
+  bool showProcessedMessages = true;
 
   @override
   void initState() {
@@ -132,12 +133,16 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                     color: Theme.of(context).colorScheme.surface,
                     border: Border(
                       bottom: BorderSide(
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                        color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
                       ),
                     ),
                   ),
-                  child: Row(
-                    children: [
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: IntrinsicWidth(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
                       // WhatsApp Controls
                       ElevatedButton.icon(
                         onPressed: messagesState.isLoading
@@ -158,14 +163,57 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                         tooltip: 'Refresh Messages',
                       ),
                       
+                      const SizedBox(width: 12),
+                      
+                      // Processed Messages Filter
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.filter_list,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.outline,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Show Processed',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(width: 4),
+                          Switch(
+                            value: showProcessedMessages,
+                            onChanged: (value) {
+                              setState(() {
+                                showProcessedMessages = value;
+                              });
+                            },
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ],
+                      ),
+                      
                       const Spacer(),
                       
-                      // Selection Info
-                      if (messagesState.selectedMessageIds.isNotEmpty)
-                        Text(
-                          '${messagesState.selectedMessageIds.length} selected',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+                      // Selection Info and Message Count
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (messagesState.selectedMessageIds.isNotEmpty)
+                            Text(
+                              '${messagesState.selectedMessageIds.length} selected',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          Text(
+                            showProcessedMessages 
+                                ? '${messagesState.messages.length} total messages'
+                                : '${messagesState.messages.where((m) => !m.processed).length} unprocessed messages',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.outline,
+                            ),
+                          ),
+                        ],
+                      ),
                       
                       const SizedBox(width: 12),
                       
@@ -225,7 +273,9 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                           backgroundColor: Colors.red.shade50,
                         ),
                       ),
-                    ],
+                      ],
+                      ),
+                    ),
                   ),
                 ),
                 
@@ -262,21 +312,60 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                                 ],
                               ),
                             )
-                          : ListView.builder(
-                              padding: const EdgeInsets.all(16),
-                              itemCount: messagesState.messages.length,
-                              itemBuilder: (context, index) {
-                                final message = messagesState.messages[index];
-                                return MessageCard(
-                                  message: message,
-                                  isSelected: messagesState.selectedMessageIds.contains(message.id),
-                                  onToggleSelection: () => messagesNotifier.toggleMessageSelection(message.id),
-                                  onEdit: () => setState(() {
-                                    selectedMessageForEditing = message;
-                                  }),
-                                  onDelete: () => messagesNotifier.deleteMessage(message.id),
-                                  onCompanyChanged: (messageId, companyName) {
-                                    messagesNotifier.updateMessageCompany(messageId, companyName);
+                          : Builder(
+                              builder: (context) {
+                                // Filter messages based on processed status
+                                final filteredMessages = showProcessedMessages 
+                                    ? messagesState.messages 
+                                    : messagesState.messages.where((m) => !m.processed).toList();
+                                
+                                if (filteredMessages.isEmpty && !showProcessedMessages) {
+                                  return Center(
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.check_circle_outline,
+                                          size: 64,
+                                          color: Theme.of(context).colorScheme.outline,
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'No unprocessed messages',
+                                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                            color: Theme.of(context).colorScheme.outline,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'All messages have been processed into orders.\nToggle "Show Processed" to see all messages.',
+                                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                            color: Theme.of(context).colorScheme.outline,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }
+                                
+                                return ListView.builder(
+                                  padding: const EdgeInsets.all(16),
+                                  itemCount: filteredMessages.length,
+                                  itemBuilder: (context, index) {
+                                    final message = filteredMessages[index];
+                                    return MessageCard(
+                                      message: message,
+                                      isSelected: messagesState.selectedMessageIds.contains(message.id),
+                                      onToggleSelection: () => messagesNotifier.toggleMessageSelection(message.id),
+                                      onEdit: () => setState(() {
+                                        selectedMessageForEditing = message;
+                                      }),
+                                      onDelete: () => messagesNotifier.deleteMessage(message.id),
+                                      onCompanyChanged: (messageId, companyName) {
+                                        messagesNotifier.updateMessageCompany(messageId, companyName);
+                                      },
+                                    );
                                   },
                                 );
                               },
@@ -289,7 +378,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
           // Vertical Divider
           VerticalDivider(
             width: 1,
-            color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
           ),
           
           // Message Editor (Right Panel)
@@ -298,10 +387,11 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
             child: selectedMessageForEditing != null
                 ? MessageEditor(
                     message: selectedMessageForEditing!,
-                    onSave: (editedContent) async {
+                    onSave: (editedContent, processed) async {
                       await messagesNotifier.editMessage(
                         selectedMessageForEditing!.id,
                         editedContent,
+                        processed: processed,
                       );
                       setState(() {
                         selectedMessageForEditing = null;

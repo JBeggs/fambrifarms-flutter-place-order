@@ -13,8 +13,8 @@ class LandingPage extends StatelessWidget {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Theme.of(context).colorScheme.primary.withOpacity(0.1),
-              Theme.of(context).colorScheme.secondary.withOpacity(0.1),
+              Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+              Theme.of(context).colorScheme.secondary.withValues(alpha: 0.1),
             ],
           ),
         ),
@@ -73,7 +73,7 @@ class LandingPage extends StatelessWidget {
                         Text(
                           'Process WhatsApp messages, manage orders, and update inventory\nwith our modern, intelligent system.',
                           style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
                           ),
                           textAlign: TextAlign.center,
                         ),
@@ -141,7 +141,7 @@ class LandingPage extends StatelessWidget {
                     color: Theme.of(context).colorScheme.surface,
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                      color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
                     ),
                   ),
                   child: Row(
@@ -160,7 +160,7 @@ class LandingPage extends StatelessWidget {
                       Text(
                         'Python Server: Stopped • Messages: 0',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                          color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                         ),
                       ),
                     ],
@@ -218,7 +218,7 @@ class _ActionCard extends StatelessWidget {
                 Text(
                   description,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
                   ),
                 ),
               ],

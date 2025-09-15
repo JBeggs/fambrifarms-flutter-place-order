@@ -3,7 +3,7 @@ import '../../../models/whatsapp_message.dart';
 
 class MessageEditor extends StatefulWidget {
   final WhatsAppMessage message;
-  final Function(String) onSave;
+  final Function(String, bool?) onSave;
   final VoidCallback onCancel;
 
   const MessageEditor({
@@ -20,12 +20,14 @@ class MessageEditor extends StatefulWidget {
 class _MessageEditorState extends State<MessageEditor> {
   late TextEditingController _controller;
   bool _hasChanges = false;
+  late bool _processed;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.message.content);
     _controller.addListener(_onTextChanged);
+    _processed = widget.message.processed;
   }
 
   @override
@@ -36,7 +38,14 @@ class _MessageEditorState extends State<MessageEditor> {
 
   void _onTextChanged() {
     setState(() {
-      _hasChanges = _controller.text != widget.message.content;
+      _hasChanges = _controller.text != widget.message.content || _processed != widget.message.processed;
+    });
+  }
+  
+  void _onProcessedChanged(bool value) {
+    setState(() {
+      _processed = value;
+      _hasChanges = _controller.text != widget.message.content || _processed != widget.message.processed;
     });
   }
 
@@ -144,7 +153,7 @@ class _MessageEditorState extends State<MessageEditor> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(
@@ -162,7 +171,7 @@ class _MessageEditorState extends State<MessageEditor> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: _getTypeColor(widget.message.type).withOpacity(0.2),
+                        color: _getTypeColor(widget.message.type).withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text(
@@ -182,6 +191,54 @@ class _MessageEditorState extends State<MessageEditor> {
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.outline,
                   ),
+                ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // Processed Status Toggle
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: _processed 
+                    ? Colors.green.withValues(alpha: 0.3)
+                    : Colors.orange.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _processed ? Icons.check_circle : Icons.pending,
+                  color: _processed ? Colors.green : Colors.orange,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Message Status:',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _processed ? 'Processed (orders created)' : 'Unprocessed (ready for processing)',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: _processed ? Colors.green : Colors.orange,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Switch(
+                  value: _processed,
+                  onChanged: _onProcessedChanged,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
               ],
             ),
@@ -288,7 +345,7 @@ class _MessageEditorState extends State<MessageEditor> {
               // Save Button
               ElevatedButton(
                 onPressed: _hasChanges
-                    ? () => widget.onSave(_controller.text)
+                    ? () => widget.onSave(_controller.text, _processed != widget.message.processed ? _processed : null)
                     : null,
                 child: const Text('Save Changes'),
               ),

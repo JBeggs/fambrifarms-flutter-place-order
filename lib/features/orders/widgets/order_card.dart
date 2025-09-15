@@ -501,17 +501,4 @@ class OrderCard extends StatelessWidget {
            item.totalPrice <= 0; // Invalid total
   }
   
-  String _getProductIssuesSummary() {
-    final issueCount = order.items.where((item) => _hasItemIssues(item)).length;
-    final issues = <String>[];
-    
-    if (order.items.any((item) => item.price <= 0)) {
-      issues.add('missing prices');
-    }
-    if (order.items.any((item) => item.product.name.toLowerCase().contains('needs setup'))) {
-      issues.add('auto-created products');
-    }
-    
-    return '$issueCount ${issueCount == 1 ? 'item has' : 'items have'} ${issues.join(', ')}';
-  }
 }
