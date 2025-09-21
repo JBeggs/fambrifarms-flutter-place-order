@@ -1,3 +1,5 @@
+import 'customer.dart';
+
 class Order {
   final int id;
   final String orderNumber;
@@ -36,10 +38,14 @@ class Order {
     final restaurant = Customer(
       id: json['restaurant'] as int,
       email: json['restaurant_email'] as String? ?? '',
-      firstName: json['restaurant_name'] as String?,
-      lastName: null,
-      userType: 'restaurant',
+      name: json['restaurant_name'] as String? ?? '',
+      phone: json['restaurant_phone'] as String? ?? '',
+      customerType: 'restaurant',
       isActive: true,
+      profile: json['restaurant_business_name'] != null ? CustomerProfile(
+        id: json['restaurant'] as int,
+        businessName: json['restaurant_business_name'] as String?,
+      ) : null,
     );
 
     return Order(
@@ -263,52 +269,6 @@ class Department {
   }
 }
 
-class Customer {
-  final int id;
-  final String email;
-  final String? firstName;
-  final String? lastName;
-  final String userType;
-  final bool isActive;
-
-  const Customer({
-    required this.id,
-    required this.email,
-    this.firstName,
-    this.lastName,
-    required this.userType,
-    required this.isActive,
-  });
-
-  factory Customer.fromJson(Map<String, dynamic> json) {
-    return Customer(
-      id: json['id'] as int,
-      email: json['email'] as String,
-      firstName: json['first_name'] as String?,
-      lastName: json['last_name'] as String?,
-      userType: json['user_type'] as String,
-      isActive: json['is_active'] as bool,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'email': email,
-      'first_name': firstName,
-      'last_name': lastName,
-      'user_type': userType,
-      'is_active': isActive,
-    };
-  }
-
-  String get displayName {
-    if (firstName != null && firstName!.isNotEmpty) {
-      return firstName!;
-    }
-    return email.split('@').first;
-  }
-}
 
 // Helper function to parse string or number to double
 double? _parseDouble(dynamic value) {

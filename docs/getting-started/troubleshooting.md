@@ -1,5 +1,40 @@
 # Troubleshooting Guide
 
+## 🚨 Common Issues & Solutions
+
+### System Status Issues
+
+#### "Feature Not Working as Expected"
+**Issue**: Some documented features may not work exactly as described
+**Solution**: 
+- Check the [Implementation Status](../../README.md#-implementation-status) section
+- Features marked as "🔄 Partially Implemented" may need additional configuration
+- Report specific issues with detailed steps to reproduce
+
+#### "WhatsApp Integration Inconsistent"
+**Issue**: WhatsApp scraping works sometimes but fails other times
+**Solution**:
+- WhatsApp Web interface changes can affect scraping
+- Try restarting the Python server: `python main.py`
+- Clear Chrome session: Delete `whatsapp-session/` folder and re-authenticate
+- Check Chrome version compatibility
+
+### Development & Testing Issues
+
+#### "Testing Documentation Doesn't Match Code"
+**Issue**: Some test specifications reference missing components
+**Solution**:
+- Focus on testing implemented features first
+- Use the actual code in `python/app/core/whatsapp_crawler.py` as reference
+- Test basic message scraping before advanced features
+
+#### "Pricing System Not Responding"
+**Issue**: Intelligent pricing features show errors
+**Solution**:
+- UI is complete but backend integration is being validated
+- Use basic product management features while pricing system is refined
+- Check Django backend logs for specific errors
+
 Common issues and solutions for the Place Order Final system.
 
 ## 🚨 Quick Diagnostics

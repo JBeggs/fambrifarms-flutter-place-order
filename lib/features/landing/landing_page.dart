@@ -95,7 +95,7 @@ class LandingPage extends StatelessWidget {
                               icon: Icons.dashboard,
                               title: 'Dashboard',
                               description: 'View orders and analytics',
-                              onTap: () => context.go('/dashboard'),
+                              onTap: () => context.go('/karl-dashboard'),
                             ),
                             _ActionCard(
                               icon: Icons.shopping_cart,
@@ -107,7 +107,7 @@ class LandingPage extends StatelessWidget {
                               icon: Icons.inventory,
                               title: 'Inventory',
                               description: 'Manage stock levels',
-                              onTap: () {},
+                              onTap: () => context.go('/inventory'),
                             ),
                             _ActionCard(
                               icon: Icons.people,

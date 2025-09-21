@@ -1,0 +1,6 @@
+✅ Environment variables loaded from .env
+🚀 Starting WhatsApp Server...
+📱 Make sure Chrome is installed
+🌐 Server will run on http://localhost:5001
+ * Serving Flask app 'app.simplified_routes'
+ * Debug mode: on

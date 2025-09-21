@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../models/order.dart';
+import '../../models/customer.dart';
 import '../../providers/orders_provider.dart';
+import '../../providers/inventory_provider.dart';
 import 'widgets/order_card.dart';
 import 'widgets/order_status_chip.dart';
+import 'widgets/create_order_dialog.dart';
 
 class OrdersPage extends ConsumerStatefulWidget {
   const OrdersPage({super.key});
@@ -15,6 +18,7 @@ class OrdersPage extends ConsumerStatefulWidget {
 
 class _OrdersPageState extends ConsumerState<OrdersPage> {
   String _selectedStatusFilter = 'all';
+  String _selectedStockFilter = 'all'; // New stock filter
   String _searchQuery = '';
 
   @override
@@ -28,10 +32,29 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
 
   List<Order> get filteredOrders {
     var orders = ref.watch(ordersProvider).orders;
+    final inventory = ref.watch(inventoryProvider);
+    final ordersNotifier = ref.read(ordersProvider.notifier);
     
     // Filter by status
     if (_selectedStatusFilter != 'all') {
       orders = orders.where((order) => order.status == _selectedStatusFilter).toList();
+    }
+    
+    // Filter by stock availability
+    if (_selectedStockFilter != 'all') {
+      orders = orders.where((order) {
+        switch (_selectedStockFilter) {
+          case 'fulfillable':
+            return ordersNotifier.canFulfillOrder(order, inventory.products);
+          case 'stock_issues':
+            final stockIssues = ordersNotifier.getOrderItemsWithStockIssues(order, inventory.products);
+            return stockIssues.isNotEmpty;
+          case 'unfulfillable':
+            return !ordersNotifier.canFulfillOrder(order, inventory.products);
+          default:
+            return true;
+        }
+      }).toList();
     }
     
     // Filter by search query
@@ -126,6 +149,37 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
                     ),
                   ],
                 ),
+                
+                const SizedBox(height: 12),
+                
+                // Stock Filter
+                Row(
+                  children: [
+                    const Text('Stock: '),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            _buildStockFilterChip('all', 'All Orders'),
+                            const SizedBox(width: 8),
+                            _buildStockFilterChip('fulfillable', 'Fulfillable'),
+                            const SizedBox(width: 8),
+                            _buildStockFilterChip('stock_issues', 'Stock Issues'),
+                            const SizedBox(width: 8),
+                            _buildStockFilterChip('unfulfillable', 'Unfulfillable'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                
+                const SizedBox(height: 12),
+                
+                // Stock Health Summary
+                _buildStockHealthSummary(),
               ],
             ),
           ),
@@ -213,7 +267,24 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
           ),
         ],
       ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showCreateOrderDialog,
+        child: const Icon(Icons.add),
+        tooltip: 'Create New Order',
+      ),
     );
+  }
+
+  void _showCreateOrderDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => const CreateOrderDialog(),
+    ).then((newOrder) {
+      if (newOrder != null) {
+        // Refresh the orders list
+        ref.read(ordersProvider.notifier).refreshOrders();
+      }
+    });
   }
 
   Widget _buildStatusFilterChip(String value, String label) {
@@ -226,6 +297,123 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
           _selectedStatusFilter = value;
         });
       },
+    );
+  }
+
+  Widget _buildStockFilterChip(String value, String label) {
+    final isSelected = _selectedStockFilter == value;
+    final ordersWithStockIssues = ref.watch(ordersWithStockIssuesProvider);
+    final unfulfillableOrders = ref.watch(unfulfillableOrdersProvider);
+    
+    // Add count badges for stock filters
+    String displayLabel = label;
+    Color? badgeColor;
+    
+    switch (value) {
+      case 'stock_issues':
+        if (ordersWithStockIssues.isNotEmpty) {
+          displayLabel = '$label (${ordersWithStockIssues.length})';
+          badgeColor = Colors.orange;
+        }
+        break;
+      case 'unfulfillable':
+        if (unfulfillableOrders.isNotEmpty) {
+          displayLabel = '$label (${unfulfillableOrders.length})';
+          badgeColor = Colors.red;
+        }
+        break;
+    }
+    
+    return FilterChip(
+      label: Text(displayLabel),
+      selected: isSelected,
+      backgroundColor: badgeColor?.withValues(alpha: 0.1),
+      selectedColor: badgeColor?.withValues(alpha: 0.2),
+      onSelected: (selected) {
+        setState(() {
+          _selectedStockFilter = value;
+        });
+      },
+    );
+  }
+
+  Widget _buildStockHealthSummary() {
+    final orderStockHealth = ref.watch(orderStockHealthProvider);
+    final fulfillmentRate = orderStockHealth['orderFulfillmentRate'] as double;
+    final ordersWithIssues = orderStockHealth['ordersWithStockIssues'] as int;
+    final totalOrders = orderStockHealth['totalOrders'] as int;
+    
+    if (totalOrders == 0) {
+      return const SizedBox.shrink();
+    }
+    
+    Color healthColor;
+    IconData healthIcon;
+    String healthText;
+    
+    if (fulfillmentRate >= 90) {
+      healthColor = Colors.green;
+      healthIcon = Icons.check_circle;
+      healthText = 'Excellent';
+    } else if (fulfillmentRate >= 70) {
+      healthColor = Colors.orange;
+      healthIcon = Icons.warning;
+      healthText = 'Good';
+    } else {
+      healthColor = Colors.red;
+      healthIcon = Icons.error;
+      healthText = 'Needs Attention';
+    }
+    
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: healthColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: healthColor.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(healthIcon, color: healthColor, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Order Stock Health: $healthText',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: healthColor,
+                  ),
+                ),
+                Text(
+                  '${fulfillmentRate.toStringAsFixed(1)}% fulfillable • $ordersWithIssues of $totalOrders orders have stock issues',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: healthColor.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              '${fulfillmentRate.toStringAsFixed(0)}%',
+              style: TextStyle(
+                color: healthColor,
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -242,7 +430,7 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
             children: [
               // Customer Info
               Text(
-                'Customer: ${order.restaurant.displayName}',
+                'Customer: ${order.restaurant.isRestaurant && order.restaurant.profile?.businessName != null ? order.restaurant.profile!.businessName! : order.restaurant.displayName}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),

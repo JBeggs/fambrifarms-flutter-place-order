@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../services/api_service.dart';
 
-class CustomerDropdown extends StatefulWidget {
+class CustomerDropdown extends ConsumerStatefulWidget {
   final String? selectedCompany;
   final Function(String?) onCompanyChanged;
   final bool enabled;
@@ -14,13 +15,12 @@ class CustomerDropdown extends StatefulWidget {
   });
 
   @override
-  State<CustomerDropdown> createState() => _CustomerDropdownState();
+  ConsumerState<CustomerDropdown> createState() => _CustomerDropdownState();
 }
 
-class _CustomerDropdownState extends State<CustomerDropdown> {
+class _CustomerDropdownState extends ConsumerState<CustomerDropdown> {
   List<String> companyOptions = [];
   bool isLoading = true;
-  final ApiService _apiService = ApiService();
 
   @override
   void initState() {
@@ -30,7 +30,8 @@ class _CustomerDropdownState extends State<CustomerDropdown> {
 
   Future<void> _loadCompanies() async {
     try {
-      final companies = await _apiService.getCompanies();
+      final apiService = ref.read(apiServiceProvider);
+      final companies = await apiService.getCompanies();
       setState(() {
         // Remove duplicates and sort
         final companyNames = companies.map((company) => company['display_name'] as String).toSet().toList();

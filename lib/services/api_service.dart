@@ -6,30 +6,48 @@ import '../models/order.dart';
 import '../models/pricing_rule.dart';
 import '../models/market_price.dart';
 import '../models/customer_price_list.dart';
-import '../models/customer.dart';
-import '../models/product.dart';
-import '../models/supplier.dart';
+import '../models/customer.dart' as customer_model;
+import '../models/product.dart' as product_model;
+import '../config/app_config.dart';
+import '../config/app_constants.dart';
 
 class ApiService {
-  // Django URL must be hardcoded - it's needed to fetch other config from database
-  static const String djangoBaseUrl = 'http://127.0.0.1:8000/api';
+  // Singleton pattern
+  static ApiService? _instance;
   
-  // Everything else loaded from database via API
-  static String _whatsappBaseUrl = 'http://127.0.0.1:5001/api'; // Fallback
-  static int _defaultMessagesLimit = 100;
-  static int _defaultStockUpdatesLimit = 50;
-  static int _defaultProcessingLogsLimit = 200;
-  static List<String> _customerSegments = ['standard']; // Fallback
-  static double _defaultBaseMarkup = 1.25;
-  static double _defaultVolatilityAdjustment = 0.15;
-  static double _defaultTrendMultiplier = 1.10;
+  // Private constructor for singleton
+  ApiService._internal() {
+    _initializeDio();
+  }
+  
+  // Public factory constructor
+  factory ApiService() {
+    _instance ??= ApiService._internal();
+    return _instance!;
+  }
+  
+  // Use centralized configuration
+  static String get djangoBaseUrl => AppConfig.djangoBaseUrl;
+  static String get whatsappBaseUrl => AppConfig.pythonApiUrl;
+  // Use constants for default values
+  static int _defaultMessagesLimit = AppConstants.defaultPageSize * 5;
+  static int _defaultStockUpdatesLimit = AppConstants.defaultPageSize * 2;
+  static int _defaultProcessingLogsLimit = AppConstants.defaultPageSize * 10;
+  // Dynamic configuration (loaded from backend)
+  static Map<String, dynamic> _formOptions = {};
+  static Map<String, dynamic> _businessConfig = {};
+  static List<String> _customerSegments = ['standard']; // Fallback only
+  static double _defaultBaseMarkup = AppConstants.defaultBaseMarkup;
+  static double _defaultVolatilityAdjustment = AppConstants.defaultVolatilityAdjustment;
+  static double _defaultTrendMultiplier = AppConstants.defaultTrendMultiplier;
   static bool _configLoaded = false;
   
   // Getters for configuration
-  static String get whatsappBaseUrl => _whatsappBaseUrl;
   static int get defaultMessagesLimit => _defaultMessagesLimit;
   static int get defaultStockUpdatesLimit => _defaultStockUpdatesLimit;
   static int get defaultProcessingLogsLimit => _defaultProcessingLogsLimit;
+  static Map<String, dynamic> get formOptions => _formOptions;
+  static Map<String, dynamic> get businessConfig => _businessConfig;
   static List<String> get customerSegments => _customerSegments;
   static double get defaultBaseMarkup => _defaultBaseMarkup;
   static double get defaultVolatilityAdjustment => _defaultVolatilityAdjustment;
@@ -41,20 +59,23 @@ class ApiService {
   // Authentication tokens
   String? _accessToken;
   String? _refreshToken;
+  
+  // Expose Dio instance for specialized services
+  Dio get dio => _djangoDio;
 
-  ApiService() {
+  void _initializeDio() {
     // Django backend connection
     _djangoDio = Dio(BaseOptions(
       baseUrl: djangoBaseUrl,
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 120),
+      connectTimeout: AppConfig.connectionTimeout,
+      receiveTimeout: AppConfig.apiTimeout,
     ));
     
     // Python WhatsApp scraper connection
     _whatsappDio = Dio(BaseOptions(
       baseUrl: whatsappBaseUrl,
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(seconds: 300), // 5 minutes for WhatsApp startup
+      connectTimeout: AppConfig.connectionTimeout,
+      receiveTimeout: Duration(seconds: AppConfig.apiTimeoutSeconds * 10), // Longer timeout for WhatsApp operations
     ));
     
     // Load configuration from database on first instantiation
@@ -91,18 +112,28 @@ class ApiService {
       },
     ));
     
-    // Add logging interceptors
-    _djangoDio.interceptors.add(LogInterceptor(
-      requestBody: true,
-      responseBody: true,
-      logPrint: (obj) => debugPrint('[DJANGO] $obj'),
-    ));
-    
-    _whatsappDio.interceptors.add(LogInterceptor(
-      requestBody: true,
-      responseBody: true,
-      logPrint: (obj) => debugPrint('[WHATSAPP] $obj'),
-    ));
+    // Add minimal logging interceptors (only in debug mode)
+    if (kDebugMode) {
+      _djangoDio.interceptors.add(LogInterceptor(
+        requestBody: false,  // Disable request body logging
+        responseBody: false, // Disable response body logging
+        requestHeader: false, // Disable request headers
+        responseHeader: false, // Disable response headers
+        request: true,       // Keep request URL and method
+        error: true,         // Keep error logging
+        logPrint: (obj) => debugPrint('[DJANGO] $obj'),
+      ));
+      
+      _whatsappDio.interceptors.add(LogInterceptor(
+        requestBody: false,  // Disable request body logging
+        responseBody: false, // Disable response body logging
+        requestHeader: false, // Disable request headers
+        responseHeader: false, // Disable response headers
+        request: true,       // Keep request URL and method
+        error: true,         // Keep error logging
+        logPrint: (obj) => debugPrint('[WHATSAPP] $obj'),
+      ));
+    }
     
     // Auto-login for development (with delay to ensure constructor completes)
     Future.delayed(const Duration(milliseconds: 100), _autoLogin);
@@ -168,9 +199,12 @@ class ApiService {
   }
 
   // WhatsApp operations - Python scraper
-  Future<Map<String, dynamic>> startWhatsApp() async {
+  Future<Map<String, dynamic>> startWhatsApp({int checkInterval = 30}) async {
     try {
-      final response = await _whatsappDio.post('/whatsapp/start');
+      final response = await _whatsappDio.post('/whatsapp/start', data: {
+        'django_url': AppConfig.djangoBaseUrl.replaceAll('/api', ''),  // Django backend URL
+        'check_interval': checkInterval,        // Seconds between checks
+      });
       return response.data;
     } catch (e) {
       throw ApiException('Failed to start WhatsApp: $e');
@@ -183,6 +217,15 @@ class ApiService {
       return response.data;
     } catch (e) {
       throw ApiException('Failed to stop WhatsApp: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> getWhatsAppStatus() async {
+    try {
+      final response = await _whatsappDio.get('/whatsapp/status');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get WhatsApp status: $e');
     }
   }
 
@@ -201,19 +244,27 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> refreshMessages() async {
+  Future<Map<String, dynamic>> refreshMessages({bool scrollToLoadMore = false}) async {
     try {
-      // 1. Get fresh messages from Python scraper
-      final scraperResponse = await _whatsappDio.get('/messages');
-      
-      // 2. Send scraped messages to Django for processing
-      final djangoResponse = await _djangoDio.post('/whatsapp/receive-messages/', data: {
-        'messages': scraperResponse.data
+      // Trigger manual scan on Python crawler (which automatically sends to Django)
+      final response = await _whatsappDio.post('/whatsapp/manual-scan', data: {
+        'scroll_to_load_more': scrollToLoadMore,
       });
       
-      return djangoResponse.data;
+      return response.data;
     } catch (e) {
       throw ApiException('Failed to refresh messages: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> testDjangoConnection() async {
+    try {
+      final response = await _whatsappDio.post('/debug/test-django', data: {
+        'django_url': AppConfig.djangoBaseUrl.replaceAll('/api', ''),
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to test Django connection: $e');
     }
   }
 
@@ -248,6 +299,18 @@ class ApiService {
     }
   }
 
+  Future<WhatsAppMessage> updateMessageType(String databaseId, String messageType) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/messages/update-type/', data: {
+        'message_id': int.parse(databaseId),  // Backend expects integer ID
+        'message_type': messageType,
+      });
+      return WhatsAppMessage.fromJson(response.data['data']);
+    } catch (e) {
+      throw ApiException('Failed to update message type: $e');
+    }
+  }
+
   Future<Map<String, dynamic>> processMessages(List<String> messageIds) async {
     try {
       final response = await _djangoDio.post('/whatsapp/messages/process/', data: {
@@ -256,6 +319,17 @@ class ApiService {
       return response.data;
     } catch (e) {
       throw ApiException('Failed to process messages: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> processStockMessages(List<String> messageIds) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/messages/process-stock/', data: {
+        'message_ids': messageIds,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to process stock messages: $e');
     }
   }
 
@@ -294,12 +368,32 @@ class ApiService {
     }
   }
 
+  Future<Order> createOrder(Map<String, dynamic> orderData) async {
+    try {
+      final response = await _djangoDio.post('/orders/', data: orderData);
+      return Order.fromJson(response.data);
+    } catch (e) {
+      throw ApiException('Failed to create order: $e');
+    }
+  }
+
   Future<Order> updateOrder(int orderId, Map<String, dynamic> orderData) async {
     try {
       final response = await _djangoDio.put('/orders/$orderId/', data: orderData);
       return Order.fromJson(response.data);
     } catch (e) {
       throw ApiException('Failed to update order: $e');
+    }
+  }
+
+  Future<Order> updateOrderStatus(int orderId, String status) async {
+    try {
+      final response = await _djangoDio.patch('/orders/$orderId/status/', data: {
+        'status': status,
+      });
+      return Order.fromJson(response.data);
+    } catch (e) {
+      throw ApiException('Failed to update order status: $e');
     }
   }
 
@@ -311,14 +405,155 @@ class ApiService {
     }
   }
 
-  Future<Order> updateOrderStatus(int orderId, String status) async {
+  // Order Items Management
+  Future<List<Map<String, dynamic>>> getOrderItems(int orderId) async {
     try {
-      final response = await _djangoDio.patch('/orders/$orderId/update-status/', data: {
-        'status': status,
-      });
-      return Order.fromJson(response.data);
+      final response = await _djangoDio.get('/orders/$orderId/items/');
+      return List<Map<String, dynamic>>.from(response.data);
     } catch (e) {
-      throw ApiException('Failed to update order status: $e');
+      throw ApiException('Failed to get order items: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> addOrderItem(int orderId, Map<String, dynamic> itemData) async {
+    try {
+      final response = await _djangoDio.post('/orders/$orderId/items/', data: itemData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to add order item: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateOrderItem(int orderId, int itemId, Map<String, dynamic> itemData) async {
+    try {
+      final response = await _djangoDio.put('/orders/$orderId/items/$itemId/', data: itemData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update order item: $e');
+    }
+  }
+
+  Future<void> deleteOrderItem(int orderId, int itemId) async {
+    try {
+      await _djangoDio.delete('/orders/$orderId/items/$itemId/');
+    } catch (e) {
+      throw ApiException('Failed to delete order item: $e');
+    }
+  }
+
+  // Inventory Management APIs
+  Future<List<Map<String, dynamic>>> getStockLevels() async {
+    try {
+      final response = await _djangoDio.get('/inventory/stock-levels/');
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get stock levels: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> adjustStock(int productId, Map<String, dynamic> adjustmentData) async {
+    try {
+      final response = await _djangoDio.post('/inventory/actions/stock-adjustment/', data: {
+        'product_id': productId,
+        ...adjustmentData,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to adjust stock: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getStockAlerts() async {
+    try {
+      print('[API] Calling /inventory/alerts/...');
+      final response = await _djangoDio.get('/inventory/alerts/');
+      print('[API] Stock alerts response status: ${response.statusCode}');
+      print('[API] Stock alerts response type: ${response.data.runtimeType}');
+      
+      if (response.data is List) {
+        // Direct array response
+        final alerts = List<Map<String, dynamic>>.from(response.data);
+        print('[API] Received ${alerts.length} stock alerts (direct array)');
+        return alerts;
+      } else if (response.data is Map && response.data['results'] != null) {
+        // Paginated response from Django REST Framework
+        final results = response.data['results'] as List;
+        final alerts = List<Map<String, dynamic>>.from(results);
+        print('[API] Received ${alerts.length} stock alerts from paginated response (total: ${response.data['count']})');
+        return alerts;
+      } else {
+        print('[API] Unexpected response format: ${response.data}');
+        throw ApiException('Unexpected response format for stock alerts');
+      }
+    } catch (e) {
+      print('[API] Error getting stock alerts: $e');
+      throw ApiException('Failed to get stock alerts: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getStockMovements({int? productId, int? limit}) async {
+    try {
+      final queryParams = <String, dynamic>{};
+      if (productId != null) queryParams['product_id'] = productId;
+      if (limit != null) queryParams['limit'] = limit;
+      
+      final response = await _djangoDio.get('/inventory/stock-movements/', queryParameters: queryParams);
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get stock movements: $e');
+    }
+  }
+
+  // Supplier Management APIs
+  Future<List<Map<String, dynamic>>> getSuppliers() async {
+    try {
+      final response = await _djangoDio.get('/suppliers/suppliers/');
+      
+      // Handle paginated response
+      if (response.data is Map<String, dynamic> && response.data.containsKey('results')) {
+        final List<dynamic> suppliersJson = response.data['results'];
+        return List<Map<String, dynamic>>.from(suppliersJson);
+      }
+      
+      // Handle direct array response (fallback)
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get suppliers: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> createSupplier(Map<String, dynamic> supplierData) async {
+    try {
+      final response = await _djangoDio.post('/suppliers/suppliers/', data: supplierData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to create supplier: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateSupplier(int supplierId, Map<String, dynamic> supplierData) async {
+    try {
+      final response = await _djangoDio.put('/suppliers/suppliers/$supplierId/', data: supplierData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update supplier: $e');
+    }
+  }
+
+  Future<void> deleteSupplier(int supplierId) async {
+    try {
+      await _djangoDio.delete('/suppliers/suppliers/$supplierId/');
+    } catch (e) {
+      throw ApiException('Failed to delete supplier: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> getSupplier(int supplierId) async {
+    try {
+      final response = await _djangoDio.get('/suppliers/suppliers/$supplierId/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get supplier: $e');
     }
   }
 
@@ -356,7 +591,7 @@ class ApiService {
 
   // New Django backend methods
 
-  Future<List<Map<String, dynamic>>> getProducts() async {
+  Future<List<Map<String, dynamic>>> getProductsRaw() async {
     try {
       final response = await _djangoDio.get('/products/products/');
       return List<Map<String, dynamic>>.from(response.data);
@@ -386,35 +621,127 @@ class ApiService {
     }
   }
 
-  Future<List<Customer>> getCustomers() async {
+  Future<List<customer_model.Customer>> getCustomers() async {
     try {
       final response = await _djangoDio.get('/auth/customers/');
-      final List<dynamic> customersJson = response.data;
-      return customersJson.map((json) => Customer.fromJson(json)).toList();
+      final Map<String, dynamic> data = response.data;
+      final List<dynamic> customersJson = data['customers'] ?? [];
+      return customersJson.map((json) => customer_model.Customer.fromJson(json)).toList();
     } catch (e) {
       throw ApiException('Failed to get customers: $e');
     }
   }
 
-  Future<List<Product>> getProducts() async {
+  Future<customer_model.Customer> createCustomer(Map<String, dynamic> customerData) async {
     try {
-      final response = await _djangoDio.get('/products/');
+      final response = await _djangoDio.post('/auth/customers/', data: customerData);
+      return customer_model.Customer.fromJson(response.data);
+    } catch (e) {
+      throw ApiException('Failed to create customer: $e');
+    }
+  }
+
+  Future<customer_model.Customer> updateCustomer(int customerId, Map<String, dynamic> customerData) async {
+    try {
+      final response = await _djangoDio.put('/auth/customers/$customerId/', data: customerData);
+      return customer_model.Customer.fromJson(response.data);
+    } catch (e) {
+      throw ApiException('Failed to update customer: $e');
+    }
+  }
+
+  Future<customer_model.Customer> getCustomer(int customerId) async {
+    try {
+      final response = await _djangoDio.get('/auth/customers/$customerId/');
+      return customer_model.Customer.fromJson(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get customer: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getCustomerOrders(int customerId) async {
+    try {
+      final response = await _djangoDio.get('/orders/customer/$customerId/');
+      final Map<String, dynamic> data = response.data;
+      final List<dynamic> ordersJson = data['results'] ?? [];
+      return List<Map<String, dynamic>>.from(ordersJson);
+    } catch (e) {
+      throw ApiException('Failed to get customer orders: $e');
+    }
+  }
+
+  Future<List<product_model.Product>> getProducts() async {
+    try {
+      final response = await _djangoDio.get('/products/products/');
+      
+      // Handle paginated response (if pagination is enabled)
+      if (response.data is Map<String, dynamic> && response.data.containsKey('results')) {
+        final List<dynamic> productsJson = response.data['results'];
+        return productsJson.map((json) => product_model.Product.fromJson(json)).toList();
+      }
+      
+      // Handle direct array response (pagination disabled)
       final List<dynamic> productsJson = response.data;
-      return productsJson.map((json) => Product.fromJson(json)).toList();
+      return productsJson.map((json) => product_model.Product.fromJson(json)).toList();
     } catch (e) {
       throw ApiException('Failed to get products: $e');
     }
   }
 
-  Future<List<Supplier>> getSuppliers() async {
+  // Update product (for inventory stock level updates)
+  Future<product_model.Product> updateProduct(int productId, Map<String, dynamic> updateData) async {
     try {
-      final response = await _djangoDio.get('/suppliers/');
-      final List<dynamic> suppliersJson = response.data;
-      return suppliersJson.map((json) => Supplier.fromJson(json)).toList();
+      print('[API] Updating product $productId with data: $updateData');
+      final response = await _djangoDio.patch('/products/products/$productId/', data: updateData);
+      print('[API] Product update response: ${response.data}');
+      return product_model.Product.fromJson(response.data);
     } catch (e) {
-      throw ApiException('Failed to get suppliers: $e');
+      print('[API] Product update error: $e');
+      throw ApiException('Failed to update product: $e');
     }
   }
+
+  // Get departments for product editing
+  Future<List<Map<String, dynamic>>> getDepartments() async {
+    try {
+      final response = await _djangoDio.get('/products/departments/');
+      if (response.data is List) {
+        return List<Map<String, dynamic>>.from(response.data);
+      } else if (response.data is Map && response.data['results'] != null) {
+        final results = response.data['results'] as List;
+        return List<Map<String, dynamic>>.from(results);
+      } else {
+        throw ApiException('Unexpected response format for departments');
+      }
+    } catch (e) {
+      throw ApiException('Failed to get departments: $e');
+    }
+  }
+
+  // Get units of measure for product editing
+  Future<List<Map<String, dynamic>>> getUnitsOfMeasure() async {
+    try {
+      final response = await _djangoDio.get('/inventory/units/');
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get units of measure: $e');
+    }
+  }
+
+  // Log stock adjustment (placeholder - may need backend implementation)
+  Future<void> logStockAdjustment(int productId, double newStock, String reason) async {
+    try {
+      await _djangoDio.post('/inventory/adjustments/', data: {
+        'product_id': productId,
+        'new_stock_level': newStock,
+        'reason': reason,
+        'timestamp': DateTime.now().toIso8601String(),
+      });
+    } catch (e) {
+      throw ApiException('Failed to log stock adjustment: $e');
+    }
+  }
+
 
   // Phase 3: Dynamic Pricing Management API Methods
 
@@ -776,27 +1103,50 @@ class ApiService {
     try {
       final dio = Dio(BaseOptions(
         baseUrl: djangoBaseUrl, // Use hardcoded Django URL to fetch other config
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 10),
+        connectTimeout: AppConfig.connectionTimeout,
+        receiveTimeout: AppConfig.apiTimeout,
       ));
       
-      final response = await dio.get('/products/app-config/');
-      final config = response.data;
+      // Load all configuration in parallel for efficiency
+      final results = await Future.wait([
+        dio.get('/products/app-config/'),
+        dio.get('/settings/form-options/'),
+        dio.get('/settings/business-config/'),
+      ]);
       
-      // Update configuration from database (except Django URL which must stay hardcoded)
-      _whatsappBaseUrl = config['whatsapp_base_url'] ?? _whatsappBaseUrl;
+      final config = results[0].data;
+      _formOptions = results[1].data ?? {};
+      _businessConfig = results[2].data ?? {};
+      
+      // Update configuration from database (except URLs which are now centralized)
       _defaultMessagesLimit = config['default_messages_limit'] ?? _defaultMessagesLimit;
       _defaultStockUpdatesLimit = config['default_stock_updates_limit'] ?? _defaultStockUpdatesLimit;
-      _customerSegments = List<String>.from(config['customer_segments'] ?? ['standard']);
-      _defaultBaseMarkup = (config['default_base_markup'] ?? 1.25).toDouble();
-      _defaultVolatilityAdjustment = (config['default_volatility_adjustment'] ?? 0.15).toDouble();
-      _defaultTrendMultiplier = (config['default_trend_multiplier'] ?? 1.10).toDouble();
+      
+      // Update customer segments from form options first, then legacy config
+      if (_formOptions['customer_segments'] != null) {
+        _customerSegments = (_formOptions['customer_segments'] as List)
+            .map((segment) => segment['name'] as String)
+            .toList();
+      } else {
+        _customerSegments = List<String>.from(config['customer_segments'] ?? ['standard']);
+      }
+      
+      // Update business values from business config first, then legacy config
+      _defaultBaseMarkup = (_businessConfig['default_base_markup']?['value'] ?? 
+                           config['default_base_markup'] ?? 1.25).toDouble();
+      _defaultVolatilityAdjustment = (_businessConfig['default_volatility_adjustment']?['value'] ?? 
+                                     config['default_volatility_adjustment'] ?? 0.15).toDouble();
+      _defaultTrendMultiplier = (_businessConfig['default_trend_multiplier']?['value'] ?? 
+                                config['default_trend_multiplier'] ?? 1.10).toDouble();
       
       _configLoaded = true;
-      print('App configuration loaded from database');
+      if (kDebugMode) {
+        debugPrint('✅ App configuration loaded from database');
+      }
     } catch (e) {
-      print('Failed to load app configuration from database: $e');
-      print('Using fallback configuration values');
+      if (kDebugMode) {
+        debugPrint('⚠️ Failed to load app configuration from database: $e');
+      }
       _configLoaded = true; // Don't keep retrying
     }
   }
@@ -806,6 +1156,30 @@ class ApiService {
     _configLoaded = false;
     await _loadAppConfig();
   }
+
+  /// Get form options for dropdowns
+  static List<Map<String, dynamic>> getFormOptions(String category) {
+    final options = _formOptions[category];
+    if (options is List) {
+      return List<Map<String, dynamic>>.from(options);
+    }
+    return [];
+  }
+
+  /// Get business configuration value
+  static T? getBusinessConfig<T>(String key, [T? defaultValue]) {
+    final config = _businessConfig[key];
+    if (config != null && config['value'] != null) {
+      return config['value'] as T;
+    }
+    return defaultValue;
+  }
+
+  /// Get all form options (for debugging)
+  static Map<String, dynamic> getAllFormOptions() => _formOptions;
+
+  /// Get all business config (for debugging)
+  static Map<String, dynamic> getAllBusinessConfig() => _businessConfig;
   
   /// Extract meaningful error message from DioException or other exceptions
   String _extractErrorMessage(dynamic error, String fallbackMessage) {
@@ -869,5 +1243,8 @@ class ApiException implements Exception {
   String toString() => 'ApiException: $message';
 }
 
-// Provider for API service
-final apiServiceProvider = Provider<ApiService>((ref) => ApiService());
+// Provider for API service - singleton instance
+final apiServiceProvider = Provider<ApiService>((ref) {
+  // Keep the same instance across the app
+  return ApiService();
+});

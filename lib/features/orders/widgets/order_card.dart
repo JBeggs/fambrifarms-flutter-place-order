@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../models/order.dart';
+import '../../../models/customer.dart';
+import '../../../providers/orders_provider.dart';
 import 'order_status_chip.dart';
 
-class OrderCard extends StatelessWidget {
+class OrderCard extends ConsumerWidget {
   final Order order;
   final VoidCallback? onTap;
   final Function(String)? onStatusChanged;
@@ -17,7 +20,8 @@ class OrderCard extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final orderStockSummary = ref.watch(orderStockSummaryProvider(order));
     return Card(
       elevation: 2,
       child: InkWell(
@@ -107,7 +111,9 @@ class OrderCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    order.restaurant.displayName,
+                    order.restaurant.isRestaurant && order.restaurant.profile?.businessName != null 
+                        ? order.restaurant.profile!.businessName! 
+                        : order.restaurant.displayName,
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 ],
@@ -175,6 +181,9 @@ class OrderCard extends StatelessWidget {
                       ),
                     ),
                   ],
+                  
+                  // Stock Availability Indicator
+                  _buildStockIndicator(context, orderStockSummary),
                   
                   if (order.totalAmount != null) ...[
                     const Spacer(),
@@ -244,7 +253,7 @@ class OrderCard extends StatelessWidget {
             children: [
               // Restaurant Info
               Text(
-                'Restaurant: ${order.restaurant.displayName}',
+                'Restaurant: ${order.restaurant.isRestaurant && order.restaurant.profile?.businessName != null ? order.restaurant.profile!.businessName! : order.restaurant.displayName}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 16),
@@ -270,7 +279,7 @@ class OrderCard extends StatelessWidget {
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text('\$${item.totalPrice.toStringAsFixed(2)}'),
+                            Text('R${item.totalPrice.toStringAsFixed(2)}'),
                             const SizedBox(width: 8),
                             IconButton(
                               icon: const Icon(Icons.edit, size: 16),
@@ -348,7 +357,7 @@ class OrderCard extends StatelessWidget {
               decoration: const InputDecoration(
                 labelText: 'Price per unit',
                 border: OutlineInputBorder(),
-                prefixText: '\$',
+                prefixText: 'R ',
               ),
               keyboardType: TextInputType.number,
             ),
@@ -405,7 +414,7 @@ class OrderCard extends StatelessWidget {
               decoration: const InputDecoration(
                 labelText: 'Price per unit',
                 border: OutlineInputBorder(),
-                prefixText: '\$',
+                prefixText: 'R ',
               ),
               keyboardType: TextInputType.number,
             ),
@@ -452,8 +461,10 @@ class OrderCard extends StatelessWidget {
                 orderNumber: '',
                 restaurant: const Customer(
                   id: 0,
+                  name: '',
                   email: '',
-                  userType: '',
+                  phone: '',
+                  customerType: 'restaurant',
                   isActive: false,
                 ),
                 orderDate: '',
@@ -490,6 +501,76 @@ class OrderCard extends StatelessWidget {
     );
   }
   
+  Widget _buildStockIndicator(BuildContext context, Map<String, dynamic> stockSummary) {
+    final canFulfill = stockSummary['canFulfill'] as bool;
+    final itemsOutOfStock = stockSummary['itemsOutOfStock'] as int;
+    final itemsWithLowStock = stockSummary['itemsWithLowStock'] as int;
+    
+    if (canFulfill && itemsWithLowStock == 0) {
+      // All items have sufficient stock
+      return Row(
+        children: [
+          const SizedBox(width: 8),
+          Icon(
+            Icons.check_circle,
+            size: 16,
+            color: Colors.green,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'In Stock',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Colors.green,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      );
+    } else if (itemsOutOfStock > 0) {
+      // Some items are out of stock
+      return Row(
+        children: [
+          const SizedBox(width: 8),
+          Icon(
+            Icons.error,
+            size: 16,
+            color: Colors.red,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'Out of Stock',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Colors.red,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      );
+    } else if (itemsWithLowStock > 0) {
+      // Some items have low stock
+      return Row(
+        children: [
+          const SizedBox(width: 8),
+          Icon(
+            Icons.warning,
+            size: 16,
+            color: Colors.orange,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'Low Stock',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Colors.orange,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      );
+    }
+    
+    return const SizedBox.shrink();
+  }
+
   bool _hasProductIssues() {
     return order.items.any((item) => _hasItemIssues(item));
   }

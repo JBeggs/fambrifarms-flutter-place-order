@@ -4,12 +4,14 @@ import '../../../models/whatsapp_message.dart';
 class MessageEditor extends StatefulWidget {
   final WhatsAppMessage message;
   final Function(String, bool?) onSave;
+  final Function(MessageType)? onTypeChange;
   final VoidCallback onCancel;
 
   const MessageEditor({
     super.key,
     required this.message,
     required this.onSave,
+    this.onTypeChange,
     required this.onCancel,
   });
 
@@ -21,6 +23,7 @@ class _MessageEditorState extends State<MessageEditor> {
   late TextEditingController _controller;
   bool _hasChanges = false;
   late bool _processed;
+  late MessageType _selectedType;
 
   @override
   void initState() {
@@ -28,6 +31,7 @@ class _MessageEditorState extends State<MessageEditor> {
     _controller = TextEditingController(text: widget.message.content);
     _controller.addListener(_onTextChanged);
     _processed = widget.message.processed;
+    _selectedType = widget.message.type;
   }
 
   @override
@@ -38,15 +42,35 @@ class _MessageEditorState extends State<MessageEditor> {
 
   void _onTextChanged() {
     setState(() {
-      _hasChanges = _controller.text != widget.message.content || _processed != widget.message.processed;
+      _hasChanges = _controller.text != widget.message.content || 
+                   _processed != widget.message.processed ||
+                   _selectedType != widget.message.type;
     });
   }
   
   void _onProcessedChanged(bool value) {
     setState(() {
       _processed = value;
-      _hasChanges = _controller.text != widget.message.content || _processed != widget.message.processed;
+      _hasChanges = _controller.text != widget.message.content || 
+                   _processed != widget.message.processed ||
+                   _selectedType != widget.message.type;
     });
+  }
+
+  void _onTypeChanged(MessageType? newType) {
+    if (newType != null && newType != _selectedType) {
+      setState(() {
+        _selectedType = newType;
+        _hasChanges = _controller.text != widget.message.content || 
+                     _processed != widget.message.processed ||
+                     _selectedType != widget.message.type;
+      });
+      
+      // Immediately trigger backend update for type change
+      if (widget.onTypeChange != null) {
+        widget.onTypeChange!(newType);
+      }
+    }
   }
 
   void _applyQuickFix(String fixType) {
@@ -171,15 +195,25 @@ class _MessageEditorState extends State<MessageEditor> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: _getTypeColor(widget.message.type).withValues(alpha: 0.2),
+                        color: _getTypeColor(_selectedType).withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Text(
-                        '${widget.message.type.icon} ${widget.message.type.displayName}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: _getTypeColor(widget.message.type),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<MessageType>(
+                          value: _selectedType,
+                          onChanged: widget.onTypeChange != null ? _onTypeChanged : null,
+                          isDense: true,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: _getTypeColor(_selectedType),
+                          ),
+                          items: MessageType.values.map((MessageType type) {
+                            return DropdownMenuItem<MessageType>(
+                              value: type,
+                              child: Text('${type.icon} ${type.displayName}'),
+                            );
+                          }).toList(),
                         ),
                       ),
                     ),

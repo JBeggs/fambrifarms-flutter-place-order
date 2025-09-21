@@ -15,6 +15,17 @@ print(f"🚨 [INIT] Created crawler instance: {id(crawler)}")
 print(f"🚨 [INIT] Crawler messages attr exists: {hasattr(crawler, 'messages')}")
 print(f"🚨 [INIT] Crawler messages length: {len(crawler.messages)}")
 
+
+@whatsapp_bp.route('/api/whatsapp/status', methods=['GET'])
+def get_status():
+    """Get the status of the WhatsApp crawler"""
+    status = {
+        "crawler_running": crawler.is_running,
+        "driver_active": crawler.driver is not None,
+        "message_count": len(crawler.messages)
+    }
+    return jsonify(status)
+
 @whatsapp_bp.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""

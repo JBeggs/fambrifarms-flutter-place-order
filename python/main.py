@@ -20,11 +20,10 @@ if 'TARGET_GROUP_NAME' not in os.environ:
 
 from flask import Flask
 from flask_cors import CORS
-from app.routes import whatsapp_bp
+from app.simplified_routes import app as simplified_app
 
-app = Flask(__name__)
+app = simplified_app
 CORS(app)
-app.register_blueprint(whatsapp_bp)
 
 if __name__ == '__main__':
     print("🚀 Starting WhatsApp Server...")

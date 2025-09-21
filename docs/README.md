@@ -20,6 +20,7 @@ Welcome to the comprehensive documentation for **Karl's Farm Management System**
 - [Python WhatsApp Server](architecture/python-server.md) - Flask API and Selenium automation
 - [Flutter Desktop App](architecture/flutter-app.md) - Desktop UI architecture and features
 - [Django Integration](architecture/django-integration.md) - Backend API integration
+- **[WhatsApp Simplification](architecture/whatsapp-simplification.md)** - **NEW** Simplified messaging architecture with HTML processing
 
 ### 📋 **Business Logic**
 - **[Complete Order Processing](business-logic/order-processing-complete.md)** - Full business workflow from WhatsApp to delivery

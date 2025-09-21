@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../models/whatsapp_message.dart';
-import '../../providers/messages_provider.dart';
+import '../../utils/messages_provider.dart';
 import 'widgets/message_card.dart';
 import 'widgets/message_editor.dart';
 
@@ -28,15 +28,28 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
 
   Future<void> _createOrdersFromSelected(BuildContext context, messagesNotifier) async {
     try {
+      final selectedCount = ref.read(messagesProvider).selectedMessageIds.length;
+      final selectedMessages = ref.read(messagesProvider).messages.where(
+        (msg) => ref.read(messagesProvider).selectedMessageIds.contains(msg.id)
+      ).toList();
+      
+      final orderCount = selectedMessages.where((m) => m.type == MessageType.order).length;
+      final stockCount = selectedMessages.where((m) => m.type == MessageType.stock).length;
+      
+      String contentText = 'Process $selectedCount selected messages?\n\n';
+      if (orderCount > 0) {
+        contentText += '• $orderCount order messages → Create orders\n';
+      }
+      if (stockCount > 0) {
+        contentText += '• $stockCount stock messages → Update inventory\n';
+      }
+      
       // Show confirmation dialog
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Create Orders'),
-          content: Text(
-            'Create orders from ${ref.read(messagesProvider).selectedMessageIds.length} selected messages?\n\n'
-            'This will convert WhatsApp messages to orders in the system.',
-          ),
+          title: const Text('Process Messages'),
+          content: Text(contentText),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -44,35 +57,45 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Create Orders'),
+              child: const Text('Process Messages'),
             ),
           ],
         ),
       );
 
       if (confirmed == true) {
-        // Call the processSelectedMessages method which creates orders
+        // Call the processSelectedMessages method
         await messagesNotifier.processSelectedMessages();
         
         if (context.mounted) {
           // Show success message
+          String successMessage = 'Messages processed successfully!';
+          if (orderCount > 0) {
+            successMessage += ' Check Orders page for new orders.';
+          }
+          if (stockCount > 0) {
+            successMessage += ' Inventory levels updated.';
+          }
+          
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Orders created successfully! Check the Orders page to view them.'),
+            SnackBar(
+              content: Text(successMessage),
               backgroundColor: Colors.green,
               duration: Duration(seconds: 4),
             ),
           );
           
-          // Navigate to orders page
-          context.go('/orders');
+          // Navigate to orders page if orders were created
+          if (orderCount > 0) {
+            context.go('/orders');
+          }
         }
       }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to create orders: $e'),
+            content: Text('Failed to process messages: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -350,11 +373,13 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                                 }
                                 
                                 return ListView.builder(
+                                  key: const ValueKey('messages_list'),
                                   padding: const EdgeInsets.all(16),
                                   itemCount: filteredMessages.length,
                                   itemBuilder: (context, index) {
                                     final message = filteredMessages[index];
                                     return MessageCard(
+                                      key: ValueKey('message_${message.id}'),
                                       message: message,
                                       isSelected: messagesState.selectedMessageIds.contains(message.id),
                                       onToggleSelection: () => messagesNotifier.toggleMessageSelection(message.id),
@@ -396,6 +421,50 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                       setState(() {
                         selectedMessageForEditing = null;
                       });
+                    },
+                    onTypeChange: (newType) async {
+                      try {
+                        // Show loading state
+                        setState(() {
+                          // Keep editor open but show it's updating
+                        });
+                        
+                        // Update backend first
+                        await messagesNotifier.updateMessageType(
+                          selectedMessageForEditing!.id,
+                          newType,
+                        );
+                        
+                        // Update the local reference to reflect the change
+                        setState(() {
+                          selectedMessageForEditing = selectedMessageForEditing!.copyWith(type: newType);
+                        });
+                        
+                        // Refresh the messages list to show the updated type
+                        await messagesNotifier.loadMessages();
+                        
+                        // Show success feedback
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Message type updated to ${newType.displayName}'),
+                              backgroundColor: Colors.green,
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        // Show error feedback
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Failed to update message type: $e'),
+                              backgroundColor: Colors.red,
+                              duration: const Duration(seconds: 3),
+                            ),
+                          );
+                        }
+                      }
                     },
                     onCancel: () => setState(() {
                       selectedMessageForEditing = null;

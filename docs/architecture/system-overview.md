@@ -227,20 +227,31 @@ def classify_message(content):
 - **API-first design** for all integrations
 - **Configuration-driven** behavior
 
-## 🎯 System Limitations
+## 🎯 System Limitations & Current Status
 
-### Current Constraints
-- **Single Group**: Designed for one WhatsApp group
-- **Chrome Dependency**: Requires Chrome browser
-- **Manual Setup**: Complex initial configuration
-- **WhatsApp Changes**: Vulnerable to WhatsApp Web updates
-- **Local Processing**: No cloud/remote capabilities
+### ✅ Operational Constraints (By Design)
+- **Single Group Focus**: Intentionally designed for one WhatsApp group at a time
+- **Chrome Dependency**: Requires Chrome browser for WhatsApp Web automation
+- **Local Processing**: Desktop-focused, no cloud deployment (security by design)
+- **Manual QR Scanning**: Required for initial WhatsApp Web authentication
 
-### Known Issues
-- Selenium can be fragile with WhatsApp Web changes
-- Chrome session management complexity
-- Manual QR code scanning required
-- Limited error recovery mechanisms
+### 🔄 Areas Under Active Development
+- **WhatsApp Web Resilience**: Improving robustness against interface changes
+- **Error Recovery**: Enhanced handling of network issues and browser crashes
+- **Message Processing**: Validating complex message parsing scenarios
+- **Performance Optimization**: Large message volume handling improvements
+
+### ⚠️ Known Technical Challenges
+- **WhatsApp Web Dependency**: Interface changes can affect scraping reliability
+- **Selenium Stability**: Browser automation inherently has some fragility
+- **Session Management**: Chrome session persistence needs monitoring
+- **Media Content**: Image/voice URL extraction needs real-world validation
+
+### 🚀 Mitigation Strategies Implemented
+- **Session Persistence**: Chrome user data directory for stable sessions
+- **Comprehensive Error Handling**: 171+ try/catch blocks across Flutter codebase
+- **Graceful Degradation**: System continues operating with partial functionality
+- **Configuration Management**: Centralized config for easy adjustments
 
 ## 🔮 Future Enhancements
 

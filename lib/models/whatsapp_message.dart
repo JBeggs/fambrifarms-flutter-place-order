@@ -28,6 +28,14 @@ class WhatsAppMessage {
   final String? forwardedInfo; // Forwarded message info
   final bool isReply;         // Whether this is a reply to another message
   final String? replyContent; // Content of the message being replied to
+  
+  // HTML processing and expansion tracking (simplified architecture)
+  final String? rawHtml;           // Raw HTML from WhatsApp message element
+  final bool wasExpanded;          // Whether message was expanded from truncated state
+  final bool expansionFailed;      // Whether expansion was attempted but failed
+  final String? originalPreview;   // Preview text before expansion
+  final bool needsManualReview;    // Flagged for manual review
+  final String? reviewReason;      // Reason for manual review
 
   const WhatsAppMessage({
     required this.id,
@@ -58,6 +66,13 @@ class WhatsAppMessage {
     this.forwardedInfo,
     this.isReply = false,
     this.replyContent,
+    // HTML processing and expansion tracking
+    this.rawHtml,
+    this.wasExpanded = false,
+    this.expansionFailed = false,
+    this.originalPreview,
+    this.needsManualReview = false,
+    this.reviewReason,
   });
 
   factory WhatsAppMessage.fromJson(Map<String, dynamic> json) {
@@ -102,6 +117,13 @@ class WhatsAppMessage {
       forwardedInfo: json['forwarded_info'] as String?,
       isReply: json['is_reply'] as bool? ?? false,
       replyContent: json['reply_content'] as String?,
+      // HTML processing and expansion tracking
+      rawHtml: json['raw_html'] as String?,
+      wasExpanded: json['was_expanded'] as bool? ?? false,
+      expansionFailed: json['expansion_failed'] as bool? ?? false,
+      originalPreview: json['original_preview'] as String?,
+      needsManualReview: json['needs_manual_review'] as bool? ?? false,
+      reviewReason: json['review_reason'] as String?,
     );
   }
 
@@ -136,6 +158,13 @@ class WhatsAppMessage {
       'forwarded_info': forwardedInfo,
       'is_reply': isReply,
       'reply_content': replyContent,
+      // HTML processing and expansion tracking
+      'raw_html': rawHtml,
+      'was_expanded': wasExpanded,
+      'expansion_failed': expansionFailed,
+      'original_preview': originalPreview,
+      'needs_manual_review': needsManualReview,
+      'review_reason': reviewReason,
     };
   }
 
@@ -168,6 +197,13 @@ class WhatsAppMessage {
     String? forwardedInfo,
     bool? isReply,
     String? replyContent,
+    // HTML processing and expansion tracking
+    String? rawHtml,
+    bool? wasExpanded,
+    bool? expansionFailed,
+    String? originalPreview,
+    bool? needsManualReview,
+    String? reviewReason,
   }) {
     return WhatsAppMessage(
       id: id ?? this.id,
@@ -198,6 +234,13 @@ class WhatsAppMessage {
       forwardedInfo: forwardedInfo ?? this.forwardedInfo,
       isReply: isReply ?? this.isReply,
       replyContent: replyContent ?? this.replyContent,
+      // HTML processing and expansion tracking
+      rawHtml: rawHtml ?? this.rawHtml,
+      wasExpanded: wasExpanded ?? this.wasExpanded,
+      expansionFailed: expansionFailed ?? this.expansionFailed,
+      originalPreview: originalPreview ?? this.originalPreview,
+      needsManualReview: needsManualReview ?? this.needsManualReview,
+      reviewReason: reviewReason ?? this.reviewReason,
     );
   }
 }

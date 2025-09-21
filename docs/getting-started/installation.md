@@ -1,6 +1,24 @@
 # Installation Guide
 
-Complete setup instructions for the Place Order Final WhatsApp order processing system.
+Complete setup instructions for the Place Order Final farm management system.
+
+## 🎯 What You'll Get After Installation
+
+### ✅ Fully Functional Features
+- **Professional Flutter Desktop App** with modern UI
+- **WhatsApp Message Management** - View, edit, and process messages
+- **Complete Order Management** - Create, track, and manage customer orders
+- **Inventory System** - Stock levels, adjustments, and alerts
+- **Customer & Supplier Management** - Complete business relationship tracking
+- **Product Catalog** - Comprehensive product database with 63+ items
+
+### 🔄 Features in Active Development
+- **Advanced WhatsApp Automation** - Basic scraping works, advanced features being refined
+- **Intelligent Pricing System** - UI complete, backend validation in progress
+- **Market Procurement Intelligence** - Core algorithms implemented, testing ongoing
+
+### ⚠️ Set Realistic Expectations
+This system provides a solid foundation for farm management with core features operational. Some advanced features are still being refined based on real-world usage.
 
 ## 📋 Prerequisites
 

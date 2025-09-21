@@ -5,39 +5,50 @@ import '../features/auth/karl_login_page.dart';
 import '../features/auth/karl_auth_provider.dart';
 import '../features/karl_dashboard/karl_dashboard_page.dart';
 import '../features/customers/customers_page.dart';
+import '../features/customers/customer_detail_page.dart';
+import '../features/customers/customer_orders_page.dart';
 import '../features/products/products_page.dart';
+import '../features/products/product_detail_page.dart';
 import '../features/suppliers/suppliers_page.dart';
+import '../features/suppliers/supplier_detail_page.dart';
 import '../features/procurement/procurement_page.dart';
 import '../features/landing/landing_page.dart';
-import '../features/dashboard/dashboard_page.dart';
+import '../features/loading/loading_page.dart';
 import '../features/messages/messages_page.dart';
 import '../features/orders/orders_page.dart';
 import '../features/pricing/pricing_dashboard_page.dart';
-import 'theme.dart';
+import '../features/inventory/inventory_page.dart';
+import 'professional_theme.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
+  // Watch for auth state changes to trigger router refresh
+  ref.watch(karlAuthProvider);
+  
   return GoRouter(
-    initialLocation: '/',
+    initialLocation: '/loading',
     redirect: (context, state) {
       final isAuthenticated = ref.read(isAuthenticatedProvider);
       final isLoading = ref.read(authLoadingProvider);
       
-      // Don't redirect while loading
-      if (isLoading) return null;
+      print('[ROUTER] Current path: ${state.uri.path}, isAuthenticated: $isAuthenticated, isLoading: $isLoading');
       
-      // If not authenticated and not on login page, redirect to login
-      if (!isAuthenticated && state.location != '/login') {
-        return '/login';
+      // Show loading screen while checking auth
+      if (isLoading && state.uri.path != '/loading') {
+        print('[ROUTER] Redirecting to loading');
+        return '/loading';
       }
       
-      // If authenticated and on login page, redirect to dashboard
-      if (isAuthenticated && state.location == '/login') {
-        return '/karl-dashboard';
-      }
-      
-      // If authenticated and on root, redirect to dashboard
-      if (isAuthenticated && state.location == '/') {
-        return '/karl-dashboard';
+      // After loading is complete, redirect appropriately
+      if (!isLoading) {
+        if (!isAuthenticated && state.uri.path != '/login') {
+          print('[ROUTER] Redirecting to login');
+          return '/login';
+        }
+        
+        if (isAuthenticated && (state.uri.path == '/login' || state.uri.path == '/' || state.uri.path == '/loading')) {
+          print('[ROUTER] Redirecting to karl-dashboard');
+          return '/karl-dashboard';
+        }
       }
       
       return null;
@@ -48,6 +59,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const LandingPage(),
       ),
       GoRoute(
+        path: '/loading',
+        builder: (context, state) => const LoadingPage(),
+      ),
+      GoRoute(
         path: '/login',
         builder: (context, state) => const KarlLoginPage(),
       ),
@@ -56,10 +71,6 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const KarlDashboardPage(),
       ),
       // Legacy routes (keep for existing functionality)
-      GoRoute(
-        path: '/dashboard',
-        builder: (context, state) => const DashboardPage(),
-      ),
       GoRoute(
         path: '/messages',
         builder: (context, state) => const MessagesPage(),
@@ -78,16 +89,68 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const CustomersPage(),
       ),
       GoRoute(
+        path: '/customers/:id',
+        builder: (context, state) {
+          final customerId = int.tryParse(state.pathParameters['id'] ?? '');
+          if (customerId == null) {
+            return const Scaffold(
+              body: Center(child: Text('Invalid customer ID')),
+            );
+          }
+          return CustomerDetailPage(customerId: customerId);
+        },
+      ),
+      GoRoute(
+        path: '/customers/:id/orders',
+        builder: (context, state) {
+          final customerId = int.tryParse(state.pathParameters['id'] ?? '');
+          if (customerId == null) {
+            return const Scaffold(
+              body: Center(child: Text('Invalid customer ID')),
+            );
+          }
+          return CustomerOrdersPage(customerId: customerId);
+        },
+      ),
+      GoRoute(
         path: '/products',
         builder: (context, state) => const ProductsPage(),
+      ),
+      GoRoute(
+        path: '/products/:id',
+        builder: (context, state) {
+          final productId = int.tryParse(state.pathParameters['id'] ?? '');
+          if (productId == null) {
+            return const Scaffold(
+              body: Center(child: Text('Invalid product ID')),
+            );
+          }
+          return ProductDetailPage(productId: productId);
+        },
       ),
             GoRoute(
               path: '/suppliers',
               builder: (context, state) => const SuppliersPage(),
             ),
             GoRoute(
+              path: '/suppliers/:id',
+              builder: (context, state) {
+                final supplierId = int.tryParse(state.pathParameters['id'] ?? '');
+                if (supplierId == null) {
+                  return const Scaffold(
+                    body: Center(child: Text('Invalid supplier ID')),
+                  );
+                }
+                return SupplierDetailPage(supplierId: supplierId);
+              },
+            ),
+            GoRoute(
               path: '/procurement',
               builder: (context, state) => const ProcurementPage(),
+            ),
+            GoRoute(
+              path: '/inventory',
+              builder: (context, state) => const InventoryPage(),
             ),
           ],
         );
@@ -102,9 +165,9 @@ class PlaceOrderApp extends ConsumerWidget {
     
     return MaterialApp.router(
       title: 'Fambri Farms Management',
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.system,
+      theme: ProfessionalTheme.theme,
+      darkTheme: ProfessionalTheme.theme,
+      themeMode: ThemeMode.dark,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
     );
