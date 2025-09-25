@@ -32,19 +32,23 @@ class _CustomerDropdownState extends ConsumerState<CustomerDropdown> {
     try {
       final apiService = ref.read(apiServiceProvider);
       final companies = await apiService.getCompanies();
-      setState(() {
-        // Remove duplicates and sort
-        final companyNames = companies.map((company) => company['display_name'] as String).toSet().toList();
-        companyNames.sort();
-        companyOptions = companyNames;
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          // Remove duplicates and sort
+          final companyNames = companies.map((company) => company['display_name'] as String).toSet().toList();
+          companyNames.sort();
+          companyOptions = companyNames;
+          isLoading = false;
+        });
+      }
     } catch (e) {
       debugPrint('Error loading companies: $e');
-      setState(() {
-        companyOptions = []; // Empty list - no hardcoded fallback
-        isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          companyOptions = []; // Empty list - no hardcoded fallback
+          isLoading = false;
+        });
+      }
       
       // Show error to user
       if (mounted) {

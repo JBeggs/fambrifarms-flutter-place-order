@@ -333,6 +333,37 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> processStockAndApplyToInventory(List<String> messageIds) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/process-stock-and-apply/', data: {
+        'message_ids': messageIds,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to process stock and apply to inventory: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> applyStockUpdatesToInventory() async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/stock-updates/apply-to-inventory/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to apply stock updates to inventory: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> getStockTakeData({bool onlyWithStock = true}) async {
+    try {
+      final response = await _djangoDio.get('/whatsapp/stock-take-data/', queryParameters: {
+        'only_with_stock': onlyWithStock.toString(),
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get stock take data: $e');
+    }
+  }
+
   // Order Management API methods
   Future<List<Order>> getOrders() async {
     try {
@@ -884,6 +915,15 @@ class ApiService {
     }
   }
 
+  Future<CustomerPriceList> createCustomerPriceList(Map<String, dynamic> priceListData) async {
+    try {
+      final response = await _djangoDio.post('/inventory/customer-price-lists/', data: priceListData);
+      return CustomerPriceList.fromJson(response.data);
+    } catch (e) {
+      throw ApiException('Failed to create customer price list: $e');
+    }
+  }
+
   Future<Map<String, dynamic>> generateCustomerPriceListsFromMarketData({
     required List<int> customerIds,
     required int pricingRuleId,
@@ -1181,6 +1221,228 @@ class ApiService {
   /// Get all business config (for debugging)
   static Map<String, dynamic> getAllBusinessConfig() => _businessConfig;
   
+  // ===== SETTINGS API METHODS =====
+  
+  Future<List<String>> getCustomerSegments() async {
+    try {
+      final response = await _djangoDio.get('/api/settings/customer-segments/');
+      return List<String>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get customer segments: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<List<String>> getOrderStatuses() async {
+    try {
+      final response = await _djangoDio.get('/api/settings/order-statuses/');
+      return List<String>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get order statuses: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getAdjustmentTypes() async {
+    try {
+      final response = await _djangoDio.get('/api/settings/adjustment-types/');
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get adjustment types: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getBusinessConfiguration() async {
+    try {
+      final response = await _djangoDio.get('/api/settings/business-config/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get business configuration: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getSystemSettings() async {
+    try {
+      final response = await _djangoDio.get('/api/settings/system-settings/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get system settings: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getFormOptionsFromApi() async {
+    try {
+      final response = await _djangoDio.get('/api/settings/form-options/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get form options: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateBusinessConfig(Map<String, dynamic> configData) async {
+    try {
+      final response = await _djangoDio.post('/api/settings/business-config/update/', data: configData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update business configuration: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  // ===== PROCUREMENT API METHODS =====
+  
+  Future<Map<String, dynamic>> createSimplePurchaseOrder(Map<String, dynamic> orderData) async {
+    try {
+      final response = await _djangoDio.post('/api/procurement/purchase-orders/create/', data: orderData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to create purchase order: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  // ===== PRODUCTS PROCUREMENT API METHODS =====
+  
+  Future<Map<String, dynamic>> generateMarketRecommendation(Map<String, dynamic> requestData) async {
+    try {
+      final response = await _djangoDio.post('/products/procurement/generate-recommendation/', data: requestData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to generate market recommendation: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getMarketRecommendations() async {
+    try {
+      final response = await _djangoDio.get('/products/procurement/recommendations/');
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get market recommendations: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> approveMarketRecommendation(int recommendationId) async {
+    try {
+      final response = await _djangoDio.post('/products/procurement/recommendations/$recommendationId/approve/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to approve market recommendation: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getProcurementBuffers() async {
+    try {
+      final response = await _djangoDio.get('/products/procurement/buffers/');
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get procurement buffers: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateProcurementBuffer(int productId, Map<String, dynamic> bufferData) async {
+    try {
+      final response = await _djangoDio.put('/products/procurement/buffers/$productId/', data: bufferData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update procurement buffer: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getProductRecipes() async {
+    try {
+      final response = await _djangoDio.get('/products/procurement/recipes/');
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get product recipes: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> createVeggieBoxRecipes(Map<String, dynamic> recipeData) async {
+    try {
+      final response = await _djangoDio.post('/products/procurement/recipes/create-veggie-boxes/', data: recipeData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to create veggie box recipes: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getProcurementDashboardData() async {
+    try {
+      final response = await _djangoDio.get('/products/procurement/dashboard/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get procurement dashboard data: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  // ===== INVENTORY DASHBOARD API METHODS =====
+  
+  Future<Map<String, dynamic>> getInventoryDashboard() async {
+    try {
+      final response = await _djangoDio.get('/api/inventory/dashboard/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get inventory dashboard: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> reserveStock(Map<String, dynamic> reservationData) async {
+    try {
+      final response = await _djangoDio.post('/api/inventory/actions/reserve-stock/', data: reservationData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to reserve stock: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> stockAdjustmentAction(Map<String, dynamic> adjustmentData) async {
+    try {
+      final response = await _djangoDio.post('/api/inventory/actions/stock-adjustment/', data: adjustmentData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to perform stock adjustment: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  // ===== WHATSAPP PROCESSING LOGS =====
+  
+  Future<List<Map<String, dynamic>>> getProcessingLogs({int? limit}) async {
+    try {
+      final queryParams = <String, dynamic>{};
+      if (limit != null) queryParams['limit'] = limit;
+      
+      final response = await _djangoDio.get('/api/whatsapp/logs/', queryParameters: queryParams);
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get processing logs: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> refreshCompanyExtraction() async {
+    try {
+      final response = await _djangoDio.post('/api/whatsapp/messages/refresh-companies/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to refresh company extraction: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  // ===== PRODUCT ALERTS =====
+  
+  Future<List<Map<String, dynamic>>> getProductAlerts() async {
+    try {
+      final response = await _djangoDio.get('/api/products/alerts/');
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get product alerts: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> resolveAlert(int alertId) async {
+    try {
+      final response = await _djangoDio.post('/api/products/alerts/$alertId/resolve/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to resolve alert: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
   /// Extract meaningful error message from DioException or other exceptions
   String _extractErrorMessage(dynamic error, String fallbackMessage) {
     if (error is DioException) {

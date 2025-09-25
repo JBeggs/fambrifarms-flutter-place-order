@@ -260,6 +260,10 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
                                     ordersNotifier.updateOrderStatus(order.id, newStatus);
                                   },
                                   onDelete: () => _confirmDeleteOrder(context, order, ordersNotifier),
+                                  onOrderUpdated: () {
+                                    // Refresh orders when an order is updated
+                                    ordersNotifier.loadOrders();
+                                  },
                                 ),
                               );
                             },
@@ -421,85 +425,289 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Order ${order.orderNumber}'),
+        title: Text('View Order ${order.orderNumber}'),
         content: SizedBox(
-          width: double.maxFinite,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Customer Info
-              Text(
-                'Customer: ${order.restaurant.isRestaurant && order.restaurant.profile?.businessName != null ? order.restaurant.profile!.businessName! : order.restaurant.displayName}',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              
-              // Dates
-              Text('Order Date: ${order.orderDate}'),
-              Text('Delivery Date: ${order.deliveryDate}'),
-              const SizedBox(height: 8),
-              
-              // Status
-              Row(
-                children: [
-                  const Text('Status: '),
-                  OrderStatusChip(status: order.status),
+          width: 800, // Much wider for better viewing
+          height: 600,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Customer Information
+                Card(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Customer Information',
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _buildDetailRow(context, 'Business Name', 
+                          order.restaurant.isRestaurant && order.restaurant.profile?.businessName != null 
+                            ? order.restaurant.profile!.businessName! 
+                            : order.restaurant.displayName),
+                        _buildDetailRow(context, 'Contact', order.restaurant.email),
+                        if (order.restaurant.phone != null && order.restaurant.phone!.isNotEmpty)
+                          _buildDetailRow(context, 'Phone', order.restaurant.phone!),
+                        _buildDetailRow(context, 'Customer ID', order.restaurant.id.toString()),
+                        if (order.restaurant.customerSegment != null)
+                          _buildDetailRow(context, 'Segment', order.restaurant.customerSegment!),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // Order Context
+                Card(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Order Context',
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _buildDetailRow(context, 'Order Date', order.orderDate),
+                        _buildDetailRow(context, 'Delivery Date', order.deliveryDate),
+                        _buildDetailRow(context, 'Status', order.statusDisplay),
+                        if (order.whatsappMessageId != null)
+                          _buildDetailRow(context, 'WhatsApp ID', order.whatsappMessageId!),
+                        if (order.parsedByAi == true)
+                          _buildDetailRow(context, 'AI Parsed', 'Yes', valueColor: Colors.blue),
+                        if (order.subtotal != null)
+                          _buildDetailRow(context, 'Subtotal', 'R${order.subtotal!.toStringAsFixed(2)}'),
+                        if (order.totalAmount != null)
+                          _buildDetailRow(context, 'Total Amount', 'R${order.totalAmount!.toStringAsFixed(2)}'),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // Original WhatsApp Message
+                if (order.originalMessage != null && order.originalMessage!.isNotEmpty) ...[
+                  Card(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Original WhatsApp Message',
+                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(8.0),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.surface,
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: Text(
+                              order.originalMessage!,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                 ],
-              ),
-              const SizedBox(height: 16),
-              
-              // Items
-              Text(
-                'Items (${order.items.length}):',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              
-              Flexible(
-                child: ListView.builder(
+                
+                // Order Items with Pricing Details
+                Text(
+                  'Order Items (${order.items.length}):',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                
+                ListView.builder(
                   shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
                   itemCount: order.items.length,
                   itemBuilder: (context, index) {
                     final item = order.items[index];
-                    return ListTile(
-                      dense: true,
-                      title: Text(item.product.name),
-                      subtitle: Text(item.originalText ?? ''),
-                      trailing: Text(
-                        '${item.displayQuantity} @ R${item.price.toStringAsFixed(2)}',
-                        style: Theme.of(context).textTheme.bodySmall,
+                    return Card(
+                      child: ExpansionTile(
+                        title: Text(
+                          item.product.name,
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${item.quantity} ${item.unit} × R${item.price.toStringAsFixed(2)}'),
+                            if (item.originalText != null && item.originalText!.isNotEmpty)
+                              Text(
+                                'Original: "${item.originalText}"',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  fontStyle: FontStyle.italic,
+                                  color: Theme.of(context).colorScheme.outline,
+                                ),
+                              ),
+                          ],
+                        ),
+                        trailing: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'R${item.totalPrice.toStringAsFixed(2)}',
+                              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                            if (item.confidenceScore != null)
+                              Text(
+                                '${(item.confidenceScore! * 100).toInt()}% confidence',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: item.confidenceScore! > 0.8 
+                                    ? Colors.green 
+                                    : item.confidenceScore! > 0.6 
+                                      ? Colors.orange 
+                                      : Colors.red,
+                                ),
+                              ),
+                          ],
+                        ),
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Product Details
+                                _buildDetailRow(context, 'Product ID', item.product.id.toString()),
+                                if (item.product.description != null && item.product.description!.isNotEmpty)
+                                  _buildDetailRow(context, 'Description', item.product.description!),
+                                if (item.product.department != null)
+                                  _buildDetailRow(context, 'Department', item.product.department!.name),
+                                
+                                const Divider(),
+                                
+                                // Pricing Details
+                                Text(
+                                  'Pricing Breakdown',
+                                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                _buildDetailRow(context, 'Base Product Price', 'R${item.product.price.toStringAsFixed(2)}'),
+                                _buildDetailRow(context, 'Applied Price', 'R${item.price.toStringAsFixed(2)}'),
+                                if (item.price != item.product.price)
+                                  _buildDetailRow(
+                                    context, 
+                                    'Price Difference', 
+                                    '${item.price > item.product.price ? '+' : ''}R${(item.price - item.product.price).toStringAsFixed(2)}',
+                                    valueColor: item.price > item.product.price ? Colors.red : Colors.green,
+                                  ),
+                                _buildDetailRow(context, 'Quantity', '${item.quantity} ${item.unit}'),
+                                _buildDetailRow(context, 'Line Total', 'R${item.totalPrice.toStringAsFixed(2)}'),
+                                
+                                if (item.notes != null && item.notes!.isNotEmpty) ...[
+                                  const Divider(),
+                                  _buildDetailRow(context, 'Notes', item.notes!),
+                                ],
+                                
+                                // AI Parsing Details
+                                if (item.originalText != null || item.confidenceScore != null || item.manuallyCorrected == true) ...[
+                                  const Divider(),
+                                  Text(
+                                    'AI Parsing Details',
+                                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  if (item.originalText != null)
+                                    _buildDetailRow(context, 'Original Text', '"${item.originalText}"'),
+                                  if (item.confidenceScore != null)
+                                    _buildDetailRow(
+                                      context, 
+                                      'AI Confidence', 
+                                      '${(item.confidenceScore! * 100).toInt()}%',
+                                      valueColor: item.confidenceScore! > 0.8 
+                                        ? Colors.green 
+                                        : item.confidenceScore! > 0.6 
+                                          ? Colors.orange 
+                                          : Colors.red,
+                                    ),
+                                  if (item.manuallyCorrected == true)
+                                    _buildDetailRow(context, 'Status', 'Manually Corrected', valueColor: Colors.blue),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   },
                 ),
-              ),
-              
-              if (order.totalAmount != null) ...[
-                const Divider(),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Total:',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Text(
-                      'R${order.totalAmount!.toStringAsFixed(2)}',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
               ],
-            ],
+            ),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(BuildContext context, String label, String value, {Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              '$label:',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w500,
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: valueColor,
+              ),
+            ),
           ),
         ],
       ),
