@@ -14,6 +14,7 @@ class WhatsAppMessage {
   final bool edited;
   final String? originalContent;
   final bool processed;
+  final String? processingNotes;
   final String? orderDay;
   final double confidenceScore;
   final String? companyName;
@@ -53,6 +54,7 @@ class WhatsAppMessage {
     this.edited = false,
     this.originalContent,
     this.processed = false,
+    this.processingNotes,
     this.orderDay,
     this.confidenceScore = 0.0,
     this.companyName,
@@ -103,6 +105,7 @@ class WhatsAppMessage {
       edited: json['edited'] as bool? ?? false,
       originalContent: json['original_content'] as String? ?? json['originalContent'] as String?,
       processed: json['processed'] as bool? ?? false,
+      processingNotes: json['processing_notes'] as String?,
       orderDay: json['order_day'] as String?,
       confidenceScore: (json['confidence_score'] as num?)?.toDouble() ?? 0.0,
       companyName: json['company_name'] as String?,
@@ -145,6 +148,7 @@ class WhatsAppMessage {
       'edited': edited,
       'original_content': originalContent,
       'processed': processed,
+      'processing_notes': processingNotes,
       'order_day': orderDay,
       'confidence_score': confidenceScore,
       'company_name': companyName,
@@ -184,6 +188,7 @@ class WhatsAppMessage {
     bool? edited,
     String? originalContent,
     bool? processed,
+    String? processingNotes,
     String? orderDay,
     double? confidenceScore,
     String? companyName,
@@ -221,6 +226,7 @@ class WhatsAppMessage {
       edited: edited ?? this.edited,
       originalContent: originalContent ?? this.originalContent,
       processed: processed ?? this.processed,
+      processingNotes: processingNotes ?? this.processingNotes,
       orderDay: orderDay ?? this.orderDay,
       confidenceScore: confidenceScore ?? this.confidenceScore,
       companyName: companyName ?? this.companyName,

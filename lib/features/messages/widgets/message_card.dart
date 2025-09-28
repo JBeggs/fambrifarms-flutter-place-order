@@ -58,6 +58,15 @@ class _MessageCardState extends State<MessageCard> {
     }
   }
 
+  String _formatProcessingNotes(String notes) {
+    // Replace pipe separators with line breaks for better readability
+    return notes
+        .replaceAll(' | ', '\n• ')
+        .replaceAll('Failed items: ', '\nFailed items:\n  ')
+        .replaceAll('; ', '\n  ')
+        .replaceAll('(and ', '\n  (and ');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -225,6 +234,81 @@ class _MessageCardState extends State<MessageCard> {
                 ),
                 
                 const SizedBox(height: 12),
+                
+                // Processing Notes (if available)
+                if (widget.message.processingNotes != null && widget.message.processingNotes!.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: widget.message.processingNotes!.contains('❌')
+                          ? Colors.red.withValues(alpha: 0.1)
+                          : widget.message.processingNotes!.contains('⚠️')
+                              ? Colors.orange.withValues(alpha: 0.1)
+                              : Colors.green.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: widget.message.processingNotes!.contains('❌')
+                            ? Colors.red.withValues(alpha: 0.3)
+                            : widget.message.processingNotes!.contains('⚠️')
+                                ? Colors.orange.withValues(alpha: 0.3)
+                                : Colors.green.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          widget.message.processingNotes!.contains('❌')
+                              ? Icons.error_outline
+                              : widget.message.processingNotes!.contains('⚠️')
+                                  ? Icons.warning_amber_outlined
+                                  : Icons.info_outline,
+                          size: 16,
+                          color: widget.message.processingNotes!.contains('❌')
+                              ? Colors.red.shade700
+                              : widget.message.processingNotes!.contains('⚠️')
+                                  ? Colors.orange.shade700
+                                  : Colors.green.shade700,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Processing Status',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: widget.message.processingNotes!.contains('❌')
+                                      ? Colors.red.shade700
+                                      : widget.message.processingNotes!.contains('⚠️')
+                                          ? Colors.orange.shade700
+                                          : Colors.green.shade700,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _formatProcessingNotes(widget.message.processingNotes!),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: widget.message.processingNotes!.contains('❌')
+                                      ? Colors.red.shade600
+                                      : widget.message.processingNotes!.contains('⚠️')
+                                          ? Colors.orange.shade600
+                                          : Colors.green.shade600,
+                                  fontFamily: 'monospace',
+                                  height: 1.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 
                 // Message Content
                 Container(

@@ -18,6 +18,7 @@ import '../features/messages/messages_page.dart';
 import '../features/orders/orders_page.dart';
 import '../features/pricing/pricing_dashboard_page.dart';
 import '../features/inventory/inventory_page.dart';
+import '../features/dashboard/dashboard_page.dart';
 import 'professional_theme.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -69,6 +70,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/karl-dashboard',
         builder: (context, state) => const KarlDashboardPage(),
+      ),
+      GoRoute(
+        path: '/dashboard',
+        builder: (context, state) => const DashboardPage(),
       ),
       // Legacy routes (keep for existing functionality)
       GoRoute(

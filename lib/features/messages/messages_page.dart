@@ -197,21 +197,22 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                             size: 16,
                             color: Theme.of(context).colorScheme.outline,
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Show Processed',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          const SizedBox(width: 4),
-                          Switch(
-                            value: showProcessedMessages,
-                            onChanged: (value) {
-                              setState(() {
-                                showProcessedMessages = value;
-                              });
-                            },
-                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
+                          // Commented out for smaller screens - can be re-enabled later
+                          // const SizedBox(width: 4),
+                          // Text(
+                          //   'Show Processed',
+                          //   style: Theme.of(context).textTheme.bodySmall,
+                          // ),
+                          // const SizedBox(width: 4),
+                          // Switch(
+                          //   value: showProcessedMessages,
+                          //   onChanged: (value) {
+                          //     setState(() {
+                          //       showProcessedMessages = value;
+                          //     });
+                          //   },
+                          //   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          // ),
                         ],
                       ),
                       
@@ -246,11 +247,6 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                         child: const Text('Select All'),
                       ),
                       
-                      TextButton(
-                        onPressed: messagesState.selectedMessageIds.isEmpty ? null : messagesNotifier.clearSelection,
-                        child: const Text('Clear'),
-                      ),
-                      
                       const SizedBox(width: 12),
                       
                       // Process Button
@@ -265,21 +261,6 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Text('Process Selected'),
-                      ),
-                      
-                      const SizedBox(width: 12),
-                      
-                      // Create Orders Button
-                      ElevatedButton.icon(
-                        onPressed: messagesState.selectedMessageIds.isEmpty || messagesState.isLoading
-                            ? null
-                            : () => _createOrdersFromSelected(context, messagesNotifier),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).colorScheme.secondary,
-                          foregroundColor: Theme.of(context).colorScheme.onSecondary,
-                        ),
-                        icon: const Icon(Icons.shopping_cart_outlined),
-                        label: const Text('Create Orders'),
                       ),
                       
                       const SizedBox(width: 12),

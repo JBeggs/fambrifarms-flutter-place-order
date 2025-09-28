@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/whatsapp_message.dart';
 import '../models/order.dart';
 import '../models/pricing_rule.dart';
@@ -14,6 +16,9 @@ import '../config/app_constants.dart';
 class ApiService {
   // Singleton pattern
   static ApiService? _instance;
+  
+  // Flag to prevent infinite refresh loops
+  bool _isRefreshing = false;
   
   // Private constructor for singleton
   ApiService._internal() {
@@ -78,9 +83,12 @@ class ApiService {
       receiveTimeout: Duration(seconds: AppConfig.apiTimeoutSeconds * 10), // Longer timeout for WhatsApp operations
     ));
     
-    // Load configuration from database on first instantiation
+    // Load configuration from database on first instantiation (only if authenticated)
     if (!_configLoaded) {
-      _loadAppConfig();
+      _loadAppConfig().catchError((e) {
+        debugPrint('[CONFIG] Failed to load app config: $e');
+        // Don't block initialization if config loading fails
+      });
     }
     
     // Add authentication interceptor for Django
@@ -93,7 +101,13 @@ class ApiService {
       },
       onError: (error, handler) async {
         if (error.response?.statusCode == 401 && _refreshToken != null) {
-          // Try to refresh token
+          // Prevent infinite loops by checking if we're already refreshing
+          if (_isRefreshing) {
+            handler.next(error);
+            return;
+          }
+          
+          _isRefreshing = true;
           try {
             await _refreshAccessToken();
             // Retry the original request
@@ -103,9 +117,12 @@ class ApiService {
             handler.resolve(response);
             return;
           } catch (e) {
-            // Refresh failed, clear tokens
+            // Refresh failed, clear tokens and stop trying
+            debugPrint('[AUTH] Token refresh failed: $e');
             _accessToken = null;
             _refreshToken = null;
+          } finally {
+            _isRefreshing = false;
           }
         }
         handler.next(error);
@@ -166,6 +183,20 @@ class ApiService {
       throw ApiException(_extractErrorMessage(e, 'Failed to login'));
     }
   }
+
+  Future<Map<String, dynamic>> getUserProfile() async {
+    try {
+      final response = await _djangoDio.get('/auth/profile/');
+      return response.data;
+    } catch (e) {
+      throw ApiException(_extractErrorMessage(e, 'Failed to get user profile'));
+    }
+  }
+
+  void setTokens(String accessToken, String? refreshToken) {
+    _accessToken = accessToken;
+    _refreshToken = refreshToken;
+  }
   
   Future<void> _refreshAccessToken() async {
     if (_refreshToken == null) {
@@ -186,6 +217,33 @@ class ApiService {
   void logout() {
     _accessToken = null;
     _refreshToken = null;
+  }
+  
+  /// Manually refresh the access token
+  Future<void> refreshToken() async {
+    await _refreshAccessToken();
+  }
+  
+  /// Check if user is authenticated
+  bool get isAuthenticated => _accessToken != null;
+  
+  /// Check if refresh token is available
+  bool get canRefreshToken => _refreshToken != null;
+  
+  /// Clear all stored authentication data (for debugging)
+  Future<void> clearStoredAuth() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('karl_email');
+      await prefs.remove('access_token');
+      await prefs.remove('refresh_token');
+      await prefs.remove('remember_karl');
+      _accessToken = null;
+      _refreshToken = null;
+      debugPrint('[AUTH] Cleared all stored authentication data');
+    } catch (e) {
+      debugPrint('[AUTH] Failed to clear stored auth: $e');
+    }
   }
 
   // Health check - Django backend
@@ -238,7 +296,7 @@ class ApiService {
       });
       final Map<String, dynamic> data = response.data;
       final List<dynamic> messages = data['messages'] ?? [];
-      return messages.map((json) => WhatsAppMessage.fromJson(json)).toList();
+      return messages.map((json) => WhatsAppMessage.fromJson(Map<String, dynamic>.from(json))).toList();
     } catch (e) {
       throw ApiException('Failed to get messages: $e');
     }
@@ -281,7 +339,7 @@ class ApiService {
       }
       
       final response = await _djangoDio.post('/whatsapp/messages/edit/', data: data);
-      return WhatsAppMessage.fromJson(response.data['message']);
+      return WhatsAppMessage.fromJson(Map<String, dynamic>.from(response.data['message']));
     } catch (e) {
       throw ApiException('Failed to edit message: $e');
     }
@@ -293,7 +351,7 @@ class ApiService {
         'message_id': databaseId,  // This uses the database ID
         'company_name': companyName,
       });
-      return WhatsAppMessage.fromJson(response.data['data']);
+      return WhatsAppMessage.fromJson(Map<String, dynamic>.from(response.data['data']));
     } catch (e) {
       throw ApiException('Failed to update message company: $e');
     }
@@ -305,7 +363,7 @@ class ApiService {
         'message_id': int.parse(databaseId),  // Backend expects integer ID
         'message_type': messageType,
       });
-      return WhatsAppMessage.fromJson(response.data['data']);
+      return WhatsAppMessage.fromJson(Map<String, dynamic>.from(response.data['data']));
     } catch (e) {
       throw ApiException('Failed to update message type: $e');
     }
@@ -333,10 +391,11 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> processStockAndApplyToInventory(List<String> messageIds) async {
+  Future<Map<String, dynamic>> processStockAndApplyToInventory(List<String> messageIds, {bool resetBeforeProcessing = true}) async {
     try {
       final response = await _djangoDio.post('/whatsapp/process-stock-and-apply/', data: {
         'message_ids': messageIds,
+        'reset_before_processing': resetBeforeProcessing,
       });
       return response.data;
     } catch (e) {
@@ -344,9 +403,11 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> applyStockUpdatesToInventory() async {
+  Future<Map<String, dynamic>> applyStockUpdatesToInventory({bool resetBeforeProcessing = true}) async {
     try {
-      final response = await _djangoDio.post('/whatsapp/stock-updates/apply-to-inventory/');
+      final response = await _djangoDio.post('/whatsapp/stock-updates/apply-to-inventory/', data: {
+        'reset_before_processing': resetBeforeProcessing,
+      });
       return response.data;
     } catch (e) {
       throw ApiException('Failed to apply stock updates to inventory: $e');
@@ -367,25 +428,71 @@ class ApiService {
   // Order Management API methods
   Future<List<Order>> getOrders() async {
     try {
+      print('[DEBUG] Starting getOrders API call...');
       final response = await _djangoDio.get('/orders/');
+      print('[DEBUG] Got response, type: ${response.data.runtimeType}');
       
       // Handle Django REST Framework pagination format
       if (response.data is Map<String, dynamic>) {
+        print('[DEBUG] Response is Map, checking for results...');
         final Map<String, dynamic> responseData = response.data;
+        print('[DEBUG] Response keys: ${responseData.keys.toList()}');
+        
         if (responseData.containsKey('results')) {
           final List<dynamic> ordersJson = responseData['results'];
-          return ordersJson.map((json) => Order.fromJson(json)).toList();
+          print('[DEBUG] Found ${ordersJson.length} orders in results');
+          
+          final List<Order> orders = [];
+          for (int i = 0; i < ordersJson.length; i++) {
+            try {
+              print('[DEBUG] Processing order $i, type: ${ordersJson[i].runtimeType}');
+              final orderMap = Map<String, dynamic>.from(ordersJson[i]);
+              print('[DEBUG] Order $i converted to Map, creating Order object...');
+              final order = Order.fromJson(orderMap);
+              orders.add(order);
+              print('[DEBUG] Order $i created successfully');
+            } catch (e) {
+              print('[ERROR] Failed to parse order $i: $e');
+              print('[ERROR] Order $i data: ${ordersJson[i]}');
+              rethrow;
+            }
+          }
+          
+          print('[DEBUG] Successfully parsed ${orders.length} orders');
+          return orders;
         }
       }
       
       // Handle direct array response
       if (response.data is List<dynamic>) {
+        print('[DEBUG] Response is direct List');
         final List<dynamic> ordersJson = response.data;
-        return ordersJson.map((json) => Order.fromJson(json)).toList();
+        print('[DEBUG] Found ${ordersJson.length} orders in direct list');
+        
+        final List<Order> orders = [];
+        for (int i = 0; i < ordersJson.length; i++) {
+          try {
+            print('[DEBUG] Processing order $i, type: ${ordersJson[i].runtimeType}');
+            final orderMap = Map<String, dynamic>.from(ordersJson[i]);
+            print('[DEBUG] Order $i converted to Map, creating Order object...');
+            final order = Order.fromJson(orderMap);
+            orders.add(order);
+            print('[DEBUG] Order $i created successfully');
+          } catch (e) {
+            print('[ERROR] Failed to parse order $i: $e');
+            print('[ERROR] Order $i data: ${ordersJson[i]}');
+            rethrow;
+          }
+        }
+        
+        print('[DEBUG] Successfully parsed ${orders.length} orders');
+        return orders;
       }
       
+      print('[ERROR] Unexpected response format: ${response.data.runtimeType}');
       throw ApiException('Unexpected response format from orders API');
     } catch (e) {
+      print('[ERROR] getOrders failed: $e');
       throw ApiException('Failed to get orders: $e');
     }
   }
@@ -393,7 +500,7 @@ class ApiService {
   Future<Order> getOrder(int orderId) async {
     try {
       final response = await _djangoDio.get('/orders/$orderId/');
-      return Order.fromJson(response.data);
+      return Order.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to get order: $e');
     }
@@ -402,7 +509,7 @@ class ApiService {
   Future<Order> createOrder(Map<String, dynamic> orderData) async {
     try {
       final response = await _djangoDio.post('/orders/', data: orderData);
-      return Order.fromJson(response.data);
+      return Order.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to create order: $e');
     }
@@ -411,7 +518,7 @@ class ApiService {
   Future<Order> updateOrder(int orderId, Map<String, dynamic> orderData) async {
     try {
       final response = await _djangoDio.put('/orders/$orderId/', data: orderData);
-      return Order.fromJson(response.data);
+      return Order.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to update order: $e');
     }
@@ -422,7 +529,7 @@ class ApiService {
       final response = await _djangoDio.patch('/orders/$orderId/status/', data: {
         'status': status,
       });
-      return Order.fromJson(response.data);
+      return Order.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to update order status: $e');
     }
@@ -657,7 +764,7 @@ class ApiService {
       final response = await _djangoDio.get('/auth/customers/');
       final Map<String, dynamic> data = response.data;
       final List<dynamic> customersJson = data['customers'] ?? [];
-      return customersJson.map((json) => customer_model.Customer.fromJson(json)).toList();
+      return customersJson.map((json) => customer_model.Customer.fromJson(Map<String, dynamic>.from(json))).toList();
     } catch (e) {
       throw ApiException('Failed to get customers: $e');
     }
@@ -666,7 +773,7 @@ class ApiService {
   Future<customer_model.Customer> createCustomer(Map<String, dynamic> customerData) async {
     try {
       final response = await _djangoDio.post('/auth/customers/', data: customerData);
-      return customer_model.Customer.fromJson(response.data);
+      return customer_model.Customer.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to create customer: $e');
     }
@@ -675,7 +782,7 @@ class ApiService {
   Future<customer_model.Customer> updateCustomer(int customerId, Map<String, dynamic> customerData) async {
     try {
       final response = await _djangoDio.put('/auth/customers/$customerId/', data: customerData);
-      return customer_model.Customer.fromJson(response.data);
+      return customer_model.Customer.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to update customer: $e');
     }
@@ -684,7 +791,7 @@ class ApiService {
   Future<customer_model.Customer> getCustomer(int customerId) async {
     try {
       final response = await _djangoDio.get('/auth/customers/$customerId/');
-      return customer_model.Customer.fromJson(response.data);
+      return customer_model.Customer.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to get customer: $e');
     }
@@ -693,9 +800,9 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getCustomerOrders(int customerId) async {
     try {
       final response = await _djangoDio.get('/orders/customer/$customerId/');
-      final Map<String, dynamic> data = response.data;
+      final Map<String, dynamic> data = Map<String, dynamic>.from(response.data);
       final List<dynamic> ordersJson = data['results'] ?? [];
-      return List<Map<String, dynamic>>.from(ordersJson);
+      return ordersJson.map((json) => Map<String, dynamic>.from(json)).toList();
     } catch (e) {
       throw ApiException('Failed to get customer orders: $e');
     }
@@ -708,7 +815,7 @@ class ApiService {
       // Handle paginated response (if pagination is enabled)
       if (response.data is Map<String, dynamic> && response.data.containsKey('results')) {
         final List<dynamic> productsJson = response.data['results'];
-        return productsJson.map((json) => product_model.Product.fromJson(json)).toList();
+        return productsJson.map((json) => product_model.Product.fromJson(Map<String, dynamic>.from(json))).toList();
       }
       
       // Handle direct array response (pagination disabled)
@@ -725,7 +832,7 @@ class ApiService {
       print('[API] Updating product $productId with data: $updateData');
       final response = await _djangoDio.patch('/products/products/$productId/', data: updateData);
       print('[API] Product update response: ${response.data}');
-      return product_model.Product.fromJson(response.data);
+      return product_model.Product.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       print('[API] Product update error: $e');
       throw ApiException('Failed to update product: $e');
@@ -789,7 +896,7 @@ class ApiService {
       // Handle Django REST Framework pagination format
       if (response.data is Map<String, dynamic> && response.data.containsKey('results')) {
         final List<dynamic> rulesJson = response.data['results'];
-        return rulesJson.map((json) => PricingRule.fromJson(json)).toList();
+        return rulesJson.map((json) => PricingRule.fromJson(Map<String, dynamic>.from(json))).toList();
       }
       
       // Handle direct array response (fallback)
@@ -803,7 +910,7 @@ class ApiService {
   Future<PricingRule> getPricingRule(int ruleId) async {
     try {
       final response = await _djangoDio.get('/inventory/pricing-rules/$ruleId/');
-      return PricingRule.fromJson(response.data);
+      return PricingRule.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to get pricing rule: $e');
     }
@@ -811,18 +918,29 @@ class ApiService {
 
   Future<PricingRule> createPricingRule(Map<String, dynamic> ruleData) async {
     try {
+      debugPrint('[PRICING] Creating pricing rule with data: $ruleData');
+      debugPrint('[PRICING] Access token available: ${_accessToken != null}');
       final response = await _djangoDio.post('/inventory/pricing-rules/', data: ruleData);
-      return PricingRule.fromJson(response.data);
+      debugPrint('[PRICING] Pricing rule created successfully');
+      return PricingRule.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
+      debugPrint('[PRICING] Error creating pricing rule: $e');
       throw ApiException(_extractErrorMessage(e, 'Failed to create pricing rule'));
     }
   }
 
   Future<PricingRule> updatePricingRule(int ruleId, Map<String, dynamic> ruleData) async {
     try {
+      debugPrint('[PRICING] Updating pricing rule $ruleId with data: $ruleData');
+      debugPrint('[PRICING] Access token available: ${_accessToken != null}');
       final response = await _djangoDio.put('/inventory/pricing-rules/$ruleId/', data: ruleData);
-      return PricingRule.fromJson(response.data);
+      debugPrint('[PRICING] Pricing rule updated successfully');
+      return PricingRule.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
+      debugPrint('[PRICING] Error updating pricing rule: $e');
+      if (e is DioException && e.response?.data != null) {
+        debugPrint('[PRICING] Error response data: ${e.response?.data}');
+      }
       throw ApiException(_extractErrorMessage(e, 'Failed to update pricing rule'));
     }
   }
@@ -860,7 +978,7 @@ class ApiService {
 
       final response = await _djangoDio.get('/inventory/market-prices/', queryParameters: queryParams);
       final List<dynamic> pricesJson = response.data;
-      return pricesJson.map((json) => MarketPrice.fromJson(json)).toList();
+      return pricesJson.map((json) => MarketPrice.fromJson(Map<String, dynamic>.from(json))).toList();
     } catch (e) {
       throw ApiException('Failed to get market prices: $e');
     }
@@ -895,7 +1013,7 @@ class ApiService {
       // Handle Django REST Framework pagination format
       if (response.data is Map<String, dynamic> && response.data.containsKey('results')) {
         final List<dynamic> listsJson = response.data['results'];
-        return listsJson.map((json) => CustomerPriceList.fromJson(json)).toList();
+        return listsJson.map((json) => CustomerPriceList.fromJson(Map<String, dynamic>.from(json))).toList();
       }
       
       // Handle direct array response (fallback)
@@ -909,7 +1027,7 @@ class ApiService {
   Future<CustomerPriceList> getCustomerPriceList(int listId) async {
     try {
       final response = await _djangoDio.get('/inventory/customer-price-lists/$listId/');
-      return CustomerPriceList.fromJson(response.data);
+      return CustomerPriceList.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to get customer price list: $e');
     }
@@ -918,7 +1036,7 @@ class ApiService {
   Future<CustomerPriceList> createCustomerPriceList(Map<String, dynamic> priceListData) async {
     try {
       final response = await _djangoDio.post('/inventory/customer-price-lists/', data: priceListData);
-      return CustomerPriceList.fromJson(response.data);
+      return CustomerPriceList.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to create customer price list: $e');
     }
@@ -949,7 +1067,7 @@ class ApiService {
   Future<CustomerPriceList> activateCustomerPriceList(int listId) async {
     try {
       final response = await _djangoDio.post('/inventory/customer-price-lists/$listId/activate/');
-      return CustomerPriceList.fromJson(response.data);
+      return CustomerPriceList.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to activate customer price list: $e');
     }
@@ -958,7 +1076,7 @@ class ApiService {
   Future<CustomerPriceList> sendCustomerPriceListToCustomer(int listId) async {
     try {
       final response = await _djangoDio.post('/inventory/customer-price-lists/$listId/send_to_customer/');
-      return CustomerPriceList.fromJson(response.data);
+      return CustomerPriceList.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to send customer price list: $e');
     }
@@ -969,7 +1087,7 @@ class ApiService {
       final response = await _djangoDio.patch('/inventory/customer-price-lists/$listId/', data: {
         'pricing_rule': pricingRuleId,
       });
-      return CustomerPriceList.fromJson(response.data);
+      return CustomerPriceList.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to update customer price list rule: $e');
     }
@@ -994,7 +1112,7 @@ class ApiService {
       }
 
       final response = await _djangoDio.patch('/inventory/customer-price-lists/$listId/', data: data);
-      return CustomerPriceList.fromJson(response.data);
+      return CustomerPriceList.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
       throw ApiException('Failed to update customer price list metadata: $e');
     }
@@ -1311,7 +1429,8 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getMarketRecommendations() async {
     try {
       final response = await _djangoDio.get('/products/procurement/recommendations/');
-      return List<Map<String, dynamic>>.from(response.data);
+      final data = response.data as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['recommendations'] ?? []);
     } catch (e) {
       throw ApiException('Failed to get market recommendations: ${_extractErrorMessage(e, "Network error")}');
     }
@@ -1329,7 +1448,8 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getProcurementBuffers() async {
     try {
       final response = await _djangoDio.get('/products/procurement/buffers/');
-      return List<Map<String, dynamic>>.from(response.data);
+      final data = response.data as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['buffers'] ?? []);
     } catch (e) {
       throw ApiException('Failed to get procurement buffers: ${_extractErrorMessage(e, "Network error")}');
     }
@@ -1347,7 +1467,8 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getProductRecipes() async {
     try {
       final response = await _djangoDio.get('/products/procurement/recipes/');
-      return List<Map<String, dynamic>>.from(response.data);
+      final data = response.data as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(data['recipes'] ?? []);
     } catch (e) {
       throw ApiException('Failed to get product recipes: ${_extractErrorMessage(e, "Network error")}');
     }

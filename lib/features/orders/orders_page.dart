@@ -259,9 +259,12 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
                                   onStatusChanged: (newStatus) {
                                     ordersNotifier.updateOrderStatus(order.id, newStatus);
                                   },
-                                  onDelete: () => _confirmDeleteOrder(context, order, ordersNotifier),
                                   onOrderUpdated: () {
                                     // Refresh orders when an order is updated
+                                    ordersNotifier.loadOrders();
+                                  },
+                                  onOrderDeleted: () {
+                                    // Refresh orders when an order is deleted
                                     ordersNotifier.loadOrders();
                                   },
                                 ),

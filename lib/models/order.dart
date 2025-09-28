@@ -1,4 +1,5 @@
 import 'customer.dart';
+import 'pricing_rule.dart';
 
 class Order {
   final int id;
@@ -34,38 +35,71 @@ class Order {
   });
 
   factory Order.fromJson(Map<String, dynamic> json) {
-    // Handle Django API format where restaurant info is flattened
-    final restaurant = Customer(
-      id: json['restaurant'] as int,
-      email: json['restaurant_email'] as String? ?? '',
-      name: json['restaurant_name'] as String? ?? '',
-      phone: json['restaurant_phone'] as String? ?? '',
-      customerType: 'restaurant',
-      isActive: true,
-      profile: json['restaurant_business_name'] != null ? CustomerProfile(
+    try {
+      print('[DEBUG] Order.fromJson - Starting parse...');
+      print('[DEBUG] Order.fromJson - JSON keys: ${json.keys.toList()}');
+      
+      // Handle Django API format where restaurant info is flattened
+      print('[DEBUG] Order.fromJson - Creating customer...');
+      final restaurant = Customer(
         id: json['restaurant'] as int,
-        businessName: json['restaurant_business_name'] as String?,
-      ) : null,
-    );
+        email: json['restaurant_email'] as String? ?? '',
+        name: json['restaurant_name'] as String? ?? '',
+        phone: json['restaurant_phone'] as String? ?? '',
+        customerType: 'restaurant',
+        isActive: true,
+        profile: json['restaurant_business_name'] != null ? CustomerProfile(
+          id: json['restaurant'] as int,
+          businessName: json['restaurant_business_name'] as String?,
+        ) : null,
+      );
+      print('[DEBUG] Order.fromJson - Customer created successfully');
 
-    return Order(
-      id: json['id'] as int,
-      orderNumber: json['order_number'] as String,
-      restaurant: restaurant,
-      orderDate: json['order_date'] as String,
-      deliveryDate: json['delivery_date'] as String,
-      status: json['status'] as String,
-      items: (json['items'] as List<dynamic>?)
-          ?.map((item) => OrderItem.fromJson(item))
-          .toList() ?? [],
-      originalMessage: json['original_message'] as String?,
-      whatsappMessageId: json['whatsapp_message_id'] as String?,
-      parsedByAi: json['parsed_by_ai'] as bool?,
-      subtotal: _parseDouble(json['subtotal']),
-      totalAmount: _parseDouble(json['total_amount']),
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
-    );
+      print('[DEBUG] Order.fromJson - Processing items...');
+      final itemsList = json['items'] as List<dynamic>?;
+      print('[DEBUG] Order.fromJson - Items list type: ${itemsList.runtimeType}, length: ${itemsList?.length}');
+      
+      final List<OrderItem> items = [];
+      if (itemsList != null) {
+        for (int i = 0; i < itemsList.length; i++) {
+          try {
+            print('[DEBUG] Order.fromJson - Processing item $i, type: ${itemsList[i].runtimeType}');
+            final itemMap = Map<String, dynamic>.from(itemsList[i]);
+            print('[DEBUG] Order.fromJson - Item $i converted to Map, creating OrderItem...');
+            final orderItem = OrderItem.fromJson(itemMap);
+            items.add(orderItem);
+            print('[DEBUG] Order.fromJson - Item $i created successfully');
+          } catch (e) {
+            print('[ERROR] Order.fromJson - Failed to parse item $i: $e');
+            print('[ERROR] Order.fromJson - Item $i data: ${itemsList[i]}');
+            rethrow;
+          }
+        }
+      }
+      print('[DEBUG] Order.fromJson - All items processed successfully');
+
+      print('[DEBUG] Order.fromJson - Creating Order object...');
+      return Order(
+        id: json['id'] as int,
+        orderNumber: json['order_number'] as String,
+        restaurant: restaurant,
+        orderDate: json['order_date'] as String,
+        deliveryDate: json['delivery_date'] as String,
+        status: json['status'] as String,
+        items: items,
+        originalMessage: json['original_message'] as String?,
+        whatsappMessageId: json['whatsapp_message_id'] as String?,
+        parsedByAi: json['parsed_by_ai'] as bool?,
+        subtotal: _parseDouble(json['subtotal']),
+        totalAmount: _parseDouble(json['total_amount']),
+        createdAt: DateTime.parse(json['created_at']),
+        updatedAt: DateTime.parse(json['updated_at']),
+      );
+    } catch (e) {
+      print('[ERROR] Order.fromJson - Failed: $e');
+      print('[ERROR] Order.fromJson - JSON: $json');
+      rethrow;
+    }
   }
 
   Map<String, dynamic> toJson() {
@@ -132,6 +166,8 @@ class OrderItem {
   final double? confidenceScore;
   final bool? manuallyCorrected;
   final String? notes;
+  final double? productBasePrice;
+  final PricingBreakdown? pricingBreakdown;
 
   const OrderItem({
     required this.id,
@@ -144,36 +180,69 @@ class OrderItem {
     this.confidenceScore,
     this.manuallyCorrected,
     this.notes,
+    this.productBasePrice,
+    this.pricingBreakdown,
   });
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
-    // Handle Django API format where product info is flattened
-    final product = Product(
-      id: json['product'] as int,
-      name: json['product_name'] as String? ?? '',
-      price: _parseDouble(json['price']) ?? 0.0,
-      isActive: true,
-      description: json['product_description'] as String?,
-      department: json['product_department'] != null 
-          ? Department(
-              id: 0, // We don't have the department ID
-              name: json['product_department'] as String,
-            )
-          : null,
-    );
+    try {
+      print('[DEBUG] OrderItem.fromJson - Starting parse...');
+      print('[DEBUG] OrderItem.fromJson - JSON keys: ${json.keys.toList()}');
+      
+      // Handle Django API format where product info is flattened
+      print('[DEBUG] OrderItem.fromJson - Creating product...');
+      final product = Product(
+        id: json['product'] as int,
+        name: json['product_name'] as String? ?? '',
+        price: _parseDouble(json['price']) ?? 0.0,
+        isActive: true,
+        description: json['product_description'] as String?,
+        department: json['product_department'] != null 
+            ? Department(
+                id: 0, // We don't have the department ID
+                name: json['product_department'] as String,
+              )
+            : null,
+        unit: json['product_default_unit'] as String? ?? 'piece',
+      );
+      print('[DEBUG] OrderItem.fromJson - Product created successfully');
 
-    return OrderItem(
-      id: json['id'] as int,
-      product: product,
-      quantity: _parseDouble(json['quantity']) ?? 0.0,
-      unit: json['unit'] as String?,
-      price: _parseDouble(json['price']) ?? 0.0,
-      totalPrice: _parseDouble(json['total_price']) ?? 0.0,
-      originalText: json['original_text'] as String?,
-      confidenceScore: (json['confidence_score'] as num?)?.toDouble(),
-      manuallyCorrected: json['manually_corrected'] as bool?,
-      notes: json['notes'] as String?,
-    );
+      print('[DEBUG] OrderItem.fromJson - Processing pricing breakdown...');
+      PricingBreakdown? pricingBreakdown;
+      if (json['pricing_breakdown'] != null) {
+        print('[DEBUG] OrderItem.fromJson - pricing_breakdown type: ${json['pricing_breakdown'].runtimeType}');
+        try {
+          final breakdownMap = Map<String, dynamic>.from(json['pricing_breakdown']);
+          print('[DEBUG] OrderItem.fromJson - Converted pricing_breakdown to Map, creating PricingBreakdown...');
+          pricingBreakdown = PricingBreakdown.fromJson(breakdownMap);
+          print('[DEBUG] OrderItem.fromJson - PricingBreakdown created successfully');
+        } catch (e) {
+          print('[ERROR] OrderItem.fromJson - Failed to parse pricing_breakdown: $e');
+          print('[ERROR] OrderItem.fromJson - pricing_breakdown data: ${json['pricing_breakdown']}');
+          rethrow;
+        }
+      }
+
+      print('[DEBUG] OrderItem.fromJson - Creating OrderItem...');
+      return OrderItem(
+        id: json['id'] as int,
+        product: product,
+        quantity: _parseDouble(json['quantity']) ?? 0.0,
+        unit: json['product_default_unit'] as String? ?? json['unit'] as String? ?? 'piece',
+        price: _parseDouble(json['price']) ?? 0.0,
+        totalPrice: _parseDouble(json['total_price']) ?? 0.0,
+        originalText: json['original_text'] as String?,
+        confidenceScore: (json['confidence_score'] as num?)?.toDouble(),
+        manuallyCorrected: json['manually_corrected'] as bool?,
+        notes: json['notes'] as String?,
+        productBasePrice: _parseDouble(json['product_base_price']),
+        pricingBreakdown: pricingBreakdown,
+      );
+    } catch (e) {
+      print('[ERROR] OrderItem.fromJson - Failed: $e');
+      print('[ERROR] OrderItem.fromJson - JSON: $json');
+      rethrow;
+    }
   }
 
   Map<String, dynamic> toJson() {
@@ -188,6 +257,8 @@ class OrderItem {
       'confidence_score': confidenceScore,
       'manually_corrected': manuallyCorrected,
       'notes': notes,
+      'product_base_price': productBasePrice,
+      'pricing_breakdown': pricingBreakdown?.toJson(),
     };
   }
 
@@ -206,6 +277,7 @@ class Product {
   final bool isActive;
   final String? description;
   final Department? department;
+  final String unit;
 
   const Product({
     required this.id,
@@ -214,6 +286,7 @@ class Product {
     required this.isActive,
     this.description,
     this.department,
+    this.unit = 'piece',
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
@@ -224,8 +297,9 @@ class Product {
       isActive: json['is_active'] as bool,
       description: json['description'] as String?,
       department: json['department'] != null 
-          ? Department.fromJson(json['department'])
+          ? Department.fromJson(Map<String, dynamic>.from(json['department']))
           : null,
+      unit: json['unit'] as String? ?? 'piece',
     );
   }
 
@@ -237,6 +311,7 @@ class Product {
       'is_active': isActive,
       'description': description,
       'department': department?.toJson(),
+      'unit': unit,
     };
   }
 }
@@ -278,4 +353,192 @@ double? _parseDouble(dynamic value) {
     return double.tryParse(value);
   }
   return null;
+}
+
+class PricingBreakdown {
+  final double basePrice;
+  final double customerPrice;
+  final double priceDifference;
+  final double markupPercentage;
+  final String customerSegment;
+  final String pricingSource;
+  final PricingRule? pricingRule;
+  final PriceListItem? priceListItem;
+  final String? error;
+
+  const PricingBreakdown({
+    required this.basePrice,
+    required this.customerPrice,
+    required this.priceDifference,
+    required this.markupPercentage,
+    required this.customerSegment,
+    required this.pricingSource,
+    this.pricingRule,
+    this.priceListItem,
+    this.error,
+  });
+
+  factory PricingBreakdown.fromJson(Map<String, dynamic> json) {
+    try {
+      print('[DEBUG] PricingBreakdown.fromJson - Starting parse...');
+      print('[DEBUG] PricingBreakdown.fromJson - JSON keys: ${json.keys.toList()}');
+      
+      print('[DEBUG] PricingBreakdown.fromJson - Processing pricing_rule...');
+      PricingRule? pricingRule;
+      if (json['pricing_rule'] != null) {
+        print('[DEBUG] PricingBreakdown.fromJson - pricing_rule type: ${json['pricing_rule'].runtimeType}');
+        try {
+          final ruleMap = Map<String, dynamic>.from(json['pricing_rule']);
+          print('[DEBUG] PricingBreakdown.fromJson - Converted pricing_rule to Map: ${ruleMap.keys.toList()}');
+          pricingRule = PricingRule.fromJson({
+            'id': 0, // We don't have the full pricing rule ID in breakdown
+            'name': ruleMap['name'] ?? '',
+            'description': '',
+            'customer_segment': ruleMap['customer_segment'] ?? '',
+            'base_markup_percentage': ruleMap['base_markup_percentage'] ?? 0.0,
+            'volatility_adjustment': 0.0,
+            'minimum_margin_percentage': 0.0,
+            'category_adjustments': {},
+            'trend_multiplier': 1.0,
+            'seasonal_adjustment': 0.0,
+            'is_active': true,
+            'effective_from': DateTime.now().toIso8601String().split('T')[0],
+            'is_effective_now': true,
+            'created_at': DateTime.now().toIso8601String(),
+            'updated_at': DateTime.now().toIso8601String(),
+            'created_by': 0,
+            'created_by_name': '',
+          });
+          print('[DEBUG] PricingBreakdown.fromJson - PricingRule created successfully');
+        } catch (e) {
+          print('[ERROR] PricingBreakdown.fromJson - Failed to parse pricing_rule: $e');
+          print('[ERROR] PricingBreakdown.fromJson - pricing_rule data: ${json['pricing_rule']}');
+          rethrow;
+        }
+      }
+
+      print('[DEBUG] PricingBreakdown.fromJson - Processing price_list_item...');
+      PriceListItem? priceListItem;
+      if (json['price_list_item'] != null) {
+        print('[DEBUG] PricingBreakdown.fromJson - price_list_item type: ${json['price_list_item'].runtimeType}');
+        try {
+          final itemMap = Map<String, dynamic>.from(json['price_list_item']);
+          priceListItem = PriceListItem.fromJson(itemMap);
+          print('[DEBUG] PricingBreakdown.fromJson - PriceListItem created successfully');
+        } catch (e) {
+          print('[ERROR] PricingBreakdown.fromJson - Failed to parse price_list_item: $e');
+          print('[ERROR] PricingBreakdown.fromJson - price_list_item data: ${json['price_list_item']}');
+          rethrow;
+        }
+      }
+
+      print('[DEBUG] PricingBreakdown.fromJson - Creating PricingBreakdown...');
+      return PricingBreakdown(
+        basePrice: _parseDouble(json['base_price']) ?? 0.0,
+        customerPrice: _parseDouble(json['customer_price']) ?? 0.0,
+        priceDifference: _parseDouble(json['price_difference']) ?? 0.0,
+        markupPercentage: _parseDouble(json['markup_percentage']) ?? 0.0,
+        customerSegment: json['customer_segment'] as String? ?? 'unknown',
+        pricingSource: json['pricing_source'] as String? ?? 'base_price',
+        pricingRule: pricingRule,
+        priceListItem: priceListItem,
+        error: json['error'] as String?,
+      );
+    } catch (e) {
+      print('[ERROR] PricingBreakdown.fromJson - Failed: $e');
+      print('[ERROR] PricingBreakdown.fromJson - JSON: $json');
+      rethrow;
+    }
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'base_price': basePrice,
+      'customer_price': customerPrice,
+      'price_difference': priceDifference,
+      'markup_percentage': markupPercentage,
+      'customer_segment': customerSegment,
+      'pricing_source': pricingSource,
+      'pricing_rule': pricingRule?.toJson(),
+      'price_list_item': priceListItem?.toJson(),
+      'error': error,
+    };
+  }
+
+  String get markupDisplay {
+    if (markupPercentage > 0) {
+      return '+${markupPercentage.toStringAsFixed(1)}%';
+    } else if (markupPercentage < 0) {
+      return '${markupPercentage.toStringAsFixed(1)}%';
+    } else {
+      return 'Base Price';
+    }
+  }
+
+  String get pricingSourceDisplay {
+    switch (pricingSource) {
+      case 'price_list':
+        return 'Customer Price List';
+      case 'pricing_rule':
+        return 'Pricing Rule';
+      case 'base_price':
+      default:
+        return 'Base Price';
+    }
+  }
+
+  String get customerSegmentDisplay {
+    // Use the same logic as PricingRule.segmentDisplayName
+    switch (customerSegment) {
+      case 'premium':
+        return 'Premium Restaurants';
+      case 'standard':
+        return 'Standard Restaurants';
+      case 'budget':
+        return 'Budget Cafes';
+      case 'wholesale':
+        return 'Wholesale Buyers';
+      case 'retail':
+        return 'Retail Customers';
+      default:
+        return customerSegment;
+    }
+  }
+}
+
+
+class PriceListItem {
+  final double marketPriceExclVat;
+  final double marketPriceInclVat;
+  final double markupPercentage;
+  final String marketPriceDate;
+  final String priceListName;
+
+  const PriceListItem({
+    required this.marketPriceExclVat,
+    required this.marketPriceInclVat,
+    required this.markupPercentage,
+    required this.marketPriceDate,
+    required this.priceListName,
+  });
+
+  factory PriceListItem.fromJson(Map<String, dynamic> json) {
+    return PriceListItem(
+      marketPriceExclVat: _parseDouble(json['market_price_excl_vat']) ?? 0.0,
+      marketPriceInclVat: _parseDouble(json['market_price_incl_vat']) ?? 0.0,
+      markupPercentage: _parseDouble(json['markup_percentage']) ?? 0.0,
+      marketPriceDate: json['market_price_date'] as String? ?? '',
+      priceListName: json['price_list_name'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'market_price_excl_vat': marketPriceExclVat,
+      'market_price_incl_vat': marketPriceInclVat,
+      'markup_percentage': markupPercentage,
+      'market_price_date': marketPriceDate,
+      'price_list_name': priceListName,
+    };
+  }
 }
