@@ -1,0 +1,32 @@
+# Development Environment Configuration
+# Flutter App Configuration for Local Backend
+
+# Environment
+FLUTTER_ENV=development
+
+# API Endpoints
+DJANGO_URL=http://localhost:8000/api
+PYTHON_API_URL=http://localhost:5001/api
+
+# API Configuration
+API_TIMEOUT_SECONDS=30
+CONNECTION_TIMEOUT_SECONDS=15
+
+# WhatsApp Configuration
+WHATSAPP_CHECK_INTERVAL=30
+WHATSAPP_STATUS_CHECK_INTERVAL=10
+ENABLE_WHATSAPP_INTEGRATION=true
+
+# Feature Flags
+ENABLE_BACKGROUND_PROCESSING=true
+ENABLE_ADVANCED_ANALYTICS=false
+ENABLE_DEBUG_LOGGING=true
+ENABLE_PERFORMANCE_MONITORING=false
+
+# Pagination
+DEFAULT_PAGE_SIZE=20
+MAX_BATCH_SIZE=100
+
+# Authentication
+TOKEN_REFRESH_THRESHOLD_MINUTES=5
+SESSION_TIMEOUT_MINUTES=480

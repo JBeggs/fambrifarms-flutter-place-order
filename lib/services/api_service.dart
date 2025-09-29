@@ -67,8 +67,46 @@ class ApiService {
   
   // Expose Dio instance for specialized services
   Dio get dio => _djangoDio;
+  
+  // Initialize tokens from storage
+  Future<void> _initializeTokens() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _accessToken = prefs.getString('access_token');
+      _refreshToken = prefs.getString('refresh_token');
+      
+      if (_accessToken != null) {
+        debugPrint('[AUTH] Loaded access token from storage');
+      }
+      if (_refreshToken != null) {
+        debugPrint('[AUTH] Loaded refresh token from storage');
+      }
+    } catch (e) {
+      debugPrint('[AUTH] Failed to load tokens from storage: $e');
+    }
+  }
+  
+  // Store tokens in SharedPreferences
+  Future<void> _storeTokens() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_accessToken != null) {
+        await prefs.setString('access_token', _accessToken!);
+        debugPrint('[AUTH] Stored access token');
+      }
+      if (_refreshToken != null) {
+        await prefs.setString('refresh_token', _refreshToken!);
+        debugPrint('[AUTH] Stored refresh token');
+      }
+    } catch (e) {
+      debugPrint('[AUTH] Failed to store tokens: $e');
+    }
+  }
 
   void _initializeDio() {
+    // Initialize tokens from storage first
+    _initializeTokens();
+    
     // Django backend connection
     _djangoDio = Dio(BaseOptions(
       baseUrl: djangoBaseUrl,
@@ -96,6 +134,9 @@ class ApiService {
       onRequest: (options, handler) {
         if (_accessToken != null) {
           options.headers['Authorization'] = 'Bearer $_accessToken';
+          debugPrint('[AUTH] Adding token to request: ${options.path}');
+        } else {
+          debugPrint('[AUTH] No access token available for request: ${options.path}');
         }
         handler.next(options);
       },
@@ -152,15 +193,20 @@ class ApiService {
       ));
     }
     
-    // Auto-login for development (with delay to ensure constructor completes)
-    Future.delayed(const Duration(milliseconds: 100), _autoLogin);
+    // Auto-login disabled - user requested to always show login screen
+    // Future.delayed(const Duration(milliseconds: 100), _autoLogin);
   }
 
   // Authentication methods
   Future<void> _autoLogin() async {
     try {
-      await login('admin@fambrifarms.com', 'admin123');
-      debugPrint('[AUTH] Auto-login successful');
+      // Only auto-login if no tokens are already stored
+      if (_accessToken == null) {
+        await login('admin@fambrifarms.com', 'admin123');
+        debugPrint('[AUTH] Auto-login successful');
+      } else {
+        debugPrint('[AUTH] Skipping auto-login, tokens already available');
+      }
     } catch (e) {
       debugPrint('[AUTH] Auto-login failed: $e');
     }
@@ -177,6 +223,9 @@ class ApiService {
       final tokens = response.data['tokens'];
       _accessToken = tokens['access'];
       _refreshToken = tokens['refresh'];
+      
+      // Store tokens in SharedPreferences for persistence
+      await _storeTokens();
       
       return response.data;
     } catch (e) {
@@ -196,6 +245,8 @@ class ApiService {
   void setTokens(String accessToken, String? refreshToken) {
     _accessToken = accessToken;
     _refreshToken = refreshToken;
+    // Store tokens immediately when set
+    _storeTokens();
   }
   
   Future<void> _refreshAccessToken() async {
@@ -209,8 +260,17 @@ class ApiService {
       });
       
       _accessToken = response.data['access'];
+      
+      // Store the new access token
+      await _storeTokens();
+      debugPrint('[AUTH] Access token refreshed and stored');
     } catch (e) {
-      throw ApiException('Failed to refresh token: $e');
+      // If refresh fails, clear tokens to force re-login
+      debugPrint('[AUTH] Token refresh failed, clearing tokens: $e');
+      _accessToken = null;
+      _refreshToken = null;
+      await clearStoredAuth();
+      throw ApiException('Session expired. Please login again.');
     }
   }
   
@@ -537,8 +597,25 @@ class ApiService {
 
   Future<void> deleteOrder(int orderId) async {
     try {
+      // Ensure we have valid authentication before attempting delete
+      if (_accessToken == null) {
+        await _initializeTokens();
+        if (_accessToken == null) {
+          throw ApiException('Authentication required. Please log in again.');
+        }
+      }
+      
       await _djangoDio.delete('/orders/$orderId/');
     } catch (e) {
+      if (e is DioException) {
+        if (e.response?.statusCode == 401) {
+          throw ApiException('Authentication expired. Please log in again.');
+        } else if (e.response?.statusCode == 403) {
+          throw ApiException('You don\'t have permission to delete this order.');
+        } else if (e.response?.statusCode == 404) {
+          throw ApiException('Order not found. It may have already been deleted.');
+        }
+      }
       throw ApiException('Failed to delete order: $e');
     }
   }
@@ -692,6 +769,159 @@ class ApiService {
       return response.data;
     } catch (e) {
       throw ApiException('Failed to get supplier: $e');
+    }
+  }
+
+  // Supplier Product Management APIs
+  Future<List<Map<String, dynamic>>> getSupplierProducts({
+    int? supplierId,
+    int? productId,
+    bool? isAvailable,
+    String? search,
+  }) async {
+    try {
+      Map<String, dynamic> queryParams = {};
+      if (supplierId != null) queryParams['supplier'] = supplierId.toString();
+      if (productId != null) queryParams['product'] = productId.toString();
+      if (isAvailable != null) queryParams['is_available'] = isAvailable.toString();
+      if (search != null) queryParams['search'] = search;
+
+      final response = await _djangoDio.get('/suppliers/supplier-products/', queryParameters: queryParams);
+      
+      // Handle paginated response
+      if (response.data is Map<String, dynamic> && response.data.containsKey('results')) {
+        final List<dynamic> productsJson = response.data['results'];
+        return List<Map<String, dynamic>>.from(productsJson);
+      }
+      
+      // Handle direct array response (fallback)
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get supplier products: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getSupplierProductsForSupplier(int supplierId, {
+    bool? isAvailable,
+    String? search,
+  }) async {
+    try {
+      Map<String, dynamic> queryParams = {};
+      if (isAvailable != null) queryParams['is_available'] = isAvailable.toString();
+      if (search != null) queryParams['search'] = search;
+
+      final response = await _djangoDio.get('/suppliers/suppliers/$supplierId/products/', queryParameters: queryParams);
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to get supplier products: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> createSupplierProduct(Map<String, dynamic> supplierProductData) async {
+    try {
+      final response = await _djangoDio.post('/suppliers/supplier-products/', data: supplierProductData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to create supplier product: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateSupplierProduct(int supplierProductId, Map<String, dynamic> supplierProductData) async {
+    try {
+      final response = await _djangoDio.put('/suppliers/supplier-products/$supplierProductId/', data: supplierProductData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update supplier product: $e');
+    }
+  }
+
+  Future<void> deleteSupplierProduct(int supplierProductId) async {
+    try {
+      await _djangoDio.delete('/suppliers/supplier-products/$supplierProductId/');
+    } catch (e) {
+      throw ApiException('Failed to delete supplier product: $e');
+    }
+  }
+
+  // Supplier Optimization APIs
+  Future<Map<String, dynamic>> calculateSupplierSplit({
+    required int productId,
+    required double quantity,
+  }) async {
+    try {
+      final response = await _djangoDio.post('/products/supplier-optimization/calculate-split/', data: {
+        'product_id': productId,
+        'quantity': quantity,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to calculate supplier split: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> calculateOrderOptimization({
+    required List<Map<String, dynamic>> orderItems,
+  }) async {
+    try {
+      final response = await _djangoDio.post('/products/supplier-optimization/calculate-order/', data: {
+        'order_items': orderItems,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to calculate order optimization: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> getSupplierRecommendations({
+    required int productId,
+    double quantity = 1.0,
+  }) async {
+    try {
+      final response = await _djangoDio.get(
+        '/products/supplier-optimization/recommendations/$productId/',
+        queryParameters: {'quantity': quantity.toString()},
+      );
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get supplier recommendations: $e');
+    }
+  }
+
+  // Procurement Workflow APIs
+  Future<Map<String, dynamic>> analyzeOrderProcurement({
+    required int orderId,
+  }) async {
+    try {
+      final response = await _djangoDio.post('/procurement/analyze-order/', data: {
+        'order_id': orderId,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to analyze order procurement: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> processOrderWorkflow({
+    required int orderId,
+    bool autoCreatePOs = false,
+  }) async {
+    try {
+      final response = await _djangoDio.post('/procurement/process-workflow/', data: {
+        'order_id': orderId,
+        'auto_create_pos': autoCreatePOs,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to process order workflow: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> getLowStockRecommendations() async {
+    try {
+      final response = await _djangoDio.get('/procurement/low-stock-recommendations/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get low stock recommendations: $e');
     }
   }
 
@@ -1457,11 +1687,54 @@ class ApiService {
 
   Future<Map<String, dynamic>> updateProcurementBuffer(int productId, Map<String, dynamic> bufferData) async {
     try {
-      final response = await _djangoDio.put('/products/procurement/buffers/$productId/', data: bufferData);
+      final response = await _djangoDio.post('/products/procurement/buffers/$productId/', data: bufferData);
       return response.data;
     } catch (e) {
       throw ApiException('Failed to update procurement buffer: ${_extractErrorMessage(e, "Network error")}');
     }
+  }
+
+  Future<Map<String, dynamic>> updateProcurementRecommendation(int recommendationId, Map<String, dynamic> recommendationData) async {
+    try {
+      final response = await _djangoDio.put('/products/procurement/recommendations/$recommendationId/', data: recommendationData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update procurement recommendation: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  // Debug method to check authentication status
+  Future<bool> checkAuthenticationStatus() async {
+    try {
+      debugPrint('[AUTH] Checking authentication status...');
+      debugPrint('[AUTH] Access token exists: ${_accessToken != null}');
+      debugPrint('[AUTH] Refresh token exists: ${_refreshToken != null}');
+      
+      if (_accessToken == null) {
+        debugPrint('[AUTH] No access token - attempting to load from storage');
+        await _initializeTokens();
+        debugPrint('[AUTH] After loading - Access token exists: ${_accessToken != null}');
+      }
+      
+      // Test with a simple API call
+      final response = await _djangoDio.get('/products/business-settings/');
+      debugPrint('[AUTH] Test API call successful');
+      return true;
+    } catch (e) {
+      debugPrint('[AUTH] Authentication check failed: $e');
+      return false;
+    }
+  }
+
+  // Force re-authentication
+  Future<void> forceReAuthentication() async {
+    debugPrint('[AUTH] Forcing re-authentication...');
+    _accessToken = null;
+    _refreshToken = null;
+    await clearStoredAuth();
+    
+    // Trigger auto-login
+    await _autoLogin();
   }
 
   Future<List<Map<String, dynamic>>> getProductRecipes() async {
@@ -1471,6 +1744,43 @@ class ApiService {
       return List<Map<String, dynamic>>.from(data['recipes'] ?? []);
     } catch (e) {
       throw ApiException('Failed to get product recipes: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  // Business Settings API methods
+  Future<Map<String, dynamic>> getBusinessSettings() async {
+    try {
+      final response = await _djangoDio.get('/products/business-settings/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get business settings: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateBusinessSettings(Map<String, dynamic> settings) async {
+    try {
+      final response = await _djangoDio.put('/products/business-settings/update/', data: settings);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update business settings: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getDepartmentBufferSettings() async {
+    try {
+      final response = await _djangoDio.get('/products/business-settings/departments/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get department buffer settings: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateDepartmentBufferSettings(String departmentName, Map<String, dynamic> settings) async {
+    try {
+      final response = await _djangoDio.put('/products/business-settings/departments/$departmentName/', data: settings);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update department buffer settings: ${_extractErrorMessage(e, "Network error")}');
     }
   }
 
@@ -1614,6 +1924,34 @@ class ApiService {
     
     // Fallback to original error message
     return '$fallbackMessage: ${error.toString()}';
+  }
+
+  // Supplier Performance APIs
+  Future<Map<String, dynamic>> getSupplierPerformance(int supplierId, {int daysBack = 90}) async {
+    try {
+      final response = await _djangoDio.get('/suppliers/performance/$supplierId/?days_back=$daysBack');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get supplier performance: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> getSupplierRankings({int daysBack = 90}) async {
+    try {
+      final response = await _djangoDio.get('/suppliers/performance/rankings/?days_back=$daysBack');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get supplier rankings: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> getSupplierPerformanceDashboard({int daysBack = 90}) async {
+    try {
+      final response = await _djangoDio.get('/suppliers/performance/dashboard/?days_back=$daysBack');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get supplier performance dashboard: $e');
+    }
   }
 
 }

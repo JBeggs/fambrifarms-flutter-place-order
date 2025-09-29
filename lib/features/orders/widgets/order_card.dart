@@ -415,9 +415,14 @@ class OrderCard extends ConsumerWidget {
   }
 
   void _deleteOrder(BuildContext context, WidgetRef ref) async {
-    // Close confirmation dialog
+    // Close confirmation dialog first
     Navigator.of(context).pop();
 
+    // Store the context for safe usage
+    if (!context.mounted) return;
+
+    bool isLoadingDialogOpen = false;
+    
     try {
       // Show loading dialog
       showDialog(
@@ -433,14 +438,22 @@ class OrderCard extends ConsumerWidget {
           ),
         ),
       );
+      isLoadingDialogOpen = true;
 
       // Delete the order
       final apiService = ref.read(apiServiceProvider);
+      
+      // Check authentication before attempting delete
+      if (!apiService.isAuthenticated) {
+        throw Exception('Authentication required. Please log in again.');
+      }
+      
       await apiService.deleteOrder(order.id);
 
       // Close loading dialog
-      if (context.mounted) {
+      if (context.mounted && isLoadingDialogOpen) {
         Navigator.of(context).pop();
+        isLoadingDialogOpen = false;
       }
 
       // Show success message
@@ -459,14 +472,42 @@ class OrderCard extends ConsumerWidget {
 
     } catch (e) {
       // Close loading dialog if still open
-      if (context.mounted) {
+      if (context.mounted && isLoadingDialogOpen) {
         Navigator.of(context).pop();
-        
+        isLoadingDialogOpen = false;
+      }
+      
+      // Handle different error types
+      String errorMessage = 'Error deleting order';
+      
+      if (e.toString().contains('401') || e.toString().contains('Unauthorized')) {
+        errorMessage = 'Authentication expired. Please log in again.';
+      } else if (e.toString().contains('403') || e.toString().contains('Forbidden')) {
+        errorMessage = 'You don\'t have permission to delete this order.';
+      } else if (e.toString().contains('404') || e.toString().contains('not found')) {
+        errorMessage = 'Order not found. It may have already been deleted.';
+      } else if (e.toString().contains('network') || e.toString().contains('connection')) {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      } else {
+        errorMessage = 'Error deleting order: ${e.toString()}';
+      }
+      
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error deleting order: $e'),
+            content: Text(errorMessage),
             backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
+            duration: const Duration(seconds: 5),
+            action: e.toString().contains('401') || e.toString().contains('Unauthorized')
+                ? SnackBarAction(
+                    label: 'Login',
+                    textColor: Colors.white,
+                    onPressed: () {
+                      // Navigate to login page or trigger re-authentication
+                      // This depends on your app's navigation structure
+                    },
+                  )
+                : null,
           ),
         );
       }
