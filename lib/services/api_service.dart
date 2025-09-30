@@ -121,13 +121,8 @@ class ApiService {
       receiveTimeout: Duration(seconds: AppConfig.apiTimeoutSeconds * 10), // Longer timeout for WhatsApp operations
     ));
     
-    // Load configuration from database on first instantiation (only if authenticated)
-    if (!_configLoaded) {
-      _loadAppConfig().catchError((e) {
-        debugPrint('[CONFIG] Failed to load app config: $e');
-        // Don't block initialization if config loading fails
-      });
-    }
+    // Configuration will be loaded after authentication is established
+    // Don't load config during initialization to avoid authentication loops
     
     // Add authentication interceptor for Django
     _djangoDio.interceptors.add(InterceptorsWrapper(
@@ -227,6 +222,9 @@ class ApiService {
       // Store tokens in SharedPreferences for persistence
       await _storeTokens();
       
+      // Load app configuration now that we're authenticated
+      await loadConfigAfterAuth();
+      
       return response.data;
     } catch (e) {
       throw ApiException(_extractErrorMessage(e, 'Failed to login'));
@@ -247,6 +245,11 @@ class ApiService {
     _refreshToken = refreshToken;
     // Store tokens immediately when set
     _storeTokens();
+    
+    // Load config after tokens are set (for auto-login scenarios)
+    loadConfigAfterAuth().catchError((e) {
+      debugPrint('[CONFIG] Failed to load config after setting tokens: $e');
+    });
   }
   
   Future<void> _refreshAccessToken() async {
@@ -1486,20 +1489,21 @@ class ApiService {
     }
   }
   
-  /// Load app configuration from database
-  static Future<void> _loadAppConfig() async {
+  /// Load app configuration from database (requires authentication)
+  Future<void> _loadAppConfig() async {
     try {
-      final dio = Dio(BaseOptions(
-        baseUrl: djangoBaseUrl, // Use hardcoded Django URL to fetch other config
-        connectTimeout: AppConfig.connectionTimeout,
-        receiveTimeout: AppConfig.apiTimeout,
-      ));
+      // Only load config if we have authentication tokens
+      if (_accessToken == null) {
+        debugPrint('[CONFIG] Skipping config load - no authentication token');
+        return;
+      }
       
+      // Use the authenticated Django Dio instance instead of creating a new one
       // Load all configuration in parallel for efficiency
       final results = await Future.wait([
-        dio.get('/products/app-config/'),
-        dio.get('/settings/form-options/'),
-        dio.get('/settings/business-config/'),
+        _djangoDio.get('/products/app-config/'),
+        _djangoDio.get('/settings/form-options/'),
+        _djangoDio.get('/settings/business-config/'),
       ]);
       
       final config = results[0].data;
@@ -1539,10 +1543,20 @@ class ApiService {
     }
   }
   
-  /// Force reload configuration from database
-  static Future<void> reloadConfig() async {
+  /// Force reload configuration from database (requires authentication)
+  Future<void> reloadConfig() async {
     _configLoaded = false;
     await _loadAppConfig();
+  }
+  
+  /// Load configuration after successful authentication
+  Future<void> loadConfigAfterAuth() async {
+    if (!_configLoaded) {
+      await _loadAppConfig().catchError((e) {
+        debugPrint('[CONFIG] Failed to load app config after auth: $e');
+        // Don't block authentication flow if config loading fails
+      });
+    }
   }
 
   /// Get form options for dropdowns

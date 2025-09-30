@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../../models/whatsapp_message.dart';
 
 class MessageEditor extends StatefulWidget {
@@ -133,6 +134,77 @@ class _MessageEditorState extends State<MessageEditor> {
             .replaceAll(RegExp(r'\n\s*\n'), '\n') // Remove empty lines
             .replaceAll(RegExp(r'[ \t]+'), ' ') // Normalize spaces
             .trim();
+        break;
+        
+      case 'fix_spelling':
+        // Fix common spelling mistakes in food/produce names
+        final corrections = {
+          // Vegetables
+          'tomatoe': 'tomato',
+          'tomatos': 'tomatoes',
+          'potatos': 'potatoes',
+          'carrot': 'carrots',
+          'onoin': 'onion',
+          'onions': 'onions',
+          'cucmber': 'cucumber',
+          'cucumbers': 'cucumbers',
+          'spinich': 'spinach',
+          'spinach': 'spinach',
+          'brocoli': 'broccoli',
+          'broccoli': 'broccoli',
+          'cabage': 'cabbage',
+          'cabbage': 'cabbage',
+          'cauliflower': 'cauliflower',
+          'califlower': 'cauliflower',
+          'peper': 'pepper',
+          'peppers': 'peppers',
+          'chili': 'chilli',
+          'chilis': 'chillies',
+          'mushrom': 'mushroom',
+          'mushrooms': 'mushrooms',
+          'porta': 'portabellini',
+          'portabello': 'portabellini',
+          'portobello': 'portabellini',
+          
+          // Fruits
+          'bannana': 'banana',
+          'bananas': 'bananas',
+          'aple': 'apple',
+          'apples': 'apples',
+          'oragne': 'orange',
+          'oranges': 'oranges',
+          'lemmon': 'lemon',
+          'lemons': 'lemons',
+          'lime': 'lime',
+          'limes': 'limes',
+          'avacado': 'avocado',
+          'avocados': 'avocados',
+          'avos': 'avocados',
+          'strawbery': 'strawberry',
+          'strawberries': 'strawberries',
+          'pineaple': 'pineapple',
+          'pineapple': 'pineapple',
+          'blueberry': 'blueberries',
+          'blue berry': 'blueberries',
+          
+          // Units
+          'kgs': 'kg',
+          'kilos': 'kg',
+          'kilogram': 'kg',
+          'grams': 'g',
+          'pieces': 'pcs',
+          'boxes': 'box',
+          'bags': 'bag',
+          'bunches': 'bunch',
+          'heads': 'head',
+          'punnets': 'punnet',
+          'packets': 'packet',
+        };
+        
+        // Apply corrections (case-insensitive)
+        corrections.forEach((wrong, correct) {
+          newText = newText.replaceAll(RegExp(wrong, caseSensitive: false), correct);
+        });
         break;
     }
 
@@ -319,6 +391,11 @@ class _MessageEditorState extends State<MessageEditor> {
                 icon: Icons.space_bar,
                 onPressed: () => _applyQuickFix('normalize_spacing'),
               ),
+              _QuickFixButton(
+                label: 'Fix Spelling',
+                icon: Icons.spellcheck,
+                onPressed: () => _applyQuickFix('fix_spelling'),
+              ),
             ],
           ),
           
@@ -340,12 +417,27 @@ class _MessageEditorState extends State<MessageEditor> {
               maxLines: null,
               expands: true,
               textAlignVertical: TextAlignVertical.top,
+              // Enable spell checking
+              spellCheckConfiguration: SpellCheckConfiguration(
+                spellCheckService: DefaultSpellCheckService(),
+                misspelledTextStyle: const TextStyle(
+                  decoration: TextDecoration.underline,
+                  decorationColor: Colors.red,
+                  decorationStyle: TextDecorationStyle.wavy,
+                ),
+              ),
               decoration: InputDecoration(
                 hintText: 'Edit the message content here...',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
                 contentPadding: const EdgeInsets.all(16),
+                // Add spell check hint
+                helperText: 'Spell check enabled - misspelled words will be underlined',
+                helperStyle: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.outline,
+                ),
               ),
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 fontFamily: 'monospace',
