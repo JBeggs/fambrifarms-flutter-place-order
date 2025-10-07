@@ -3,8 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../models/whatsapp_message.dart';
 import '../../utils/messages_provider.dart';
+import '../../services/api_service.dart';
 import 'widgets/message_card.dart';
+import 'widgets/enhanced_processing_result_dialog.dart';
 import 'widgets/message_editor.dart';
+import 'widgets/pagination_controls.dart';
 
 class MessagesPage extends ConsumerStatefulWidget {
   const MessagesPage({super.key});
@@ -17,13 +20,325 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
   WhatsAppMessage? selectedMessageForEditing;
   bool showProcessedMessages = true;
 
+  String _getMessageIdForDialog(MessagesState messagesState) {
+    try {
+      debugPrint('🔍 _getMessageIdForDialog: Starting...');
+      debugPrint('🔍 _getMessageIdForDialog: selectedMessageIds: ${messagesState.selectedMessageIds}');
+      debugPrint('🔍 _getMessageIdForDialog: selectedMessageIds.isEmpty: ${messagesState.selectedMessageIds.isEmpty}');
+      debugPrint('🔍 _getMessageIdForDialog: messages.length: ${messagesState.messages.length}');
+      
+      if (messagesState.selectedMessageIds.isEmpty) {
+        debugPrint('🔍 _getMessageIdForDialog: No selected messages - returning empty string');
+        return '';
+      }
+      
+      // Find the first selected message and return its messageId (WhatsApp ID)
+      debugPrint('🔍 _getMessageIdForDialog: Looking for message with ID in: ${messagesState.selectedMessageIds}');
+      
+      final selectedMessage = messagesState.messages.firstWhere(
+        (msg) => messagesState.selectedMessageIds.contains(msg.id),
+      );
+      
+      debugPrint('🔍 _getMessageIdForDialog: Found selected message:');
+      debugPrint('  - Database ID: ${selectedMessage.id}');
+      debugPrint('  - messageId: ${selectedMessage.messageId}');
+      debugPrint('  - messageId is null: ${selectedMessage.messageId == null}');
+      debugPrint('  - messageId isEmpty: ${selectedMessage.messageId?.isEmpty ?? true}');
+      
+      // Safe content preview
+      try {
+        final contentPreview = selectedMessage.content.length > 50 
+            ? selectedMessage.content.substring(0, 50) + "..." 
+            : selectedMessage.content;
+        debugPrint('  - Content preview: "$contentPreview"');
+      } catch (e) {
+        debugPrint('  - Content preview: Error getting content preview: $e');
+      }
+      
+      final messageId = selectedMessage.messageId ?? '';
+      
+      if (messageId.isEmpty) {
+        debugPrint('❌ ERROR: messageId is empty for selected message!');
+        debugPrint('❌ This means the message was not loaded with messageId from the API');
+      } else {
+        debugPrint('✅ SUCCESS: Found valid messageId: "$messageId"');
+      }
+      
+      return messageId;
+    } catch (e, stackTrace) {
+      debugPrint('❌ _getMessageIdForDialog: Error finding message: $e');
+      debugPrint('❌ Stack trace: $stackTrace');
+      debugPrint('❌ Available message IDs: ${messagesState.messages.map((m) => m.id).toList()}');
+      return '';
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    // Load messages when page opens
+    // Load messages when page opens with pagination
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(messagesProvider.notifier).loadMessages();
+      ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 20);
     });
+  }
+
+  Future<void> _retryProcessingWithCorrections(BuildContext context, messagesNotifier, messagesState) async {
+    try {
+      final messageId = _getMessageIdForDialog(messagesState);
+      if (messageId.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Error: No message selected for reprocessing'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Show loading indicator
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(
+            child: CircularProgressIndicator(),
+          ),
+        );
+      }
+
+      try {
+        // Call the proper reprocessing endpoint
+        final apiService = ref.read(apiServiceProvider);
+        final result = await apiService.reprocessMessageWithCorrections(messageId);
+        
+        // Close loading dialog
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+        
+        if (result['status'] == 'success') {
+          // Success - refresh messages and show success
+          await messagesNotifier.loadMessages(
+            page: ref.read(messagesProvider).currentPage, 
+            pageSize: ref.read(messagesProvider).pageSize
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Message reprocessed successfully!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+            
+            // Navigate to orders page if orders were created
+            final ordersCreated = result['orders_created'] ?? 0;
+            if (ordersCreated > 0) {
+              context.go('/orders');
+            }
+          }
+        } else {
+          // Still has errors - show the result dialog again
+          if (mounted) {
+            await showDialog(
+              context: context,
+              builder: (context) => EnhancedProcessingResultDialog(
+                result: result,
+                messageId: messageId,
+                onRetry: () async {
+                  Navigator.of(context).pop();
+                  await _retryProcessingWithCorrections(context, messagesNotifier, messagesState);
+                },
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        // Close loading dialog
+        if (mounted) {
+          Navigator.of(context).pop();
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to reprocess message: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error during reprocessing: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _processSelectedMessages(BuildContext context, messagesNotifier, messagesState) async {
+    try {
+      final selectedCount = messagesState.selectedMessageIds.length;
+      debugPrint('🔍 Selected messages count: $selectedCount');
+      debugPrint('🔍 Selected message IDs: ${messagesState.selectedMessageIds}');
+      
+      final orderMessages = messagesState.messages
+          .where((msg) => messagesState.selectedMessageIds.contains(msg.id) && msg.type == MessageType.order)
+          .toList();
+      final stockCount = messagesState.messages
+          .where((msg) => messagesState.selectedMessageIds.contains(msg.id) && msg.type == MessageType.stock)
+          .length;
+      
+      // Check if any order messages don't have a customer selected
+      final orderMessagesWithoutCustomer = orderMessages.where((msg) {
+        final hasManualCompany = msg.manualCompany != null && msg.manualCompany!.isNotEmpty && msg.manualCompany != 'Clear Selection';
+        final hasCompanyName = msg.companyName != null && msg.companyName!.isNotEmpty && msg.companyName != 'Clear Selection';
+        final hasCustomer = hasManualCompany || hasCompanyName;
+        
+        debugPrint('🔍 Message ${msg.id}: manualCompany="${msg.manualCompany}", companyName="${msg.companyName}", hasCustomer=$hasCustomer');
+        
+        return !hasCustomer;
+      }).toList();
+      
+      if (orderMessagesWithoutCustomer.isNotEmpty) {
+        // Show error alert for messages without customer selection
+        await showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.warning, color: Colors.orange),
+                SizedBox(width: 8),
+                Text('Customer Selection Required'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('The following order messages need a customer selected before processing:'),
+                const SizedBox(height: 12),
+                ...orderMessagesWithoutCustomer.take(3).map((msg) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    '• ${msg.content.length > 50 ? msg.content.substring(0, 50) + '...' : msg.content}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                )),
+                if (orderMessagesWithoutCustomer.length > 3)
+                  Text('• ... and ${orderMessagesWithoutCustomer.length - 3} more messages'),
+                const SizedBox(height: 12),
+                const Text(
+                  'Please select a customer for each order message using the dropdown menu.',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return; // Don't proceed with processing
+      }
+      
+      final orderCount = orderMessages.length;
+      
+      debugPrint('🔍 Order messages: $orderCount, Stock messages: $stockCount');
+      
+      String contentText = 'Process $selectedCount selected messages?\n\n';
+      if (orderCount > 0) {
+        contentText += '• $orderCount order messages → Create orders\n';
+      }
+      if (stockCount > 0) {
+        contentText += '• $stockCount stock messages → Update inventory\n';
+      }
+      
+      // Show confirmation dialog
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Process Messages'),
+          content: Text(contentText),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Process Messages'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed == true) {
+        // Call the processSelectedMessages method
+        await messagesNotifier.processSelectedMessages();
+        
+        if (context.mounted) {
+          // Show processing result dialog
+          final result = messagesNotifier.state.lastProcessingResult;
+          debugPrint('🔍 Processing result: $result');
+          if (result != null) {
+            debugPrint('✅ Showing processing result dialog');
+            
+            // Get messageId BEFORE showing dialog
+            final messageId = _getMessageIdForDialog(messagesNotifier.state);
+            debugPrint('🔍 Dialog messageId: "$messageId"');
+            
+            await showDialog(
+              context: context,
+              builder: (context) => EnhancedProcessingResultDialog(
+                result: result,
+                messageId: messageId,
+                onRetry: () async {
+                  Navigator.of(context).pop();
+                  // Retry processing with corrections
+                  await _retryProcessingWithCorrections(context, messagesNotifier, messagesNotifier.state);
+                },
+              ),
+            );
+            
+            // Refresh messages to show updated content after processing
+            debugPrint('🔄 Refreshing messages after processing dialog closed...');
+            // Add a small delay to ensure backend has updated the message
+            await Future.delayed(const Duration(milliseconds: 500));
+            await messagesNotifier.loadMessages(
+              page: ref.read(messagesProvider).currentPage, 
+              pageSize: ref.read(messagesProvider).pageSize
+            );
+            
+            // Clear selection after dialog is closed
+            messagesNotifier.clearSelection();
+            
+            // Navigate to orders page if orders were created
+            final ordersCreated = result['orders_created'] ?? 0;
+            if (ordersCreated > 0) {
+              context.go('/orders');
+            }
+          } else {
+            debugPrint('❌ No processing result found');
+          }
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to process messages: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _createOrdersFromSelected(BuildContext context, messagesNotifier) async {
@@ -68,26 +383,48 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
         await messagesNotifier.processSelectedMessages();
         
         if (context.mounted) {
-          // Show success message
-          String successMessage = 'Messages processed successfully!';
-          if (orderCount > 0) {
-            successMessage += ' Check Orders page for new orders.';
-          }
-          if (stockCount > 0) {
-            successMessage += ' Inventory levels updated.';
-          }
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(successMessage),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 4),
-            ),
-          );
-          
-          // Navigate to orders page if orders were created
-          if (orderCount > 0) {
-            context.go('/orders');
+          // Show processing result dialog
+          final result = messagesNotifier.state.lastProcessingResult;
+          debugPrint('🔍 Processing result: $result');
+          if (result != null) {
+            debugPrint('✅ Showing processing result dialog');
+            
+            // Get messageId BEFORE showing dialog
+            final messageId = _getMessageIdForDialog(messagesNotifier.state);
+            debugPrint('🔍 Dialog messageId: "$messageId"');
+            
+            await showDialog(
+              context: context,
+              builder: (context) => EnhancedProcessingResultDialog(
+                result: result,
+                messageId: messageId,
+                onRetry: () async {
+                  Navigator.of(context).pop();
+                  // Retry processing with corrections
+                  await _retryProcessingWithCorrections(context, messagesNotifier, messagesNotifier.state);
+                },
+              ),
+            );
+            
+            // Refresh messages to show updated content after processing
+            debugPrint('🔄 Refreshing messages after processing dialog closed...');
+            // Add a small delay to ensure backend has updated the message
+            await Future.delayed(const Duration(milliseconds: 500));
+            await messagesNotifier.loadMessages(
+              page: ref.read(messagesProvider).currentPage, 
+              pageSize: ref.read(messagesProvider).pageSize
+            );
+            
+            // Clear selection after dialog is closed
+            messagesNotifier.clearSelection();
+            
+            // Navigate to orders page if orders were created
+            final ordersCreated = result['orders_created'] ?? 0;
+            if (ordersCreated > 0) {
+              context.go('/orders');
+            }
+          } else {
+            debugPrint('❌ No processing result found');
           }
         }
       }
@@ -230,7 +567,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                             ),
                           Text(
                             showProcessedMessages 
-                                ? '${messagesState.messages.length} total messages'
+                                ? '${messagesState.messages.length} of ${messagesState.totalCount} messages (Page ${ref.read(messagesProvider).currentPage}/${messagesState.totalPages})'
                                 : '${messagesState.messages.where((m) => !m.processed).length} unprocessed messages',
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: Theme.of(context).colorScheme.outline,
@@ -242,9 +579,28 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                       const SizedBox(width: 12),
                       
                       // Selection Controls
-                      TextButton(
-                        onPressed: messagesState.messages.isEmpty ? null : messagesNotifier.selectAllMessages,
-                        child: const Text('Select All'),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton(
+                            onPressed: messagesState.messages.isEmpty ? null : messagesNotifier.selectAllMessages,
+                            child: const Text('Select All'),
+                          ),
+                          TextButton(
+                            onPressed: messagesState.selectedMessageIds.isEmpty ? null : messagesNotifier.clearSelection,
+                            style: TextButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              minimumSize: const Size(0, 0),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: Text(
+                              'Deselect All',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       
                       const SizedBox(width: 12),
@@ -253,7 +609,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                       ElevatedButton(
                         onPressed: messagesState.selectedMessageIds.isEmpty || messagesState.isLoading
                             ? null
-                            : messagesNotifier.processSelectedMessages,
+                            : () => _processSelectedMessages(context, messagesNotifier, messagesState),
                         child: messagesState.isLoading
                             ? const SizedBox(
                                 width: 16,
@@ -282,6 +638,9 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                     ),
                   ),
                 ),
+                
+                // Pagination Controls (Top)
+                const PaginationControls(),
                 
                 // Messages List
                 Expanded(
@@ -377,6 +736,9 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                               },
                             ),
                 ),
+                
+                // Pagination Controls (Bottom)
+                const PaginationControls(),
               ],
             ),
           ),
@@ -422,7 +784,10 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                         });
                         
                         // Refresh the messages list to show the updated type
-                        await messagesNotifier.loadMessages();
+                        await messagesNotifier.loadMessages(
+              page: ref.read(messagesProvider).currentPage, 
+              pageSize: ref.read(messagesProvider).pageSize
+            );
                         
                         // Show success feedback
                         if (mounted) {

@@ -2,9 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/app.dart';
+import 'config/app_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Debug: Print configuration to verify environment variables
+  print('🔧 Flutter Configuration Debug:');
+  print('Environment: ${AppConfig.isDevelopment ? 'development' : 'production'}');
+  print('Django URL: ${AppConfig.djangoBaseUrl}');
+  print('Python API URL: ${AppConfig.pythonApiUrl}');
+  print('API Timeout: ${AppConfig.apiTimeoutSeconds}s');
+  print('Debug Logging: ${AppConfig.enableDebugLogging}');
   
   // Configure window for desktop
   await windowManager.ensureInitialized();

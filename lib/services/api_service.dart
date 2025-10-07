@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -64,6 +66,8 @@ class ApiService {
   // Authentication tokens
   String? _accessToken;
   String? _refreshToken;
+  DateTime? _tokenExpiry;
+  Timer? _tokenRefreshTimer;
   
   // Expose Dio instance for specialized services
   Dio get dio => _djangoDio;
@@ -77,9 +81,13 @@ class ApiService {
       
       if (_accessToken != null) {
         debugPrint('[AUTH] Loaded access token from storage');
+        // Parse token expiry
+        _tokenExpiry = _parseTokenExpiry(_accessToken!);
       }
       if (_refreshToken != null) {
         debugPrint('[AUTH] Loaded refresh token from storage');
+        // Start automatic refresh timer
+        _startTokenRefreshTimer();
       }
     } catch (e) {
       debugPrint('[AUTH] Failed to load tokens from storage: $e');
@@ -243,8 +251,17 @@ class ApiService {
   void setTokens(String accessToken, String? refreshToken) {
     _accessToken = accessToken;
     _refreshToken = refreshToken;
+    
+    // Parse token expiry
+    _tokenExpiry = _parseTokenExpiry(accessToken);
+    
     // Store tokens immediately when set
     _storeTokens();
+    
+    // Start automatic refresh timer if we have a refresh token
+    if (refreshToken != null) {
+      _startTokenRefreshTimer();
+    }
     
     // Load config after tokens are set (for auto-login scenarios)
     loadConfigAfterAuth().catchError((e) {
@@ -264,6 +281,9 @@ class ApiService {
       
       _accessToken = response.data['access'];
       
+      // Parse new token expiry
+      _tokenExpiry = _parseTokenExpiry(_accessToken!);
+      
       // Store the new access token
       await _storeTokens();
       debugPrint('[AUTH] Access token refreshed and stored');
@@ -272,6 +292,8 @@ class ApiService {
       debugPrint('[AUTH] Token refresh failed, clearing tokens: $e');
       _accessToken = null;
       _refreshToken = null;
+      _tokenExpiry = null;
+      _stopTokenRefreshTimer();
       await clearStoredAuth();
       throw ApiException('Session expired. Please login again.');
     }
@@ -280,6 +302,8 @@ class ApiService {
   void logout() {
     _accessToken = null;
     _refreshToken = null;
+    _tokenExpiry = null;
+    _stopTokenRefreshTimer();
   }
   
   /// Manually refresh the access token
@@ -287,11 +311,73 @@ class ApiService {
     await _refreshAccessToken();
   }
   
+  /// Start automatic token refresh timer
+  void _startTokenRefreshTimer() {
+    _stopTokenRefreshTimer(); // Stop any existing timer
+    
+    if (_refreshToken == null) return;
+    
+    // Check every minute if token needs refresh
+    _tokenRefreshTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
+      if (isTokenExpiredOrExpiringSoon && canRefreshToken) {
+        debugPrint('[AUTH] Token expiring soon, refreshing automatically');
+        try {
+          await _refreshAccessToken();
+        } catch (e) {
+          debugPrint('[AUTH] Automatic token refresh failed: $e');
+          _stopTokenRefreshTimer();
+        }
+      }
+    });
+    
+    debugPrint('[AUTH] Started automatic token refresh timer');
+  }
+  
+  /// Stop automatic token refresh timer
+  void _stopTokenRefreshTimer() {
+    _tokenRefreshTimer?.cancel();
+    _tokenRefreshTimer = null;
+    debugPrint('[AUTH] Stopped automatic token refresh timer');
+  }
+  
+  /// Parse JWT token to get expiry time
+  DateTime? _parseTokenExpiry(String token) {
+    try {
+      // JWT tokens have 3 parts separated by dots
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+      
+      // Decode the payload (second part)
+      final payload = parts[1];
+      // Add padding if needed
+      final paddedPayload = payload.padRight(payload.length + (4 - payload.length % 4) % 4, '=');
+      final decoded = base64Url.decode(paddedPayload);
+      final payloadJson = json.decode(utf8.decode(decoded));
+      
+      // Get expiry time (exp claim)
+      final exp = payloadJson['exp'];
+      if (exp is int) {
+        return DateTime.fromMillisecondsSinceEpoch(exp * 1000);
+      }
+    } catch (e) {
+      debugPrint('[AUTH] Failed to parse token expiry: $e');
+    }
+    return null;
+  }
+  
   /// Check if user is authenticated
   bool get isAuthenticated => _accessToken != null;
   
   /// Check if refresh token is available
   bool get canRefreshToken => _refreshToken != null;
+  
+  /// Check if access token is expired or will expire soon
+  bool get isTokenExpiredOrExpiringSoon {
+    if (_tokenExpiry == null) return true;
+    final now = DateTime.now();
+    final threshold = now.add(AppConfig.tokenRefreshThreshold);
+    return _tokenExpiry!.isBefore(threshold);
+  }
   
   /// Clear all stored authentication data (for debugging)
   Future<void> clearStoredAuth() async {
@@ -351,17 +437,55 @@ class ApiService {
   }
 
   // Message operations - Integrated workflow
-  Future<List<WhatsAppMessage>> getMessages({int? limit}) async {
+  Future<List<WhatsAppMessage>> getMessages({int? limit, int page = 1, int pageSize = 20}) async {
     try {
-      // Get processed messages from Django backend
-      final response = await _djangoDio.get('/whatsapp/messages/', queryParameters: {
-        'limit': limit ?? defaultMessagesLimit,
-      });
+      // Get processed messages from Django backend with pagination
+      final Map<String, dynamic> queryParams = {};
+      
+      // Use pagination parameters if no legacy limit is provided
+      if (limit != null) {
+        // Legacy support - use limit as page_size and set page to 1
+        queryParams['limit'] = limit;
+      } else {
+        // New pagination support
+        queryParams['page'] = page;
+        queryParams['page_size'] = pageSize;
+      }
+      
+      final response = await _djangoDio.get('/whatsapp/messages/', queryParameters: queryParams);
       final Map<String, dynamic> data = response.data;
-      final List<dynamic> messages = data['messages'] ?? [];
+      final List<dynamic> messages = data['results'] ?? data['messages'] ?? [];
+      
+      // Debug: Check what we're getting from the API
+      debugPrint('🔍 API getMessages: Received ${messages.length} messages');
+      if (data.containsKey('pagination')) {
+        final pagination = data['pagination'] as Map<String, dynamic>;
+        debugPrint('🔍 API getMessages: Page ${pagination['current_page']}/${pagination['total_pages']} (${pagination['total_count']} total)');
+      }
+      if (messages.isNotEmpty) {
+        final firstMessage = messages.first as Map<String, dynamic>;
+        debugPrint('🔍 API getMessages: First message keys: ${firstMessage.keys.toList()}');
+        debugPrint('🔍 API getMessages: First message message_id: ${firstMessage['message_id']}');
+        debugPrint('🔍 API getMessages: First message id: ${firstMessage['id']}');
+      }
+      
       return messages.map((json) => WhatsAppMessage.fromJson(Map<String, dynamic>.from(json))).toList();
     } catch (e) {
       throw ApiException('Failed to get messages: $e');
+    }
+  }
+
+  // Get pagination information for messages
+  Future<Map<String, dynamic>> getMessagesPagination({int page = 1, int pageSize = 20}) async {
+    try {
+      final response = await _djangoDio.get('/whatsapp/messages/', queryParameters: {
+        'page': page,
+        'page_size': pageSize,
+      });
+      final Map<String, dynamic> data = response.data;
+      return data['pagination'] ?? {};
+    } catch (e) {
+      throw ApiException('Failed to get messages pagination: $e');
     }
   }
 
@@ -466,6 +590,36 @@ class ApiService {
     }
   }
 
+  /// Process a message with always-suggestions flow - returns suggestions for all items
+  Future<Map<String, dynamic>> processMessageWithSuggestions(String messageId) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/messages/process-with-suggestions/', data: {
+        'message_id': messageId,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to process message with suggestions: $e');
+    }
+  }
+
+  /// Create an order from confirmed suggestions
+  Future<Map<String, dynamic>> createOrderFromSuggestions({
+    required String messageId,
+    required Map<String, dynamic> customer,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/orders/create-from-suggestions/', data: {
+        'message_id': messageId,
+        'customer': customer,
+        'items': items,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to create order from suggestions: $e');
+    }
+  }
+
   Future<Map<String, dynamic>> applyStockUpdatesToInventory({bool resetBeforeProcessing = true}) async {
     try {
       final response = await _djangoDio.post('/whatsapp/stock-updates/apply-to-inventory/', data: {
@@ -560,6 +714,60 @@ class ApiService {
     }
   }
 
+  // Enhanced paginated orders API method
+  Future<Map<String, dynamic>> getOrdersPaginated({int page = 1, int pageSize = 20}) async {
+    try {
+      print('[DEBUG] Starting getOrdersPaginated API call... page=$page, pageSize=$pageSize');
+      final response = await _djangoDio.get('/orders/', queryParameters: {
+        'page': page,
+        'page_size': pageSize,
+      });
+      print('[DEBUG] Got paginated response, type: ${response.data.runtimeType}');
+      
+      // Handle Django REST Framework pagination format
+      if (response.data is Map<String, dynamic>) {
+        print('[DEBUG] Paginated response is Map, checking for results...');
+        final Map<String, dynamic> responseData = response.data;
+        print('[DEBUG] Paginated response keys: ${responseData.keys.toList()}');
+        
+        if (responseData.containsKey('results')) {
+          final List<dynamic> ordersJson = responseData['results'];
+          print('[DEBUG] Found ${ordersJson.length} orders in paginated results');
+          
+          final List<Order> orders = [];
+          for (int i = 0; i < ordersJson.length; i++) {
+            try {
+              final orderMap = Map<String, dynamic>.from(ordersJson[i]);
+              final order = Order.fromJson(orderMap);
+              orders.add(order);
+            } catch (e) {
+              print('[ERROR] Failed to parse paginated order $i: $e');
+              rethrow;
+            }
+          }
+          
+          print('[DEBUG] Successfully parsed ${orders.length} paginated orders');
+          
+          // Return pagination metadata with orders
+          return {
+            'orders': orders,
+            'count': responseData['count'] ?? 0,
+            'next': responseData['next'],
+            'previous': responseData['previous'],
+            'currentPage': page,
+            'hasNext': responseData['next'] != null,
+            'hasPrevious': responseData['previous'] != null,
+          };
+        }
+      }
+      
+      throw ApiException('Unexpected paginated response format from orders API');
+    } catch (e) {
+      print('[ERROR] getOrdersPaginated failed: $e');
+      throw ApiException('Failed to get paginated orders: $e');
+    }
+  }
+
   Future<Order> getOrder(int orderId) async {
     try {
       final response = await _djangoDio.get('/orders/$orderId/');
@@ -600,18 +808,33 @@ class ApiService {
 
   Future<void> deleteOrder(int orderId) async {
     try {
+      print('[DEBUG] Starting deleteOrder for ID: $orderId');
+      
       // Ensure we have valid authentication before attempting delete
       if (_accessToken == null) {
+        print('[DEBUG] No access token, initializing...');
         await _initializeTokens();
         if (_accessToken == null) {
           throw ApiException('Authentication required. Please log in again.');
         }
       }
       
-      await _djangoDio.delete('/orders/$orderId/');
+      print('[DEBUG] Making DELETE request to /orders/$orderId/');
+      final response = await _djangoDio.delete('/orders/$orderId/');
+      print('[DEBUG] Delete response status: ${response.statusCode}');
+      
     } catch (e) {
+      print('[ERROR] Delete order failed: $e');
+      
       if (e is DioException) {
-        if (e.response?.statusCode == 401) {
+        print('[ERROR] DioException type: ${e.type}');
+        print('[ERROR] DioException message: ${e.message}');
+        
+        if (e.type == DioExceptionType.receiveTimeout) {
+          throw ApiException('Delete operation timed out. The order may have been deleted. Please refresh and check.');
+        } else if (e.type == DioExceptionType.connectionTimeout) {
+          throw ApiException('Connection timeout. Please check your internet connection and try again.');
+        } else if (e.response?.statusCode == 401) {
           throw ApiException('Authentication expired. Please log in again.');
         } else if (e.response?.statusCode == 403) {
           throw ApiException('You don\'t have permission to delete this order.');
@@ -1069,6 +1292,19 @@ class ApiService {
     } catch (e) {
       print('[API] Product update error: $e');
       throw ApiException('Failed to update product: $e');
+    }
+  }
+
+  // Create new product
+  Future<product_model.Product> createProduct(Map<String, dynamic> productData) async {
+    try {
+      print('[API] Creating product with data: $productData');
+      final response = await _djangoDio.post('/products/products/', data: productData);
+      print('[API] Product creation response: ${response.data}');
+      return product_model.Product.fromJson(Map<String, dynamic>.from(response.data));
+    } catch (e) {
+      print('[API] Product creation error: $e');
+      throw ApiException('Failed to create product: $e');
     }
   }
 
@@ -1594,10 +1830,10 @@ class ApiService {
     }
   }
 
-  Future<List<String>> getOrderStatuses() async {
+  Future<List<Map<String, dynamic>>> getOrderStatuses() async {
     try {
       final response = await _djangoDio.get('/api/settings/order-statuses/');
-      return List<String>.from(response.data);
+      return List<Map<String, dynamic>>.from(response.data);
     } catch (e) {
       throw ApiException('Failed to get order statuses: ${_extractErrorMessage(e, "Network error")}');
     }
@@ -1731,7 +1967,7 @@ class ApiService {
       }
       
       // Test with a simple API call
-      final response = await _djangoDio.get('/products/business-settings/');
+      await _djangoDio.get('/products/business-settings/');
       debugPrint('[AUTH] Test API call successful');
       return true;
     } catch (e) {
@@ -1965,6 +2201,30 @@ class ApiService {
       return response.data;
     } catch (e) {
       throw ApiException('Failed to get supplier performance dashboard: $e');
+    }
+  }
+
+  // Message Correction APIs
+  Future<Map<String, dynamic>> updateMessageCorrections(String messageId, Map<String, dynamic> corrections) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/messages/corrections/', data: {
+        'message_id': messageId,
+        'corrections': corrections,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update message corrections: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> reprocessMessageWithCorrections(String messageId) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/messages/reprocess/', data: {
+        'message_id': messageId,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to reprocess message: ${_extractErrorMessage(e, "Network error")}');
     }
   }
 

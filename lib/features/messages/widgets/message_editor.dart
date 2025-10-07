@@ -139,51 +139,36 @@ class _MessageEditorState extends State<MessageEditor> {
       case 'fix_spelling':
         // Fix common spelling mistakes in food/produce names
         final corrections = {
-          // Vegetables
-          'tomatoe': 'tomato',
+          // Vegetables - based on database products
+          'tomatoe': 'tomatoes',
           'tomatos': 'tomatoes',
+          'potatoe': 'potatoes', 
           'potatos': 'potatoes',
           'carrot': 'carrots',
-          'onoin': 'onion',
-          'onions': 'onions',
+          'carrotss': 'carrots',  // Fix double 's' issue
+          'carrotsss': 'carrots', // Fix triple 's' issue
+          'onoin': 'onions',
           'cucmber': 'cucumber',
-          'cucumbers': 'cucumbers',
           'spinich': 'spinach',
-          'spinach': 'spinach',
           'brocoli': 'broccoli',
-          'broccoli': 'broccoli',
           'cabage': 'cabbage',
-          'cabbage': 'cabbage',
           'cauliflower': 'cauliflower',
           'califlower': 'cauliflower',
-          'peper': 'pepper',
-          'peppers': 'peppers',
-          'chili': 'chilli',
-          'chilis': 'chillies',
-          'mushrom': 'mushroom',
-          'mushrooms': 'mushrooms',
+          'peper': 'peppers',
+          'mushrom': 'mushrooms',
           'porta': 'portabellini',
           'portabello': 'portabellini',
           'portobello': 'portabellini',
           
-          // Fruits
-          'bannana': 'banana',
-          'bananas': 'bananas',
-          'aple': 'apple',
-          'apples': 'apples',
-          'oragne': 'orange',
-          'oranges': 'oranges',
-          'lemmon': 'lemon',
-          'lemons': 'lemons',
-          'lime': 'lime',
-          'limes': 'limes',
-          'avacado': 'avocado',
-          'avocados': 'avocados',
+          // Fruits - based on database products
+          'bannana': 'bananas',
+          'aple': 'apples',
+          'oragne': 'oranges',
+          'lemmon': 'lemons',
+          'avacado': 'avocados',
           'avos': 'avocados',
-          'strawbery': 'strawberry',
-          'strawberries': 'strawberries',
+          'strawbery': 'strawberries',
           'pineaple': 'pineapple',
-          'pineapple': 'pineapple',
           'blueberry': 'blueberries',
           'blue berry': 'blueberries',
           
@@ -201,10 +186,26 @@ class _MessageEditorState extends State<MessageEditor> {
           'packets': 'packet',
         };
         
-        // Apply corrections (case-insensitive)
+        // Apply corrections (case-insensitive) with word boundaries to prevent double corrections
         corrections.forEach((wrong, correct) {
-          newText = newText.replaceAll(RegExp(wrong, caseSensitive: false), correct);
+          // Use word boundaries to ensure we only replace whole words
+          final regex = RegExp(r'\b' + RegExp.escape(wrong) + r'\b', caseSensitive: false);
+          newText = newText.replaceAll(regex, correct);
         });
+        break;
+        
+      case 'remove_hyphens':
+        // Remove hyphens and dashes from the text while preserving line breaks
+        final lines = newText.split('\n');
+        final processedLines = lines.map((line) {
+          return line
+              .replaceAll('-', ' ')  // Replace hyphens with spaces
+              .replaceAll('–', ' ')  // Replace en dashes with spaces
+              .replaceAll('—', ' ')  // Replace em dashes with spaces
+              .replaceAll(RegExp(r'[ \t]+'), ' ')  // Normalize multiple spaces/tabs to single space
+              .trim();  // Remove leading/trailing whitespace from each line
+        }).toList();
+        newText = processedLines.join('\n');  // Rejoin lines with newlines
         break;
     }
 
@@ -395,6 +396,11 @@ class _MessageEditorState extends State<MessageEditor> {
                 label: 'Fix Spelling',
                 icon: Icons.spellcheck,
                 onPressed: () => _applyQuickFix('fix_spelling'),
+              ),
+              _QuickFixButton(
+                label: 'Remove Hyphens',
+                icon: Icons.remove,
+                onPressed: () => _applyQuickFix('remove_hyphens'),
               ),
             ],
           ),

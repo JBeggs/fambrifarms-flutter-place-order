@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../models/order.dart';
-import '../../../models/customer.dart';
-import '../../../providers/orders_provider.dart';
 import '../../../services/api_service.dart';
 import 'order_status_chip.dart';
 import '../edit_order_page.dart';
@@ -245,7 +243,7 @@ class OrderCard extends ConsumerWidget {
                           children: [
                             Expanded(
                               child: Text(
-                                '${item.product.name}',
+                                item.product.name,
                                 style: const TextStyle(fontWeight: FontWeight.bold),
                               ),
                             ),

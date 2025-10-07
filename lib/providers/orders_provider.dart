@@ -9,27 +9,53 @@ import '../providers/inventory_provider.dart';
 class OrdersState {
   final List<Order> orders;
   final bool isLoading;
+  final bool isLoadingMore;
   final String? error;
   final Order? selectedOrder;
+  
+  // Pagination metadata
+  final int totalCount;
+  final String? nextPageUrl;
+  final String? previousPageUrl;
+  final int currentPage;
+  final bool hasNextPage;
 
   const OrdersState({
     this.orders = const [],
     this.isLoading = false,
+    this.isLoadingMore = false,
     this.error,
     this.selectedOrder,
+    this.totalCount = 0,
+    this.nextPageUrl,
+    this.previousPageUrl,
+    this.currentPage = 1,
+    this.hasNextPage = false,
   });
 
   OrdersState copyWith({
     List<Order>? orders,
     bool? isLoading,
+    bool? isLoadingMore,
     String? error,
     Order? selectedOrder,
+    int? totalCount,
+    String? nextPageUrl,
+    String? previousPageUrl,
+    int? currentPage,
+    bool? hasNextPage,
   }) {
     return OrdersState(
       orders: orders ?? this.orders,
       isLoading: isLoading ?? this.isLoading,
+      isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       error: error ?? this.error,
       selectedOrder: selectedOrder ?? this.selectedOrder,
+      totalCount: totalCount ?? this.totalCount,
+      nextPageUrl: nextPageUrl ?? this.nextPageUrl,
+      previousPageUrl: previousPageUrl ?? this.previousPageUrl,
+      currentPage: currentPage ?? this.currentPage,
+      hasNextPage: hasNextPage ?? this.hasNextPage,
     );
   }
 }
@@ -39,25 +65,58 @@ class OrdersNotifier extends StateNotifier<OrdersState> {
 
   OrdersNotifier(this._apiService) : super(const OrdersState());
 
-  Future<void> loadOrders() async {
-    state = state.copyWith(isLoading: true, error: null);
+  Future<void> loadOrders({int page = 1, int pageSize = 20, bool append = false}) async {
+    if (!append) {
+      state = state.copyWith(isLoading: true, error: null);
+    } else {
+      state = state.copyWith(isLoadingMore: true, error: null);
+    }
     
     try {
-      final orders = await _apiService.getOrders();
+      final paginatedData = await _apiService.getOrdersPaginated(page: page, pageSize: pageSize);
+      
+      final newOrders = paginatedData['orders'] as List<Order>;
+      final totalCount = paginatedData['count'] as int;
+      final nextUrl = paginatedData['next'] as String?;
+      final previousUrl = paginatedData['previous'] as String?;
+      final hasNext = paginatedData['hasNext'] as bool;
+      
+      List<Order> allOrders;
+      if (append) {
+        // Append new orders to existing list
+        allOrders = [...state.orders, ...newOrders];
+      } else {
+        // Replace orders list (fresh load)
+        allOrders = newOrders;
+      }
+      
       state = state.copyWith(
-        orders: orders,
+        orders: allOrders,
         isLoading: false,
+        isLoadingMore: false,
+        totalCount: totalCount,
+        nextPageUrl: nextUrl,
+        previousPageUrl: previousUrl,
+        currentPage: page,
+        hasNextPage: hasNext,
       );
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
+        isLoadingMore: false,
         error: e.toString(),
       );
     }
   }
 
   Future<void> refreshOrders() async {
-    await loadOrders();
+    await loadOrders(page: 1, pageSize: 20, append: false);
+  }
+
+  Future<void> loadMoreOrders() async {
+    if (state.hasNextPage && !state.isLoadingMore) {
+      await loadOrders(page: state.currentPage + 1, pageSize: 20, append: true);
+    }
   }
 
   Future<Order?> createOrder(Map<String, dynamic> orderData) async {

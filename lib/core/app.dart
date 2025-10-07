@@ -31,23 +31,23 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isAuthenticated = ref.read(isAuthenticatedProvider);
       final isLoading = ref.read(authLoadingProvider);
       
-      print('[ROUTER] Current path: ${state.uri.path}, isAuthenticated: $isAuthenticated, isLoading: $isLoading');
+      // print('[ROUTER] Current path: ${state.uri.path}, isAuthenticated: $isAuthenticated, isLoading: $isLoading');
       
       // Show loading screen while checking auth
       if (isLoading && state.uri.path != '/loading') {
-        print('[ROUTER] Redirecting to loading');
+        // print('[ROUTER] Redirecting to loading');
         return '/loading';
       }
       
       // After loading is complete, redirect appropriately
       if (!isLoading) {
         if (!isAuthenticated && state.uri.path != '/login') {
-          print('[ROUTER] Redirecting to login');
+          // print('[ROUTER] Redirecting to login');
           return '/login';
         }
         
         if (isAuthenticated && (state.uri.path == '/login' || state.uri.path == '/' || state.uri.path == '/loading')) {
-          print('[ROUTER] Redirecting to karl-dashboard');
+          // print('[ROUTER] Redirecting to karl-dashboard');
           return '/karl-dashboard';
         }
       }

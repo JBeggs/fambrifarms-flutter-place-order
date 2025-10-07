@@ -32,7 +32,10 @@ class _MessageCardState extends State<MessageCard> {
   @override
   void initState() {
     super.initState();
-    selectedCompany = widget.message.companyName;
+    // Use manual company if available, otherwise use companyName
+    selectedCompany = widget.message.manualCompany?.isNotEmpty == true 
+        ? widget.message.manualCompany 
+        : widget.message.companyName;
     // Check if this message has a manual company selection from backend
     _hasManualSelection = widget.message.manualCompany != null && widget.message.manualCompany!.isNotEmpty;
   }
@@ -40,9 +43,15 @@ class _MessageCardState extends State<MessageCard> {
   @override
   void didUpdateWidget(MessageCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Only update selectedCompany if user hasn't made a manual selection
-    if (!_hasManualSelection && oldWidget.message.companyName != widget.message.companyName) {
-      selectedCompany = widget.message.companyName;
+    // Update selectedCompany if the message data has changed
+    if (oldWidget.message.manualCompany != widget.message.manualCompany ||
+        oldWidget.message.companyName != widget.message.companyName) {
+      // Use manual company if available, otherwise use companyName
+      selectedCompany = widget.message.manualCompany?.isNotEmpty == true 
+          ? widget.message.manualCompany 
+          : widget.message.companyName;
+      // Update manual selection flag
+      _hasManualSelection = widget.message.manualCompany != null && widget.message.manualCompany!.isNotEmpty;
     }
   }
 
@@ -329,24 +338,26 @@ class _MessageCardState extends State<MessageCard> {
                         Text(
                           'Original:',
                           style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: Theme.of(context).colorScheme.outline,
-                            fontWeight: FontWeight.w500,
+                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           widget.message.originalContent!,
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.outline,
+                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                             decoration: TextDecoration.lineThrough,
+                            decorationColor: Theme.of(context).colorScheme.error,
+                            decorationThickness: 2.0,
                           ),
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'Edited:',
                           style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: Theme.of(context).colorScheme.secondary,
-                            fontWeight: FontWeight.w500,
+                            color: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                         const SizedBox(height: 4),

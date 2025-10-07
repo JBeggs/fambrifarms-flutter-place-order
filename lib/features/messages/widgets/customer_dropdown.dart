@@ -124,7 +124,7 @@ class _CustomerDropdownState extends ConsumerState<CustomerDropdown> {
                         final allValidValues = <String?>{null, '', ...companyOptions};
                         final validSelectedCompany = allValidValues.contains(widget.selectedCompany) 
                             ? widget.selectedCompany 
-                            : null;
+                            : widget.selectedCompany; // Keep the selected company even if not in options yet
                         
                         return DropdownButton<String>(
                           value: validSelectedCompany,
@@ -169,6 +169,20 @@ class _CustomerDropdownState extends ConsumerState<CustomerDropdown> {
                                 ),
                               ),
                             ),
+                            // Add selected company if it's not in the options yet
+                            if (widget.selectedCompany != null && 
+                                widget.selectedCompany!.isNotEmpty && 
+                                !companyOptions.contains(widget.selectedCompany))
+                              DropdownMenuItem<String>(
+                                value: widget.selectedCompany,
+                                child: Text(
+                                  widget.selectedCompany!,
+                                  style: TextStyle(
+                                    color: Colors.blue.shade700,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
                             // Company options from database (remove duplicates)
                             ...companyOptions.toSet().map((String company) {
                               return DropdownMenuItem<String>(

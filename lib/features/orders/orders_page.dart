@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../models/order.dart';
-import '../../models/customer.dart';
 import '../../providers/orders_provider.dart';
 import '../../providers/inventory_provider.dart';
 import 'widgets/order_card.dart';
-import 'widgets/order_status_chip.dart';
 import 'widgets/create_order_dialog.dart';
 
 class OrdersPage extends ConsumerStatefulWidget {
@@ -246,30 +244,75 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
                               ],
                             ),
                           )
-                        : ListView.builder(
-                            padding: const EdgeInsets.all(16),
-                            itemCount: filteredOrders.length,
-                            itemBuilder: (context, index) {
-                              final order = filteredOrders[index];
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: OrderCard(
-                                  order: order,
-                                  onTap: () => _showOrderDetails(context, order),
-                                  onStatusChanged: (newStatus) {
-                                    ordersNotifier.updateOrderStatus(order.id, newStatus);
-                                  },
-                                  onOrderUpdated: () {
-                                    // Refresh orders when an order is updated
-                                    ordersNotifier.loadOrders();
-                                  },
-                                  onOrderDeleted: () {
-                                    // Refresh orders when an order is deleted
-                                    ordersNotifier.loadOrders();
+                        : Column(
+                            children: [
+                              // Orders List
+                              Expanded(
+                                child: ListView.builder(
+                                  padding: const EdgeInsets.all(16),
+                                  itemCount: filteredOrders.length + (ordersState.hasNextPage ? 1 : 0),
+                                  itemBuilder: (context, index) {
+                                    // Load more item at the end
+                                    if (index == filteredOrders.length) {
+                                      return _buildLoadMoreItem(context, ordersNotifier, ordersState);
+                                    }
+                                    
+                                    final order = filteredOrders[index];
+                                    return Padding(
+                                      padding: const EdgeInsets.only(bottom: 12),
+                                      child: OrderCard(
+                                        order: order,
+                                        onTap: () => _showOrderDetails(context, order),
+                                        onStatusChanged: (newStatus) {
+                                          ordersNotifier.updateOrderStatus(order.id, newStatus);
+                                        },
+                                        onOrderUpdated: () {
+                                          // Refresh orders when an order is updated
+                                          ordersNotifier.refreshOrders();
+                                        },
+                                        onOrderDeleted: () {
+                                          // Refresh orders when an order is deleted
+                                          ordersNotifier.refreshOrders();
+                                        },
+                                      ),
+                                    );
                                   },
                                 ),
-                              );
-                            },
+                              ),
+                              
+                              // Pagination Info
+                              if (ordersState.totalCount > 0)
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+                                    border: Border(
+                                      top: BorderSide(
+                                        color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                                      ),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        'Showing ${filteredOrders.length} of ${ordersState.totalCount} orders',
+                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                      if (ordersState.hasNextPage)
+                                        Text(
+                                          'Page ${ordersState.currentPage}',
+                                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                            color: Theme.of(context).colorScheme.primary,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                            ],
                           ),
           ),
         ],
@@ -292,6 +335,31 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
         ref.read(ordersProvider.notifier).refreshOrders();
       }
     });
+  }
+
+  Widget _buildLoadMoreItem(BuildContext context, OrdersNotifier ordersNotifier, OrdersState ordersState) {
+    if (ordersState.isLoadingMore) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        child: const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+    
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: ElevatedButton.icon(
+          onPressed: () => ordersNotifier.loadMoreOrders(),
+          icon: const Icon(Icons.expand_more),
+          label: const Text('Load More Orders'),
+          style: ElevatedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildStatusFilterChip(String value, String label) {
