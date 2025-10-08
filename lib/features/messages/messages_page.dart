@@ -6,6 +6,8 @@ import '../../utils/messages_provider.dart';
 import '../../services/api_service.dart';
 import 'widgets/message_card.dart';
 import 'widgets/enhanced_processing_result_dialog.dart';
+import 'widgets/always_suggestions_dialog.dart';
+import 'widgets/stock_suggestions_dialog.dart';
 import 'widgets/message_editor.dart';
 import 'widgets/pagination_controls.dart';
 
@@ -82,6 +84,8 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
     });
   }
 
+  // TODO: DEPRECATED - This method is only used for stock messages now
+  // Can be removed when stock message processing is also streamlined
   Future<void> _retryProcessingWithCorrections(BuildContext context, messagesNotifier, messagesState) async {
     try {
       final messageId = _getMessageIdForDialog(messagesState);
@@ -252,82 +256,12 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
       
       debugPrint('🔍 Order messages: $orderCount, Stock messages: $stockCount');
       
-      String contentText = 'Process $selectedCount selected messages?\n\n';
+      // For order messages, go directly to suggestions flow
       if (orderCount > 0) {
-        contentText += '• $orderCount order messages → Create orders\n';
-      }
-      if (stockCount > 0) {
-        contentText += '• $stockCount stock messages → Update inventory\n';
-      }
-      
-      // Show confirmation dialog
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Process Messages'),
-          content: Text(contentText),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Process Messages'),
-            ),
-          ],
-        ),
-      );
-
-      if (confirmed == true) {
-        // Call the processSelectedMessages method
-        await messagesNotifier.processSelectedMessages();
-        
-        if (context.mounted) {
-          // Show processing result dialog
-          final result = messagesNotifier.state.lastProcessingResult;
-          debugPrint('🔍 Processing result: $result');
-          if (result != null) {
-            debugPrint('✅ Showing processing result dialog');
-            
-            // Get messageId BEFORE showing dialog
-            final messageId = _getMessageIdForDialog(messagesNotifier.state);
-            debugPrint('🔍 Dialog messageId: "$messageId"');
-            
-            await showDialog(
-              context: context,
-              builder: (context) => EnhancedProcessingResultDialog(
-                result: result,
-                messageId: messageId,
-                onRetry: () async {
-                  Navigator.of(context).pop();
-                  // Retry processing with corrections
-                  await _retryProcessingWithCorrections(context, messagesNotifier, messagesNotifier.state);
-                },
-              ),
-            );
-            
-            // Refresh messages to show updated content after processing
-            debugPrint('🔄 Refreshing messages after processing dialog closed...');
-            // Add a small delay to ensure backend has updated the message
-            await Future.delayed(const Duration(milliseconds: 500));
-            await messagesNotifier.loadMessages(
-              page: ref.read(messagesProvider).currentPage, 
-              pageSize: ref.read(messagesProvider).pageSize
-            );
-            
-            // Clear selection after dialog is closed
-            messagesNotifier.clearSelection();
-            
-            // Navigate to orders page if orders were created
-            final ordersCreated = result['orders_created'] ?? 0;
-            if (ordersCreated > 0) {
-              context.go('/orders');
-            }
-          } else {
-            debugPrint('❌ No processing result found');
-          }
-        }
+        await _processOrderMessagesDirectly(context, messagesNotifier, messagesState);
+      } else if (stockCount > 0) {
+        // For stock messages, go directly to suggestions flow
+        await _processStockMessagesDirectly(context, messagesNotifier, messagesState);
       }
     } catch (e) {
       if (context.mounted) {
@@ -341,25 +275,219 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
     }
   }
 
-  Future<void> _createOrdersFromSelected(BuildContext context, messagesNotifier) async {
+  Future<void> _processOrderMessagesDirectly(BuildContext context, messagesNotifier, messagesState) async {
     try {
-      final selectedCount = ref.read(messagesProvider).selectedMessageIds.length;
-      final selectedMessages = ref.read(messagesProvider).messages.where(
-        (msg) => ref.read(messagesProvider).selectedMessageIds.contains(msg.id)
-      ).toList();
+      // Get the first selected order message
+      final orderMessages = messagesState.messages
+          .where((msg) => messagesState.selectedMessageIds.contains(msg.id) && msg.type == MessageType.order)
+          .toList();
       
-      final orderCount = selectedMessages.where((m) => m.type == MessageType.order).length;
-      final stockCount = selectedMessages.where((m) => m.type == MessageType.stock).length;
+      if (orderMessages.isEmpty) return;
+      
+      final message = orderMessages.first;
+      final messageId = message.messageId ?? '';
+      
+      if (messageId.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Error: Message ID not found'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+      
+      // Show loading indicator
+      if (context.mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(
+            child: CircularProgressIndicator(),
+          ),
+        );
+      }
+      
+      try {
+        // Process the message with always-suggestions directly
+        final result = await messagesNotifier.processMessageWithSuggestions(messageId);
+        
+        // Close loading dialog
+        if (context.mounted) {
+          Navigator.of(context).pop();
+        }
+        
+        if (result['status'] == 'success') {
+          // Show the always-suggestions dialog directly
+          if (context.mounted) {
+            await showDialog(
+              context: context,
+              builder: (context) => AlwaysSuggestionsDialog(
+                messageId: messageId,
+                suggestionsData: result,
+              ),
+            );
+            
+            // Refresh messages after dialog is closed
+            await messagesNotifier.loadMessages(
+              page: ref.read(messagesProvider).currentPage, 
+              pageSize: ref.read(messagesProvider).pageSize
+            );
+            
+            // Clear selection after dialog is closed
+            messagesNotifier.clearSelection();
+          }
+        } else {
+          // Show error
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error: ${result['message']}'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        // Close loading dialog
+        if (context.mounted) {
+          Navigator.of(context).pop();
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to process message: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error processing order messages: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _processStockMessagesDirectly(BuildContext context, messagesNotifier, messagesState) async {
+    try {
+      // Get the first selected stock message
+      final stockMessages = messagesState.messages
+          .where((msg) => messagesState.selectedMessageIds.contains(msg.id) && msg.type == MessageType.stock)
+          .toList();
+      
+      if (stockMessages.isEmpty) return;
+      
+      final message = stockMessages.first;
+      final messageId = message.messageId ?? '';
+      
+      if (messageId.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Error: Message ID not found'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+      
+      // Show loading indicator
+      if (context.mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(
+            child: CircularProgressIndicator(),
+          ),
+        );
+      }
+      
+      try {
+        // Process the stock message with suggestions directly
+        final result = await messagesNotifier.processStockMessageWithSuggestions(messageId);
+        
+        // Close loading dialog
+        if (context.mounted) {
+          Navigator.of(context).pop();
+        }
+        
+        if (result['status'] == 'success') {
+          // Show the stock suggestions dialog directly
+          if (context.mounted) {
+            await showDialog(
+              context: context,
+              builder: (context) => StockSuggestionsDialog(
+                messageId: messageId,
+                suggestionsData: result,
+              ),
+            );
+            
+            // Refresh messages after dialog is closed
+            await messagesNotifier.loadMessages(
+              page: ref.read(messagesProvider).currentPage, 
+              pageSize: ref.read(messagesProvider).pageSize
+            );
+            
+            // Clear selection after dialog is closed
+            messagesNotifier.clearSelection();
+          }
+        } else {
+          // Show error
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error: ${result['message']}'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        // Close loading dialog
+        if (context.mounted) {
+          Navigator.of(context).pop();
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to process stock message: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error processing stock messages: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // TODO: DEPRECATED - This method uses the old multi-popup flow for stock messages
+  // Consider streamlining stock message processing to match order message flow
+  Future<void> _processStockMessages(BuildContext context, messagesNotifier, messagesState) async {
+    try {
+      final selectedCount = messagesState.selectedMessageIds.length;
+      final stockCount = messagesState.messages
+          .where((msg) => messagesState.selectedMessageIds.contains(msg.id) && msg.type == MessageType.stock)
+          .length;
       
       String contentText = 'Process $selectedCount selected messages?\n\n';
-      if (orderCount > 0) {
-        contentText += '• $orderCount order messages → Create orders\n';
-      }
-      if (stockCount > 0) {
-        contentText += '• $stockCount stock messages → Update inventory\n';
-      }
+      contentText += '• $stockCount stock messages → Update inventory\n';
       
-      // Show confirmation dialog
+      // Show confirmation dialog for stock messages
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -432,13 +560,14 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to process messages: $e'),
+            content: Text('Failed to process stock messages: $e'),
             backgroundColor: Colors.red,
           ),
         );
       }
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -605,7 +734,7 @@ class _MessagesPageState extends ConsumerState<MessagesPage> {
                       
                       const SizedBox(width: 12),
                       
-                      // Process Button
+                      // Process Button - Now goes directly to suggestions for order messages
                       ElevatedButton(
                         onPressed: messagesState.selectedMessageIds.isEmpty || messagesState.isLoading
                             ? null

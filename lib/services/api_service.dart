@@ -556,6 +556,8 @@ class ApiService {
     }
   }
 
+  // TODO: DEPRECATED - This method is only used for stock messages now
+  // Order messages use the streamlined flow with processMessageWithSuggestions
   Future<Map<String, dynamic>> processMessages(List<String> messageIds) async {
     try {
       final response = await _djangoDio.post('/whatsapp/messages/process/', data: {
@@ -639,6 +641,58 @@ class ApiService {
       return response.data;
     } catch (e) {
       throw ApiException('Failed to get stock take data: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> processStockMessageWithSuggestions(String messageId) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/stock/process-with-suggestions/', data: {
+        'message_id': messageId,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to process stock message with suggestions: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> createStockUpdateFromSuggestions({
+    required String messageId,
+    required List<Map<String, dynamic>> confirmedItems,
+    required String stockDate,
+    required String orderDay,
+    bool resetBeforeProcessing = true,
+  }) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/stock/create-from-suggestions/', data: {
+        'message_id': messageId,
+        'confirmed_items': confirmedItems,
+        'stock_date': stockDate,
+        'order_day': orderDay,
+        'reset_before_processing': resetBeforeProcessing,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to create stock update from suggestions: $e');
+    }
+  }
+
+  // Get stock update history with WhatsApp message references
+  Future<Map<String, dynamic>> getStockUpdateHistory() async {
+    try {
+      final response = await _djangoDio.get('/whatsapp/stock/history/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get stock update history: $e');
+    }
+  }
+
+  // Compare current stock with previous stock take
+  Future<Map<String, dynamic>> compareStockWithPrevious() async {
+    try {
+      final response = await _djangoDio.get('/whatsapp/stock/compare-with-previous/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to compare stock with previous: $e');
     }
   }
 
@@ -1325,10 +1379,10 @@ class ApiService {
     }
   }
 
-  // Get units of measure for product editing
+  // Get units of measure with categories (for dynamic container unit detection)
   Future<List<Map<String, dynamic>>> getUnitsOfMeasure() async {
     try {
-      final response = await _djangoDio.get('/inventory/units/');
+      final response = await _djangoDio.get('/settings/units-of-measure/');
       return List<Map<String, dynamic>>.from(response.data);
     } catch (e) {
       throw ApiException('Failed to get units of measure: $e');
