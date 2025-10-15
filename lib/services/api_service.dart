@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -515,6 +516,9 @@ class ApiService {
 
   Future<WhatsAppMessage> editMessage(String messageId, String editedContent, {bool? processed}) async {
     try {
+      print('📡 API: editMessage called with messageId: $messageId');
+      print('📡 API: Content length: ${editedContent.length} chars');
+      
       final data = <String, dynamic>{
         'message_id': messageId,  // This should be the WhatsApp messageId, not the database id
         'edited_content': editedContent,
@@ -525,9 +529,16 @@ class ApiService {
         data['processed'] = processed;
       }
       
+      print('📡 API: Sending POST to /whatsapp/messages/edit/');
       final response = await _djangoDio.post('/whatsapp/messages/edit/', data: data);
-      return WhatsAppMessage.fromJson(Map<String, dynamic>.from(response.data['message']));
+      print('📡 API: Received response: ${response.statusCode}');
+      
+      final message = WhatsAppMessage.fromJson(Map<String, dynamic>.from(response.data['message']));
+      print('📡 API: Parsed message content: "${message.content}"');
+      
+      return message;
     } catch (e) {
+      print('📡 API ERROR: $e');
       throw ApiException('Failed to edit message: $e');
     }
   }
@@ -1979,6 +1990,45 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> printMarketRecommendation(int recommendationId) async {
+    try {
+      final response = await _djangoDio.get('/products/procurement/recommendations/$recommendationId/print/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get print data for market recommendation: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> deleteMarketRecommendation(int recommendationId) async {
+    try {
+      final response = await _djangoDio.delete('/products/procurement/recommendations/$recommendationId/delete/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to delete market recommendation: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateProcurementItemQuantity(int recommendationId, int itemId, double quantity) async {
+    try {
+      final response = await _djangoDio.patch(
+        '/products/procurement/recommendations/$recommendationId/items/$itemId/',
+        data: {'recommended_quantity': quantity},
+      );
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update item quantity: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getProcurementBySupplier(int recommendationId) async {
+    try {
+      final response = await _djangoDio.get('/products/procurement/recommendations/$recommendationId/by-supplier/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get procurement by supplier: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getProcurementBuffers() async {
     try {
       final response = await _djangoDio.get('/products/procurement/buffers/');
@@ -2158,6 +2208,19 @@ class ApiService {
     }
   }
 
+  // ===== ITEM ANALYSIS =====
+  
+  Future<List<Map<String, dynamic>>> analyzeItems(String content) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/analyze-items/', data: {
+        'content': content,
+      });
+      return List<Map<String, dynamic>>.from(response.data['improvements']);
+    } catch (e) {
+      throw ApiException('Failed to analyze items: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
   // ===== PRODUCT ALERTS =====
   
   Future<List<Map<String, dynamic>>> getProductAlerts() async {
@@ -2279,6 +2342,86 @@ class ApiService {
       return response.data;
     } catch (e) {
       throw ApiException('Failed to reprocess message: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  // Invoice Processing APIs
+  Future<Map<String, dynamic>> getInvoiceUploadStatus() async {
+    try {
+      final response = await _djangoDio.get('/inventory/invoice-upload-status/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get invoice upload status: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> uploadInvoicePhoto({
+    required int supplierId,
+    required DateTime invoiceDate,
+    required File photoFile,
+    String? notes,
+  }) async {
+    try {
+      final formData = FormData.fromMap({
+        'supplier_id': supplierId,
+        'invoice_date': '${invoiceDate.year}-${invoiceDate.month.toString().padLeft(2, '0')}-${invoiceDate.day.toString().padLeft(2, '0')}',
+        'photo': await MultipartFile.fromFile(photoFile.path),
+        if (notes != null && notes.isNotEmpty) 'notes': notes,
+      });
+
+      final response = await _djangoDio.post('/inventory/upload-invoice/', data: formData);
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to upload invoice photo: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getPendingInvoices() async {
+    try {
+      final response = await _djangoDio.get('/inventory/pending-invoices/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get pending invoices: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> getExtractedInvoiceData(int invoiceId) async {
+    try {
+      final response = await _djangoDio.get('/inventory/invoice/$invoiceId/extracted-data/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get extracted invoice data: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateInvoiceWeights(int invoiceId, List<Map<String, dynamic>> weights) async {
+    try {
+      final response = await _djangoDio.post('/inventory/invoice/$invoiceId/update-weights/', data: {
+        'weights': weights,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update invoice weights: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> updateInvoiceWeightsAndMatches(int invoiceId, List<Map<String, dynamic>> processedData) async {
+    try {
+      final response = await _djangoDio.post('/inventory/invoice/$invoiceId/process-complete/', data: {
+        'processed_data': processedData,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to process invoice data: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
+  Future<Map<String, dynamic>> processStockReceived() async {
+    try {
+      final response = await _djangoDio.post('/inventory/process-stock-received/');
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to process stock received: ${_extractErrorMessage(e, "Network error")}');
     }
   }
 

@@ -298,14 +298,70 @@ def extract_order_items(content):
     return extract_stock_items(content)
 
 def extract_product_name(text):
-    """Extract product name from text"""
+    """Extract product name while preserving packaging information"""
     import re
-    cleaned = re.sub(r'\d+', '', text)
-    cleaned = re.sub(r'(kg|box|boxes|pcs|pieces)', '', cleaned, flags=re.IGNORECASE)
-    return cleaned.strip()
+    
+    # Clean the text
+    text = text.strip()
+    
+    # Remove multiplier patterns but keep packaging
+    # "2 x 10kg tomatoes" -> "10kg tomatoes"
+    text = re.sub(r'^\d+\s*[x×*]\s*', '', text)
+    
+    # Remove leading quantity + container words but keep packaging sizes
+    # "3 bags 5kg potatoes" -> "5kg potatoes"
+    # "3 bags potatoes" -> "potatoes"
+    text = re.sub(r'^\d+\s+(bags?|boxes?|pcs?|pieces?|pkts?|packets?|heads?|bunches?)\s*', '', text)
+    
+    # Remove "bags" or "box" that appears after packaging size
+    # "10kg bags red onions" -> "10kg red onions"
+    text = re.sub(r'(\d+\s*(kg|g|ml|l))\s+(bags?|boxes?)\s*', r'\1 ', text)
+    
+    # Remove standalone quantity at start if followed by space
+    # "5 tomatoes" -> "tomatoes" (but keep "5kg tomatoes")
+    text = re.sub(r'^\d+\s+(?!\d*(kg|g|ml|l|box|bag))', '', text)
+    
+    # Clean up extra spaces
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
 
 def extract_quantity(text):
-    """Extract quantity from text"""
+    """Extract quantity from text - understanding multipliers vs packaging"""
     import re
-    numbers = re.findall(r'\d+', text)
-    return numbers[0] if numbers else "1"
+    
+    # Clean the text
+    text = text.strip().lower()
+    
+    # Pattern 1: "2 x 10kg" - multiplier pattern
+    multiplier_match = re.search(r'^(\d+)\s*[x×*]\s*\d+\s*(kg|box|bags?|pcs?|pieces?|pkts?|packets?|heads?|bunches?)', text)
+    if multiplier_match:
+        return multiplier_match.group(1)
+    
+    # Pattern 2: "3 bags", "5 boxes" - quantity + container
+    container_match = re.search(r'^(\d+)\s+(bags?|boxes?|pcs?|pieces?|pkts?|packets?|heads?|bunches?)', text)
+    if container_match:
+        return container_match.group(1)
+    
+    # Pattern 3: "2 x" at start - multiplier without packaging
+    simple_multiplier = re.search(r'^(\d+)\s*[x×*]', text)
+    if simple_multiplier:
+        return simple_multiplier.group(1)
+    
+    # Pattern 3b: "x12" at end - multiplier at end
+    end_multiplier = re.search(r'\s+[x×*](\d+)$', text)
+    if end_multiplier:
+        return end_multiplier.group(1)
+    
+    # Pattern 4: Just packaging size like "5kg tomatoes" - quantity is 1
+    packaging_only = re.search(r'^\d+\s*(kg|g|ml|l)\s+\w+', text)
+    if packaging_only:
+        return "1"
+    
+    # Pattern 5: Leading number that's clearly a quantity
+    leading_number = re.search(r'^(\d+)\s+', text)
+    if leading_number:
+        return leading_number.group(1)
+    
+    # Default: assume quantity is 1
+    return "1"

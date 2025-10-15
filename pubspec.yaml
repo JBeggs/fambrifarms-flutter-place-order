@@ -23,12 +23,24 @@ dependencies:
   flutter_animate: ^4.2.0
   
   # Utilities
+  intl: ^0.19.0
   
   # Local Storage
   shared_preferences: ^2.2.2
   
   # Desktop Integration
   window_manager: ^0.5.1
+  
+  # Image Processing
+  image_picker: ^1.0.4
+  
+  # File Management
+  path_provider: ^2.1.1
+  file_picker: ^8.1.6
+  
+  # Printing
+  printing: ^5.12.0
+  pdf: ^3.10.8
   
 dev_dependencies:
   flutter_test:

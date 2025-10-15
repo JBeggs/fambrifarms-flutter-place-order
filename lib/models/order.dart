@@ -168,6 +168,8 @@ class OrderItem {
   final String? notes;
   final double? productBasePrice;
   final PricingBreakdown? pricingBreakdown;
+  final String? stockAction;
+  final Map<String, dynamic>? stockResult;
 
   const OrderItem({
     required this.id,
@@ -182,6 +184,8 @@ class OrderItem {
     this.notes,
     this.productBasePrice,
     this.pricingBreakdown,
+    this.stockAction,
+    this.stockResult,
   });
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
@@ -228,7 +232,7 @@ class OrderItem {
         id: json['id'] as int,
         product: product,
         quantity: _parseDouble(json['quantity']) ?? 0.0,
-        unit: json['product_default_unit'] as String? ?? json['unit'] as String? ?? 'piece',
+        unit: json['unit'] as String? ?? json['product_default_unit'] as String? ?? 'piece',
         price: _parseDouble(json['price']) ?? 0.0,
         totalPrice: _parseDouble(json['total_price']) ?? 0.0,
         originalText: json['original_text'] as String?,
@@ -237,6 +241,8 @@ class OrderItem {
         notes: json['notes'] as String?,
         productBasePrice: _parseDouble(json['product_base_price']),
         pricingBreakdown: pricingBreakdown,
+        stockAction: json['stock_action'] as String?,
+        stockResult: json['stock_result'] as Map<String, dynamic>?,
       );
     } catch (e) {
       print('[ERROR] OrderItem.fromJson - Failed: $e');
@@ -259,6 +265,8 @@ class OrderItem {
       'notes': notes,
       'product_base_price': productBasePrice,
       'pricing_breakdown': pricingBreakdown?.toJson(),
+      'stock_action': stockAction,
+      'stock_result': stockResult,
     };
   }
 
@@ -267,6 +275,45 @@ class OrderItem {
       return '${quantity.toStringAsFixed(quantity.truncateToDouble() == quantity ? 0 : 1)}$unit';
     }
     return quantity.toStringAsFixed(quantity.truncateToDouble() == quantity ? 0 : 1);
+  }
+
+  // Stock reservation helper methods
+  bool get hasStockReservation => stockAction != null;
+  
+  bool get isStockReserved => stockAction == 'reserve' && 
+      stockResult != null && 
+      (stockResult!['success'] as bool? ?? false);
+  
+  bool get isStockReservationFailed => stockAction == 'reserve' && 
+      stockResult != null && 
+      !(stockResult!['success'] as bool? ?? true);
+  
+  bool get isConvertedToBulkKg => stockAction == 'convert_to_kg';
+  
+  bool get isNoReserve => stockAction == 'no_reserve';
+  
+  String get stockStatusDisplay {
+    if (stockAction == null) return '';
+    
+    switch (stockAction) {
+      case 'reserve':
+        if (stockResult != null) {
+          final success = stockResult!['success'] as bool? ?? false;
+          if (success) {
+            return '✅ Stock Reserved';
+          } else {
+            final message = stockResult!['message'] as String? ?? 'Failed to reserve';
+            return '❌ $message';
+          }
+        }
+        return '⏳ Reserving...';
+      case 'no_reserve':
+        return '🔓 No Reservation';
+      case 'convert_to_kg':
+        return '🔄 Converted to Bulk Kg';
+      default:
+        return '';
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../../models/whatsapp_message.dart';
 import 'customer_dropdown.dart';
 
@@ -74,6 +75,62 @@ class _MessageCardState extends State<MessageCard> {
         .replaceAll('Failed items: ', '\nFailed items:\n  ')
         .replaceAll('; ', '\n  ')
         .replaceAll('(and ', '\n  (and ');
+  }
+
+  Map<String, String> _formatTimestamp(String timestamp) {
+    try {
+      DateTime dateTime;
+      
+      // Handle different timestamp formats
+      if (timestamp.contains('T')) {
+        // ISO format: "2025-09-22T08:49:00+00:00" or "2025-09-22T08:49:00Z"
+        dateTime = DateTime.parse(timestamp.replaceAll('Z', '+00:00'));
+      } else if (timestamp.contains(',')) {
+        // WhatsApp format: "08:49, 22/09/2025"
+        final parts = timestamp.split(', ');
+        if (parts.length == 2) {
+          final time = parts[0];
+          final date = parts[1];
+          final dateParts = date.split('/');
+          if (dateParts.length == 3) {
+            final day = int.parse(dateParts[0]);
+            final month = int.parse(dateParts[1]);
+            final year = int.parse(dateParts[2]);
+            final timeParts = time.split(':');
+            final hour = int.parse(timeParts[0]);
+            final minute = int.parse(timeParts[1]);
+            dateTime = DateTime(year, month, day, hour, minute);
+          } else {
+            throw FormatException('Invalid date format');
+          }
+        } else {
+          throw FormatException('Invalid timestamp format');
+        }
+      } else {
+        // Try parsing as standard datetime
+        dateTime = DateTime.parse(timestamp);
+      }
+
+      // Convert to local time for display
+      final localDateTime = dateTime.toLocal();
+      
+      // Format date and time separately
+      final dateFormatter = DateFormat('MMM dd, yyyy'); // "Sep 22, 2025"
+      final timeFormatter = DateFormat('HH:mm'); // "08:49"
+      
+      return {
+        'date': dateFormatter.format(localDateTime),
+        'time': timeFormatter.format(localDateTime),
+        'full': '${dateFormatter.format(localDateTime)} at ${timeFormatter.format(localDateTime)}',
+      };
+    } catch (e) {
+      // Fallback for unparseable timestamps
+      return {
+        'date': 'Unknown date',
+        'time': timestamp,
+        'full': timestamp,
+      };
+    }
   }
 
   @override
@@ -167,8 +224,8 @@ class _MessageCardState extends State<MessageCard> {
                         ),
                       ),
                     
-                    // Edited Indicator
-                    if (widget.message.edited)
+                    // Edited Indicator (only for non-stock messages)
+                    if (widget.message.edited && widget.message.type != MessageType.stock)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
@@ -211,33 +268,76 @@ class _MessageCardState extends State<MessageCard> {
                 
                 const SizedBox(height: 12),
                 
-                // Sender Info
+                // Sender Info and Timestamp
                 Row(
                   children: [
+                    // Sender info
                     Icon(
                       Icons.person_outline,
                       size: 16,
-                      color: Theme.of(context).colorScheme.outline,
+                      color: Theme.of(context).colorScheme.primary,
                     ),
                     const SizedBox(width: 6),
                     Text(
                       widget.message.sender,
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Icon(
-                      Icons.access_time,
-                      size: 16,
-                      color: Theme.of(context).colorScheme.outline,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      widget.message.timestamp,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.outline,
-                      ),
+                    const Spacer(),
+                    // Timestamp with improved formatting
+                    Builder(
+                      builder: (context) {
+                        final timestampData = _formatTimestamp(widget.message.timestamp);
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.shade600,
+                            borderRadius: BorderRadius.circular(10),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.blue.shade200,
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.access_time_filled,
+                                size: 16,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(width: 6),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    timestampData['date']!,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    timestampData['time']!,
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.9),
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),
@@ -1229,4 +1329,5 @@ class _MessageCardState extends State<MessageCard> {
       );
     }
   }
+
 }
