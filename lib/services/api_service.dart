@@ -1179,6 +1179,22 @@ class ApiService {
   }
 
   // Procurement Workflow APIs
+
+  // Update procurement suppliers in bulk
+  Future<Map<String, dynamic>> updateProcurementSuppliers(
+    int recommendationId,
+    List<Map<String, dynamic>> updates,
+  ) async {
+    try {
+      final response = await _djangoDio.put(
+        '/products/procurement/recommendations/$recommendationId/bulk-supplier-update/',
+        data: {'updates': updates},
+      );
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to update procurement suppliers: $e');
+    }
+  }
   Future<Map<String, dynamic>> analyzeOrderProcurement({
     required int orderId,
   }) async {
@@ -1191,6 +1207,7 @@ class ApiService {
       throw ApiException('Failed to analyze order procurement: $e');
     }
   }
+
 
   Future<Map<String, dynamic>> processOrderWorkflow({
     required int orderId,
@@ -2031,11 +2048,26 @@ class ApiService {
 
   Future<List<Map<String, dynamic>>> getProcurementBuffers() async {
     try {
-      final response = await _djangoDio.get('/products/procurement/buffers/');
+      // Create a temporary Dio instance with longer timeout for buffers
+      final bufferDio = Dio(BaseOptions(
+        baseUrl: _djangoDio.options.baseUrl,
+        connectTimeout: Duration(seconds: 60),
+        receiveTimeout: Duration(seconds: 60),
+        headers: _djangoDio.options.headers,
+      ));
+      
+      // Add the same auth token
+      if (_accessToken != null) {
+        bufferDio.options.headers['Authorization'] = 'Bearer $_accessToken';
+      }
+      
+      final response = await bufferDio.get('/products/procurement/buffers/');
       final data = response.data as Map<String, dynamic>;
       return List<Map<String, dynamic>>.from(data['buffers'] ?? []);
     } catch (e) {
-      throw ApiException('Failed to get procurement buffers: ${_extractErrorMessage(e, "Network error")}');
+      print('[BUFFERS_ERROR] Failed to get procurement buffers: $e');
+      // Return empty list instead of throwing to prevent app crashes
+      return [];
     }
   }
 
@@ -2056,6 +2088,7 @@ class ApiService {
       throw ApiException('Failed to update procurement recommendation: ${_extractErrorMessage(e, "Network error")}');
     }
   }
+
 
   // Debug method to check authentication status
   Future<bool> checkAuthenticationStatus() async {
@@ -2093,10 +2126,19 @@ class ApiService {
 
   Future<List<Map<String, dynamic>>> getProductRecipes() async {
     try {
-      final response = await _djangoDio.get('/products/procurement/recipes/');
+      final response = await _djangoDio.get(
+        '/products/procurement/recipes/',
+        options: Options(
+          receiveTimeout: const Duration(seconds: 15),
+        ),
+      );
       final data = response.data as Map<String, dynamic>;
       return List<Map<String, dynamic>>.from(data['recipes'] ?? []);
     } catch (e) {
+      // Log the error but don't break the app - recipes are optional
+      if (kDebugMode) {
+        print('⚠️ Failed to load product recipes (optional feature): $e');
+      }
       throw ApiException('Failed to get product recipes: ${_extractErrorMessage(e, "Network error")}');
     }
   }

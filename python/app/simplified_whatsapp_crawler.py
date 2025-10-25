@@ -4,12 +4,16 @@ import time
 import requests
 import hashlib
 import uuid
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timezone, timedelta
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 import subprocess
 from bs4 import BeautifulSoup
 
@@ -28,6 +32,7 @@ class SimplifiedWhatsAppCrawler:
         self.session_dir = None
         self.django_url = django_url
         self.last_message_count = 0
+        self.messages_captured_during_scroll = []  # Track messages during scroll
         
     def cleanup_existing_sessions(self):
         """Kill any existing Chrome processes using our session directory"""
@@ -61,12 +66,15 @@ class SimplifiedWhatsAppCrawler:
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
         try:
+            # Try system ChromeDriver first
+            print("🔧 Using system ChromeDriver...")
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             print("✅ Chrome WebDriver initialized successfully")
             return True
         except Exception as e:
             print(f"❌ Failed to initialize Chrome WebDriver: {e}")
+            print("💡 Please update ChromeDriver: brew upgrade chromedriver")
             return False
 
     def is_logged_in(self):
@@ -325,38 +333,220 @@ class SimplifiedWhatsAppCrawler:
             print(f"Full traceback: {traceback.format_exc()}")
             return False
 
+    def is_message_in_date_range(self, timestamp_str):
+        """Check if message timestamp is within current day or previous day"""
+        try:
+            # Parse the timestamp
+            if isinstance(timestamp_str, str):
+                msg_datetime = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            else:
+                return False
+            
+            # Get current date and previous date (in UTC)
+            now = datetime.now(timezone.utc)
+            current_date = now.date()
+            previous_date = (now - timedelta(days=1)).date()
+            
+            # Get message date
+            msg_date = msg_datetime.date()
+            
+            # Check if message is from current day or previous day
+            is_in_range = msg_date == current_date or msg_date == previous_date
+            
+            if not is_in_range:
+                print(f"📅 [DATE_FILTER] Skipping message from {msg_date} (current: {current_date}, previous: {previous_date})")
+            
+            return is_in_range
+            
+        except Exception as e:
+            print(f"⚠️ Error checking message date range: {e}")
+            # If we can't parse the date, include the message to be safe
+            return True
+
+    def extract_timestamp_from_element(self, msg_elem):
+        """Extract timestamp with improved accuracy"""
+        timestamp = None
+        ts_source = 'unknown'
+        
+        try:
+            # Method 1: data-pre-plain-text attribute
+            pre_nodes = msg_elem.find_elements(By.CSS_SELECTOR, '.copyable-text')
+            for pn in pre_nodes:
+                pre = pn.get_attribute('data-pre-plain-text') or ''
+                if pre.startswith('[') and ']' in pre:
+                    try:
+                        inside = pre[1:pre.index(']')].strip()
+                        parts = [p.strip() for p in inside.split(',')]
+                        if len(parts) == 2 and ':' in parts[0] and '/' in parts[1]:
+                            # Try both date formats (MM/DD/YYYY and DD/MM/YYYY)
+                            date_str = parts[1]
+                            time_str = parts[0]
+                            dt = None
+                            
+                            # Try MM/DD/YYYY first (American format)
+                            try:
+                                dt = datetime.strptime(f"{date_str} {time_str}", "%m/%d/%Y %H:%M")
+                            except ValueError:
+                                # Try DD/MM/YYYY (European format)
+                                try:
+                                    dt = datetime.strptime(f"{date_str} {time_str}", "%d/%m/%Y %H:%M")
+                                except ValueError:
+                                    pass
+                            
+                            if dt:
+                                timestamp = dt.replace(tzinfo=timezone.utc).isoformat()
+                                ts_source = 'pre_plain'
+                                break
+                    except Exception as e:
+                        print(f"⚠️ Error parsing timestamp from pre-plain-text: {e}")
+                        continue
+            
+            # Method 2: Visible time spans
+            if not timestamp:
+                time_elems = msg_elem.find_elements(By.CSS_SELECTOR, 'span.x1c4vz4f.x2lah0s')
+                for elem in time_elems:
+                    time_text = (elem.text or '').strip()
+                    if time_text and ':' in time_text and re.match(r'^\d{1,2}:\d{2}$', time_text):
+                        today = datetime.now().strftime("%d/%m/%Y")
+                        full_datetime_str = f"{today} {time_text}"
+                        try:
+                            parsed_datetime = datetime.strptime(full_datetime_str, "%d/%m/%Y %H:%M")
+                            timestamp = parsed_datetime.replace(tzinfo=timezone.utc).isoformat()
+                            ts_source = 'span_time_today'
+                            break
+                        except Exception:
+                            continue
+            
+            # Method 3: Fallback to processing time
+            if not timestamp:
+                timestamp = datetime.now(timezone.utc).isoformat()
+                ts_source = 'processing_time_fallback'
+            
+        except Exception as e:
+            print(f"❌ Error extracting timestamp: {e}")
+            timestamp = datetime.now(timezone.utc).isoformat()
+            ts_source = 'error_fallback'
+        
+        return timestamp, ts_source
+
+    def clean_timestamp_contamination(self, text):
+        """Clean timestamp contamination from message text"""
+        if not text:
+            return text
+        
+        # Pattern 1: "CompanyName08:30" -> "CompanyName"
+        cleaned = re.sub(r'([a-zA-Z])\d{1,2}:\d{2}$', r'\1', text).strip()
+        
+        # Pattern 2: "Company Name 08:30" -> "Company Name"
+        cleaned = re.sub(r'\s+\d{1,2}:\d{2}$', '', cleaned).strip()
+        
+        # Pattern 3: Standalone timestamps at end
+        cleaned = re.sub(r'^\d{1,2}:\d{2}$|(?<=\s)\d{1,2}:\d{2}$', '', cleaned).strip()
+        
+        # Pattern 4: Any remaining timestamp patterns at end
+        cleaned = re.sub(r'\d{1,2}:\d{2}$', '', cleaned).strip()
+        
+        # Pattern 5: Handle multiline - clean each line
+        if '\n' in cleaned:
+            lines = cleaned.split('\n')
+            clean_lines = []
+            for line in lines:
+                line = line.strip()
+                line = re.sub(r'\s*\d{1,2}:\d{2}\s*$', '', line)
+                if line:
+                    clean_lines.append(line)
+            cleaned = '\n'.join(clean_lines)
+        
+        return cleaned
+
     def get_current_messages(self, scroll_to_load_more=False):
         """
-        Get current messages from the chat without excessive scrolling
+        Get current messages from the chat - ONLY current day + previous day
         
         Args:
-            scroll_to_load_more: If True, scroll up a bit to load more recent messages
+            scroll_to_load_more: If True, scroll up with date-aware stopping
         """
         try:
+            # Calculate date range
+            now = datetime.now(timezone.utc)
+            current_date = now.date()
+            previous_date = (now - timedelta(days=1)).date()
+            cutoff_date = (now - timedelta(days=2)).date()
+            print(f"📅 [DATE_RANGE] Collecting messages from {previous_date} and {current_date}")
+            
             # Find message container first for scrolling
             scroll_container = None
             if scroll_to_load_more:
-                print("📜 Scrolling up to load more messages...")
+                print("📜 Scrolling up to load messages with date-aware stopping...")
                 
-                # Find the scrollable container - based on actual HTML it's .copyable-area
+                # Find the scrollable container
                 try:
                     scroll_container = self.driver.find_element(By.CSS_SELECTOR, '.copyable-area')
                     print("✅ Found scroll container: .copyable-area")
                     
-                    # Scroll up moderately to load more messages
-                    for i in range(3):  # Limited scrolling
-                        self.driver.execute_script("arguments[0].scrollTop -= 1000", scroll_container)
-                        print(f"📜 Scroll {i+1}/3")
-                        time.sleep(1)
+                    # Scroll with date checking
+                    scroll_attempts = 0
+                    max_scrolls = 50
+                    stable_count = 0
+                    previous_count = 0
+                    should_stop = False
+                    
+                    while scroll_attempts < max_scrolls and not should_stop:
+                        current_messages = self.driver.find_elements(By.CSS_SELECTOR, '#main [role="row"]')
+                        current_count = len(current_messages)
+                        
+                        print(f"📊 Scroll {scroll_attempts + 1}: {current_count} messages")
+                        
+                        # Check oldest visible messages for date cutoff
+                        if scroll_attempts > 0 and current_count > 0:
+                            for i in range(min(5, len(current_messages))):
+                                try:
+                                    msg_elem = current_messages[i]
+                                    timestamp, _ = self.extract_timestamp_from_element(msg_elem)
+                                    if timestamp:
+                                        msg_datetime = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                                        msg_date = msg_datetime.date()
+                                        if msg_date < cutoff_date:
+                                            print(f"📅 [SCROLL] Found message from {msg_date} - stopping scroll")
+                                            should_stop = True
+                                            break
+                                except Exception:
+                                    continue
+                        
+                        if should_stop:
+                            break
+                        
+                        # Check if no new messages loaded
+                        if current_count == previous_count:
+                            stable_count += 1
+                            if stable_count >= 10:
+                                print("🔝 Reached top - no more messages")
+                                break
+                        else:
+                            stable_count = 0
+                        
+                        previous_count = current_count
+                        
+                        # Scroll up
+                        self.driver.execute_script("arguments[0].scrollTop = 0", scroll_container)
+                        
+                        # Aggressive scroll every 5th attempt
+                        if scroll_attempts % 5 == 0:
+                            try:
+                                scroll_container.send_keys(Keys.CONTROL + Keys.HOME)
+                            except:
+                                pass
+                        
+                        time.sleep(3)
+                        scroll_attempts += 1
                         
                 except Exception as e:
-                    print(f"⚠️ Could not find scroll container: {e} - skipping scroll")
+                    print(f"⚠️ Could not scroll: {e} - continuing with visible messages")
             
-            # Get message elements from the actual HTML structure
+            # Get message elements
             try:
-                # Based on the actual HTML, messages are in #main with role="row"
                 message_elements = self.driver.find_elements(By.CSS_SELECTOR, '#main [role="row"]')
-                print(f"📝 Found {len(message_elements)} message elements")
+                print(f"📝 Found {len(message_elements)} total message elements")
                 
                 if not message_elements:
                     print("❌ No message elements found")
@@ -367,28 +557,45 @@ class SimplifiedWhatsAppCrawler:
                 return []
             
             html_messages = []
+            messages_in_range = 0
+            messages_filtered = 0
             
             for i, msg_elem in enumerate(message_elements):
                 try:
+                    # Extract timestamp first for date filtering
+                    timestamp, ts_source = self.extract_timestamp_from_element(msg_elem)
+                    
+                    # DATE FILTER: Only include current + previous day
+                    if not self.is_message_in_date_range(timestamp):
+                        messages_filtered += 1
+                        continue
+                    
                     # Extract message with expansion handling
                     message_data = self.extract_message_with_expansion(msg_elem)
                     
                     if message_data and message_data['content'].strip():
+                        # Clean timestamp contamination from content
+                        cleaned_content = self.clean_timestamp_contamination(message_data['content'])
+                        message_data['content'] = cleaned_content
+                        
                         # Get raw HTML
                         raw_html = msg_elem.get_attribute('outerHTML')
                         
-                        # Generate message ID (use timestamp + position for uniqueness)
-                        message_id = f"msg_{int(time.time())}_{i}"
+                        # Get unique message ID from WhatsApp
+                        data_id_nodes = msg_elem.find_elements(By.CSS_SELECTOR, '[data-id]')
+                        message_id = data_id_nodes[0].get_attribute('data-id') if data_id_nodes else f"msg_{int(time.time())}_{i}"
                         
                         html_message = {
                             'id': message_id,
                             'chat': os.environ.get('TARGET_GROUP_NAME', 'ORDERS Restaurants'),
                             'html': raw_html,
-                            'timestamp': datetime.now(timezone.utc).isoformat(),
+                            'timestamp': timestamp,
+                            'timestamp_source': ts_source,
                             'message_data': message_data
                         }
                         
                         html_messages.append(html_message)
+                        messages_in_range += 1
                         
                         expansion_status = ""
                         if message_data.get('was_expanded'):
@@ -396,17 +603,20 @@ class SimplifiedWhatsAppCrawler:
                         elif message_data.get('expansion_failed'):
                             expansion_status = " [EXPANSION FAILED]"
                         
-                        print(f"📝 Message {i}: {message_data['content'][:50]}...{expansion_status}")
+                        print(f"📝 Message {i}: {cleaned_content[:50]}...{expansion_status}")
                     
                 except Exception as e:
                     print(f"⚠️ Error processing message {i}: {e}")
                     continue
             
-            print(f"✅ Extracted {len(html_messages)} valid messages")
+            print(f"✅ Extracted {len(html_messages)} messages in date range")
+            print(f"📊 [DATE_FILTER] In range: {messages_in_range}, Filtered out: {messages_filtered}")
             return html_messages
             
         except Exception as e:
             print(f"❌ Error getting messages: {e}")
+            import traceback
+            print(f"Full traceback: {traceback.format_exc()}")
             return []
 
     def extract_message_with_expansion(self, msg_element):

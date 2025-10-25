@@ -28,6 +28,67 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
   bool _hasChanges = false;
   late bool _processed;
   late MessageType _selectedType;
+  
+  // Shared spelling corrections dictionary for consistency across all functions
+  static const Map<String, String> _spellingCorrections = {
+    // Vegetables - based on database products
+    'tomato': 'tomatoes',
+    'tomatoe': 'tomatoes',
+    'tomatos': 'tomatoes',
+    'potatoe': 'potatoes', 
+    'potatos': 'potatoes',
+    'carrot': 'carrots',
+    'carrotss': 'carrots',  // Fix double 's' issue
+    'carrotsss': 'carrots', // Fix triple 's' issue
+    'carrott': 'carrots',
+    'onoin': 'onions',
+    'onion': 'onions',
+    'cucmber': 'cucumber',
+    'spinich': 'spinach',
+    'brocoli': 'broccoli',
+    'cabage': 'cabbage',
+    'cauliflower': 'cauliflower',
+    'califlower': 'cauliflower',
+    'cellery': 'celery',
+    'peper': 'peppers',
+    'pepper': 'peppers',
+    'mushrom': 'mushrooms',
+    'mushrrom': 'mushroom',
+    'mushroom': 'mushrooms',
+    'lettice': 'lettuce',
+    'porta': 'portabellini',
+    'portabello': 'portabellini',
+    'portobello': 'portabellini',
+    
+    // Fruits - based on database products  
+    'bannana': 'bananas',
+    'bananna': 'banana',
+    'aple': 'apples',
+    'oragne': 'oranges',
+    'lemmon': 'lemons',
+    'avacado': 'avocados',
+    'avos': 'avocados',
+    'strawbery': 'strawberries',
+    'strawberry': 'strawberries',
+    'pineaple': 'pineapple',
+    'pine apple': 'pineapple',
+    'blueberry': 'blueberries',
+    'blue berry': 'blueberries',
+    
+    // Units and measurements
+    'kgs': 'kg',
+    'kilos': 'kg',
+    'kilogram': 'kg',
+    'grams': 'g',
+    'pieces': 'pcs',
+    'boxes': 'box',
+    'bags': 'bag',
+    'bunches': 'bunch',
+    'heads': 'head',
+    'punnets': 'punnet',
+    'pun': 'punnet',
+    'packets': 'packet',
+  };
 
   @override
   void initState() {
@@ -140,60 +201,9 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
         break;
         
       case 'fix_spelling':
-        // Fix common spelling mistakes in food/produce names
-        final corrections = {
-          // Vegetables - based on database products
-          'tomatoe': 'tomatoes',
-          'tomatos': 'tomatoes',
-          'potatoe': 'potatoes', 
-          'potatos': 'potatoes',
-          'carrot': 'carrots',
-          'carrotss': 'carrots',  // Fix double 's' issue
-          'carrotsss': 'carrots', // Fix triple 's' issue
-          'onoin': 'onions',
-          'cucmber': 'cucumber',
-          'spinich': 'spinach',
-          'brocoli': 'broccoli',
-          'cabage': 'cabbage',
-          'cauliflower': 'cauliflower',
-          'califlower': 'cauliflower',
-          'peper': 'peppers',
-          'mushrom': 'mushrooms',
-          'mushroom': 'mushrooms',
-          'porta': 'portabellini',
-          'portabello': 'portabellini',
-          'portobello': 'portabellini',
-          
-          // Fruits - based on database products
-          'bannana': 'bananas',
-          'aple': 'apples',
-          'oragne': 'oranges',
-          'lemmon': 'lemons',
-          'avacado': 'avocados',
-          'avos': 'avocados',
-          'strawbery': 'strawberries',
-          'strawberry': 'strawberries',
-          'pineaple': 'pineapple',
-          'blueberry': 'blueberries',
-          'blue berry': 'blueberries',
-          
-          // Units
-          'kgs': 'kg',
-          'kilos': 'kg',
-          'kilogram': 'kg',
-          'grams': 'g',
-          'pieces': 'pcs',
-          'boxes': 'box',
-          'bags': 'bag',
-          'bunches': 'bunch',
-          'heads': 'head',
-          'punnets': 'punnet',
-          'pun': 'punnet',
-          'packets': 'packet',
-        };
-        
+        // Fix common spelling mistakes in food/produce names using shared dictionary
         // Apply corrections (case-insensitive) with word boundaries to prevent double corrections
-        corrections.forEach((wrong, correct) {
+        _spellingCorrections.forEach((wrong, correct) {
           // Use word boundaries to ensure we only replace whole words
           final regex = RegExp(r'\b' + RegExp.escape(wrong) + r'\b', caseSensitive: false);
           newText = newText.replaceAll(regex, correct);
@@ -1432,16 +1442,11 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
       // Fix common spelling and formatting issues
       final original = improved;
       
-      // 1. Fix spelling mistakes
-      improved = improved
-          .replaceAll(RegExp(r'\btomatoe\b', caseSensitive: false), 'tomato')
-          .replaceAll(RegExp(r'\bpotatoe\b', caseSensitive: false), 'potato')
-          .replaceAll(RegExp(r'\bcarrott\b', caseSensitive: false), 'carrot')
-          .replaceAll(RegExp(r'\bonoin\b', caseSensitive: false), 'onion')
-          .replaceAll(RegExp(r'\bmushrrom\b', caseSensitive: false), 'mushroom')
-          .replaceAll(RegExp(r'\blettice\b', caseSensitive: false), 'lettuce')
-          .replaceAll(RegExp(r'\bbananna\b', caseSensitive: false), 'banana')
-          .replaceAll(RegExp(r'\bpineaple\b', caseSensitive: false), 'pineapple');
+      // 1. Fix spelling mistakes using shared dictionary
+      _spellingCorrections.forEach((wrong, correct) {
+        final regex = RegExp(r'\b' + RegExp.escape(wrong) + r'\b', caseSensitive: false);
+        improved = improved.replaceAll(regex, correct);
+      });
       
       // 2. Expand abbreviations
       improved = improved

@@ -375,6 +375,42 @@ class OrderCard extends ConsumerWidget {
                                   ],
                                 ),
                                 
+                                // Split item notes if available
+                                if (item.notes != null && item.notes!.contains('Split item')) ...[
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.withOpacity(0.1),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.splitscreen, size: 14, color: Colors.blue[700]),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          'Partial Stock Split: ',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.blue[700],
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            item.notes!.replaceAll('Split item - ', ''),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.blue[700],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                                
                                 // Original text if available
                                 if (item.originalText != null && item.originalText!.isNotEmpty) ...[
                                   const SizedBox(height: 8),
@@ -575,24 +611,30 @@ class OrderCard extends ConsumerWidget {
     // Store the context for safe usage
     if (!context.mounted) return;
 
+    // Keep track of loading dialog using a completer for more reliable management
     bool isLoadingDialogOpen = false;
     
     try {
       // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const AlertDialog(
-          content: Row(
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(width: 16),
-              Text('Deleting order...'),
-            ],
+      if (context.mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => WillPopScope(
+            onWillPop: () async => false, // Prevent back button from closing
+            child: const AlertDialog(
+              content: Row(
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(width: 16),
+                  Text('Deleting order...'),
+                ],
+              ),
+            ),
           ),
-        ),
-      );
-      isLoadingDialogOpen = true;
+        );
+        isLoadingDialogOpen = true;
+      }
 
       // Delete the order
       final apiService = ref.read(apiServiceProvider);
@@ -604,13 +646,7 @@ class OrderCard extends ConsumerWidget {
       
       await apiService.deleteOrder(order.id);
 
-      // Close loading dialog
-      if (context.mounted && isLoadingDialogOpen) {
-        Navigator.of(context).pop();
-        isLoadingDialogOpen = false;
-      }
-
-      // Show success message
+      // Success: Show success message and call callback
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -625,12 +661,6 @@ class OrderCard extends ConsumerWidget {
       onOrderDeleted?.call();
 
     } catch (e) {
-      // Close loading dialog if still open
-      if (context.mounted && isLoadingDialogOpen) {
-        Navigator.of(context).pop();
-        isLoadingDialogOpen = false;
-      }
-      
       // Handle different error types
       String errorMessage = 'Error deleting order';
       
@@ -664,6 +694,21 @@ class OrderCard extends ConsumerWidget {
                 : null,
           ),
         );
+      }
+    } finally {
+      // CRITICAL: Always close loading dialog in finally block
+      if (isLoadingDialogOpen && context.mounted) {
+        try {
+          Navigator.of(context).pop();
+        } catch (e) {
+          // If popping fails, try to pop until we can't anymore (clear any stuck dialogs)
+          print('Error closing dialog: $e');
+          try {
+            Navigator.of(context).popUntil((route) => !route.isFirst || route.settings.name != null);
+          } catch (e2) {
+            print('Error with popUntil: $e2');
+          }
+        }
       }
     }
   }
@@ -1075,7 +1120,7 @@ class OrderCard extends ConsumerWidget {
           Row(
             children: [
               Expanded(
-                child: _buildInfoRow('Delivery Date:', order.deliveryDate),
+                child: _buildInfoRow('Delivery Date:', DateTime.now().add(const Duration(days: 1)).toString().split(' ')[0]),
               ),
               Expanded(
                 child: _buildInfoRow('Status:', order.statusDisplay),
@@ -1405,14 +1450,14 @@ class OrderCard extends ConsumerWidget {
     print('[PDF BUILD] Building PDF for order: ${order.orderNumber}');
     print('[PDF BUILD] Order has ${order.items.length} items');
     
-    // Capture items BEFORE the build context
+    // Capture data BEFORE the build context
     final items = order.items;
     final restaurantName = order.restaurant.name;
     final businessName = order.restaurant.profile?.businessName ?? '';
     final deliveryAddress = order.restaurant.profile?.deliveryAddress ?? '';
     final city = order.restaurant.profile?.city ?? '';
     final postalCode = order.restaurant.profile?.postalCode ?? '';
-    final phone = order.restaurant.phone;
+    final phone = order.restaurant.phone ?? '';
     final orderNumber = order.orderNumber;
     final orderDate = order.orderDate;
     final deliveryDate = order.deliveryDate;
@@ -1421,182 +1466,27 @@ class OrderCard extends ConsumerWidget {
     
     print('[PDF BUILD] Captured ${items.length} items before build context');
     
-    // Split items into chunks of 15 for pagination (to ensure total always fits)
-    final itemsPerPage = 15;
-    final totalPages = (items.length / itemsPerPage).ceil();
+    // FIRST: Add the main order page (preview style - all items together)
+    await _addMainOrderPage(pdf, items, restaurantName, businessName, deliveryAddress, city, postalCode, phone, orderNumber, orderDate, deliveryDate, statusDisplay, totalAmount);
     
-    for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
-      final startIndex = pageIndex * itemsPerPage;
-      final endIndex = (startIndex + itemsPerPage).clamp(0, items.length);
-      final pageItems = items.sublist(startIndex, endIndex);
-      final isFirstPage = pageIndex == 0;
-      final isLastPage = pageIndex == totalPages - 1;
-      
-      print('[PDF BUILD] Creating page ${pageIndex + 1}/$totalPages with ${pageItems.length} items');
+    // THEN: Add sectioned pages for reserved and to order items
+    final reservedItems = items.where((item) => item.isStockReserved).toList();
+    final toOrderItems = items.where((item) => item.isNoReserve || item.isStockReservationFailed).toList();
     
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4.landscape,
-        margin: const pw.EdgeInsets.all(32),
-        build: (pw.Context context) {
-          // Build item rows BEFORE the column
-          final List<pw.Widget> itemRows = [];
-          for (var item in pageItems) {
-            itemRows.add(
-              pw.Container(
-                padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 6),
-                decoration: const pw.BoxDecoration(
-                  border: pw.Border(top: pw.BorderSide(color: PdfColors.grey300)),
-                ),
-                child: pw.Row(
-                  children: [
-                    pw.Expanded(flex: 4, child: pw.Text(item.product.name, style: const pw.TextStyle(fontSize: 9))),
-                    pw.Expanded(flex: 2, child: pw.Text('${item.quantity} ${item.unit ?? ''}', style: const pw.TextStyle(fontSize: 9))),
-                    pw.Expanded(flex: 2, child: pw.Text('R${item.price.toStringAsFixed(2)}', style: const pw.TextStyle(fontSize: 9))),
-                    pw.Expanded(flex: 2, child: pw.Text('R${item.totalPrice.toStringAsFixed(2)}', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
-                    pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 8))),
-                  ],
-                ),
-              ),
-            );
-          }
-          
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              // Header - only on first page
-              if (isFirstPage) ...[
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Text(
-                        'FAMBRI FARMS',
-                        style: pw.TextStyle(
-                          fontSize: 24,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                      pw.SizedBox(height: 4),
-                      pw.Text(
-                        'Order Confirmation',
-                        style: const pw.TextStyle(fontSize: 14),
-                      ),
-                    ],
-                  ),
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.end,
-                    children: [
-                      pw.Text(
-                        restaurantName,
-                        style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
-                      ),
-                      if (businessName.isNotEmpty)
-                        pw.Text(businessName, style: const pw.TextStyle(fontSize: 11)),
-                      if (deliveryAddress.isNotEmpty)
-                        pw.Container(
-                          width: 200,
-                          child: pw.Text(
-                            deliveryAddress,
-                            style: const pw.TextStyle(fontSize: 11),
-                            textAlign: pw.TextAlign.right,
-                          ),
-                        ),
-                      if (city.isNotEmpty)
-                        pw.Text(
-                          '$city${postalCode.isNotEmpty ? ', $postalCode' : ''}',
-                          style: const pw.TextStyle(fontSize: 11),
-                        ),
-                      if (phone.isNotEmpty)
-                        pw.Text(phone, style: const pw.TextStyle(fontSize: 11)),
-                    ],
-                  ),
-                ],
-              ),
-              
-              pw.SizedBox(height: 16),
-              pw.Divider(),
-              pw.SizedBox(height: 12),
-              
-              // Order info
-              pw.Row(
-                children: [
-                  pw.Expanded(
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text('Order Number: $orderNumber', style: const pw.TextStyle(fontSize: 11)),
-                        pw.SizedBox(height: 4),
-                        pw.Text('Order Date: $orderDate', style: const pw.TextStyle(fontSize: 11)),
-                      ],
-                    ),
-                  ),
-                  pw.Expanded(
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text('Delivery Date: $deliveryDate', style: const pw.TextStyle(fontSize: 11)),
-                        pw.SizedBox(height: 4),
-                        pw.Text('Status: $statusDisplay', style: const pw.TextStyle(fontSize: 11)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              
-              pw.SizedBox(height: 16),
-              ],
-              
-              // Page header for continuation pages
-              if (!isFirstPage) ...[
-                pw.Text('$restaurantName - Order $orderNumber (continued)', 
-                  style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
-                pw.SizedBox(height: 16),
-              ],
-              
-              // Items - simple text like the header
-              pw.Text('ORDER ITEMS:', style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
-              pw.SizedBox(height: 8),
-              
-              ...itemRows,
-              
-              pw.SizedBox(height: 16),
-              
-              // Total (always show on last page)
-              if (isLastPage)
-                pw.Container(
-                  padding: const pw.EdgeInsets.all(12),
-                  decoration: pw.BoxDecoration(
-                    border: pw.Border.all(width: 2),
-                  ),
-                  child: pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Text('TOTAL', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-                      pw.Text(
-                        'R${totalAmount?.toStringAsFixed(2) ?? '0.00'}',
-                        style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                ),
-              
-              pw.Spacer(),
-              
-              pw.Center(
-                child: pw.Text(
-                  isLastPage ? 'Thank you for your business!' : 'Continued on next page...',
-                  style: const pw.TextStyle(fontSize: 10),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
+    print('[PDF BUILD] Reserved: ${reservedItems.length}, To Order: ${toOrderItems.length}');
+    
+    // Add reserved items page if there are any
+    if (reservedItems.isNotEmpty) {
+      final reservedTotal = reservedItems.fold(0.0, (sum, item) => sum + item.totalPrice);
+      await _addSectionPage(pdf, 'RESERVED STOCK', '✅ Stock Reserved from Inventory', reservedItems, reservedTotal,
+          restaurantName, businessName, deliveryAddress, city, postalCode, phone, orderNumber, orderDate, deliveryDate, statusDisplay);
+    }
+    
+    // Add to order items page if there are any
+    if (toOrderItems.isNotEmpty) {
+      final toOrderTotal = toOrderItems.fold(0.0, (sum, item) => sum + item.totalPrice);
+      await _addSectionPage(pdf, 'TO ORDER', '📦 Items for Procurement', toOrderItems, toOrderTotal,
+          restaurantName, businessName, deliveryAddress, city, postalCode, phone, orderNumber, orderDate, deliveryDate, statusDisplay);
     }
   }
 
@@ -1613,4 +1503,399 @@ class OrderCard extends ConsumerWidget {
       return 'Unknown';
     }
   }
+
+  pw.Widget _buildProductNameWithNotes(OrderItem item) {
+    // Check if this is a split item based on notes
+    bool isSplitItem = item.notes?.contains('Split item') == true;
+    
+    if (isSplitItem) {
+      String splitInfo = '';
+      if (item.notes?.contains('Reserved from stock') == true) {
+        splitInfo = '[Reserved Part]';
+      } else if (item.notes?.contains('Needs procurement') == true) {
+        splitInfo = '[To Order Part]';
+      }
+      
+      return pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(item.product.name, style: const pw.TextStyle(fontSize: 8)),
+          if (splitInfo.isNotEmpty)
+            pw.Text(splitInfo, style: pw.TextStyle(fontSize: 6, color: PdfColors.blue700)),
+        ],
+      );
+    }
+    
+    return pw.Text(item.product.name, style: const pw.TextStyle(fontSize: 8));
+  }
+
+  Future<void> _addMainOrderPage(pw.Document pdf, List<OrderItem> items, String restaurantName, String businessName, String deliveryAddress, String city, String postalCode, String phone, String orderNumber, String orderDate, String deliveryDate, String statusDisplay, double? totalAmount) async {
+    // Split items into chunks of 25 for pagination - fit more per page
+    final itemsPerPage = 25;
+    final totalPages = (items.length / itemsPerPage).ceil();
+    
+    for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+      final startIndex = pageIndex * itemsPerPage;
+      final endIndex = (startIndex + itemsPerPage).clamp(0, items.length);
+      final pageItems = items.sublist(startIndex, endIndex);
+      final isFirstPage = pageIndex == 0;
+      final isLastPage = pageIndex == totalPages - 1;
+      
+      print('[PDF BUILD] Creating main page ${pageIndex + 1}/$totalPages with ${pageItems.length} items');
+    
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4.landscape,
+          margin: const pw.EdgeInsets.all(16),
+          build: (pw.Context context) {
+            // Build item rows BEFORE the column
+            final List<pw.Widget> itemRows = [];
+            for (var item in pageItems) {
+              itemRows.add(
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+                  decoration: const pw.BoxDecoration(
+                    border: pw.Border(top: pw.BorderSide(color: PdfColors.grey300)),
+                  ),
+                  child: pw.Row(
+                    children: [
+                      pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
+                      pw.Expanded(flex: 2, child: pw.Text('${item.quantity} ${item.unit ?? ''}', style: const pw.TextStyle(fontSize: 8))),
+                      // pw.Expanded(flex: 2, child: pw.Text('R${item.price.toStringAsFixed(2)}', style: const pw.TextStyle(fontSize: 8))),
+                      // pw.Expanded(flex: 2, child: pw.Text('R${item.totalPrice.toStringAsFixed(2)}', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
+                    ],
+                  ),
+                ),
+              );
+            }
+            
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                // Header - only on first page
+                if (isFirstPage) ...[
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          'FAMBRI FARMS',
+                          style: pw.TextStyle(
+                            fontSize: 18,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                        pw.Text(
+                          'Order Confirmation',
+                          style: const pw.TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text(
+                          restaurantName,
+                          style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+                        ),
+                        if (businessName.isNotEmpty)
+                          pw.Text(businessName, style: const pw.TextStyle(fontSize: 11)),
+                        if (deliveryAddress.isNotEmpty)
+                          pw.Container(
+                            width: 200,
+                            child: pw.Text(
+                              deliveryAddress,
+                              style: const pw.TextStyle(fontSize: 11),
+                              textAlign: pw.TextAlign.right,
+                            ),
+                          ),
+                        if (city.isNotEmpty)
+                          pw.Text(
+                            '$city${postalCode.isNotEmpty ? ', $postalCode' : ''}',
+                            style: const pw.TextStyle(fontSize: 11),
+                          ),
+                        if (phone.isNotEmpty)
+                          pw.Text(phone, style: const pw.TextStyle(fontSize: 11)),
+                      ],
+                    ),
+                  ],
+                ),
+                
+                pw.SizedBox(height: 8),
+                pw.Divider(),
+                pw.SizedBox(height: 6),
+                
+                // Order info
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('Order Number: $orderNumber', style: const pw.TextStyle(fontSize: 11)),
+                          pw.SizedBox(height: 4),
+                          pw.Text('Generated: ${DateTime.now().toString().split('.')[0]}', style: const pw.TextStyle(fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('Delivery Date: ${DateTime.now().add(const Duration(days: 1)).toString().split(' ')[0]}', style: const pw.TextStyle(fontSize: 11)),
+                          pw.SizedBox(height: 4),
+                          pw.Text('Status: $statusDisplay', style: const pw.TextStyle(fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                
+                pw.SizedBox(height: 8),
+                ],
+                
+                // Page header for continuation pages
+                if (!isFirstPage) ...[
+                  pw.Text('$restaurantName - Order $orderNumber (continued)', 
+                    style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+                  pw.SizedBox(height: 16),
+                ],
+                
+                // Table header
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.grey200,
+                    border: pw.Border.all(),
+                  ),
+                  child: pw.Row(
+                    children: [
+                      pw.Expanded(flex: 4, child: pw.Text('PRODUCT', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text('QTY', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                      // pw.Expanded(flex: 2, child: pw.Text('PRICE', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                      // pw.Expanded(flex: 2, child: pw.Text('TOTAL', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text('STATUS', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                    ],
+                  ),
+                ),
+                
+                // Items
+                ...itemRows,
+                
+                pw.SizedBox(height: 8),
+                
+                // Total (always show on last page) - COMMENTED OUT
+                // if (isLastPage)
+                //   pw.Container(
+                //     padding: const pw.EdgeInsets.all(12),
+                //     decoration: pw.BoxDecoration(
+                //       border: pw.Border.all(width: 2),
+                //     ),
+                //     child: pw.Row(
+                //       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                //       children: [
+                //         pw.Text('TOTAL', style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+                //         pw.Text(
+                //           'R${totalAmount?.toStringAsFixed(2) ?? '0.00'}',
+                //           style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold),
+                //         ),
+                //       ],
+                //     ),
+                //   ),
+                
+                pw.Spacer(),
+                
+                pw.Center(
+                  child: pw.Text(
+                    isLastPage ? 'Order Complete - Additional details on following pages' : 'Continued on next page...',
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    }
+  }
+
+  Future<void> _addSectionPage(pw.Document pdf, String sectionTitle, String sectionSubtitle, List<OrderItem> sectionItems, double sectionTotal,
+      String restaurantName, String businessName, String deliveryAddress, String city, String postalCode, String phone,
+      String orderNumber, String orderDate, String deliveryDate, String statusDisplay) async {
+    
+    // Paginate items within section (25 per page)
+    final itemsPerPage = 25;
+    final totalPages = (sectionItems.length / itemsPerPage).ceil();
+    
+    for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+      final startIndex = pageIndex * itemsPerPage;
+      final endIndex = (startIndex + itemsPerPage).clamp(0, sectionItems.length);
+      final pageItems = sectionItems.sublist(startIndex, endIndex);
+      final isFirstSectionPage = pageIndex == 0;
+      final isLastSectionPage = pageIndex == totalPages - 1;
+      
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4.landscape,
+          margin: const pw.EdgeInsets.all(16),
+          build: (pw.Context context) {
+            // Build item rows
+            final List<pw.Widget> itemRows = [];
+            for (var item in pageItems) {
+              itemRows.add(
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+                  decoration: const pw.BoxDecoration(
+                    border: pw.Border(top: pw.BorderSide(color: PdfColors.grey300)),
+                  ),
+                  child: pw.Row(
+                    children: [
+                      pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
+                      pw.Expanded(flex: 2, child: pw.Text('${item.quantity} ${item.unit ?? ''}', style: const pw.TextStyle(fontSize: 8))),
+                      // pw.Expanded(flex: 2, child: pw.Text('R${item.price.toStringAsFixed(2)}', style: const pw.TextStyle(fontSize: 8))),
+                      // pw.Expanded(flex: 2, child: pw.Text('R${item.totalPrice.toStringAsFixed(2)}', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
+                    ],
+        ),
+      ),
+    );
+  }
+            
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                // Header - only on first page of section
+                if (isFirstSectionPage) ...[
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('FAMBRI FARMS', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                          pw.Text('Order Confirmation', style: const pw.TextStyle(fontSize: 12)),
+                        ],
+                      ),
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.end,
+                        children: [
+                          pw.Text(restaurantName, style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+                          if (businessName.isNotEmpty) pw.Text(businessName, style: const pw.TextStyle(fontSize: 11)),
+                          if (deliveryAddress.isNotEmpty)
+                            pw.Container(
+                              width: 200,
+                              child: pw.Text(deliveryAddress, style: const pw.TextStyle(fontSize: 11), textAlign: pw.TextAlign.right),
+                            ),
+                          if (city.isNotEmpty || postalCode.isNotEmpty) pw.Text('$city $postalCode'.trim(), style: const pw.TextStyle(fontSize: 11)),
+                          if (phone.isNotEmpty) pw.Text(phone, style: const pw.TextStyle(fontSize: 11)),
+                        ],
+                      ),
+                    ],
+                  ),
+                  pw.SizedBox(height: 16),
+                  // Order info
+                  pw.Row(
+                    children: [
+                      pw.Expanded(
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            pw.Text('Order Number: $orderNumber', style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                            pw.SizedBox(height: 4),
+                            pw.Text('Generated: ${DateTime.now().toString().split('.')[0]}', style: const pw.TextStyle(fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                      pw.Expanded(
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            pw.Text('Delivery Date: $deliveryDate', style: const pw.TextStyle(fontSize: 11)),
+                            pw.SizedBox(height: 4),
+                            pw.Text('Status: $statusDisplay', style: const pw.TextStyle(fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  pw.SizedBox(height: 16),
+                ],
+                
+                // Section title
+                pw.Container(
+                  width: double.infinity,
+                  padding: const pw.EdgeInsets.all(12),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.blue50,
+                    border: pw.Border.all(color: PdfColors.blue700, width: 2),
+                  ),
+                  child: pw.Column(
+                    children: [
+                      pw.Text(sectionTitle, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold, color: PdfColors.blue700)),
+                      pw.SizedBox(height: 4),
+                      pw.Text(sectionSubtitle, style: pw.TextStyle(fontSize: 12, color: PdfColors.blue600)),
+                    ],
+                  ),
+                ),
+                
+                pw.SizedBox(height: 8),
+                
+                // Table header
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.grey200,
+                    border: pw.Border.all(),
+                  ),
+                  child: pw.Row(
+                    children: [
+                      pw.Expanded(flex: 4, child: pw.Text('PRODUCT', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text('QTY', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                      // pw.Expanded(flex: 2, child: pw.Text('PRICE', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                      // pw.Expanded(flex: 2, child: pw.Text('TOTAL', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text('STATUS', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                    ],
+                  ),
+                ),
+                
+                // Items
+                ...itemRows,
+                
+                pw.SizedBox(height: 8),
+                
+                // Section total (show on last page of section) - COMMENTED OUT
+                // if (isLastSectionPage)
+                //   pw.Container(
+                //     padding: const pw.EdgeInsets.all(12),
+                //     decoration: pw.BoxDecoration(border: pw.Border.all(width: 2)),
+                //     child: pw.Row(
+                //       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                //       children: [
+                //         pw.Text('$sectionTitle TOTAL', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+                //         pw.Text('R${sectionTotal.toStringAsFixed(2)}', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+                //       ],
+                //     ),
+                //   ),
+                
+                pw.Spacer(),
+                
+                pw.Center(
+                  child: pw.Text(
+                    isLastSectionPage ? 'Section Complete' : 'Continued on next page...',
+                    style: const pw.TextStyle(fontSize: 10),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    }
+  }
+
 }
