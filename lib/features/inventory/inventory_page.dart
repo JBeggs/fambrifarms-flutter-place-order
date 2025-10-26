@@ -1707,7 +1707,7 @@ class _StockReportDialog extends StatelessWidget {
                               pw.Text(
                                 'Generated: $reportDate at $reportTime',
                                 style: const pw.TextStyle(
-                                  color: PdfColors.white70,
+                                  color: PdfColors.grey300,
                                   fontSize: 10,
                                 ),
                               ),
