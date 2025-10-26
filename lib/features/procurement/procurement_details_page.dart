@@ -978,22 +978,30 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
         final cleanName = supplierName.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
         final defaultFileName = '${cleanName}_${printData['trip_date']}.pdf';
         
-        // Open Save As dialog for each supplier
-        String? outputPath = await FilePicker.platform.saveFile(
-          dialogTitle: 'Save $supplierName Procurement List',
-          fileName: defaultFileName,
-          type: FileType.custom,
-          allowedExtensions: ['pdf'],
-        );
+        // Platform-specific file picker behavior
+        String? outputPath;
+        
+        if (Platform.isLinux) {
+          // Linux workaround: GTK file picker doesn't properly support saveFile
+          print('[PDF SAVE] Linux detected - using directory picker');
+          String? directoryPath = await FilePicker.platform.getDirectoryPath(
+            dialogTitle: 'Select folder to save $supplierName Procurement List',
+          );
+          
+          if (directoryPath != null) {
+            outputPath = '$directoryPath/$defaultFileName';
+          }
+        } else {
+          // Windows/macOS: Use standard saveFile dialog
+          outputPath = await FilePicker.platform.saveFile(
+            dialogTitle: 'Save $supplierName Procurement List',
+            fileName: defaultFileName,
+            type: FileType.custom,
+            allowedExtensions: ['pdf'],
+          );
+        }
         
         if (outputPath != null) {
-          // Linux fix: If path is a directory or missing filename, append default filename
-          if (outputPath.endsWith('/') || !outputPath.contains('.')) {
-            outputPath = outputPath.endsWith('/') 
-                ? '$outputPath$defaultFileName' 
-                : '$outputPath/$defaultFileName';
-          }
-          
           // Ensure .pdf extension
           if (!outputPath.toLowerCase().endsWith('.pdf')) {
             outputPath = '$outputPath.pdf';
@@ -2849,22 +2857,30 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
       // Generate default filename
       final defaultFileName = '${supplierName}_$tripDate.pdf';
       
-      // Open Save As dialog
-      String? outputPath = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save Supplier Procurement PDF',
-        fileName: defaultFileName,
-        type: FileType.custom,
-        allowedExtensions: ['pdf'],
-      );
+      // Platform-specific file picker behavior
+      String? outputPath;
+      
+      if (Platform.isLinux) {
+        // Linux workaround: GTK file picker doesn't properly support saveFile
+        print('[PDF SAVE] Linux detected - using directory picker');
+        String? directoryPath = await FilePicker.platform.getDirectoryPath(
+          dialogTitle: 'Select folder to save Supplier Procurement PDF',
+        );
+        
+        if (directoryPath != null) {
+          outputPath = '$directoryPath/$defaultFileName';
+        }
+      } else {
+        // Windows/macOS: Use standard saveFile dialog
+        outputPath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save Supplier Procurement PDF',
+          fileName: defaultFileName,
+          type: FileType.custom,
+          allowedExtensions: ['pdf'],
+        );
+      }
       
       if (outputPath != null) {
-        // Linux fix: If path is a directory or missing filename, append default filename
-        if (outputPath.endsWith('/') || !outputPath.contains('.')) {
-          outputPath = outputPath.endsWith('/') 
-              ? '$outputPath$defaultFileName' 
-              : '$outputPath/$defaultFileName';
-        }
-        
         if (!outputPath.toLowerCase().endsWith('.pdf')) {
           outputPath = '$outputPath.pdf';
         }

@@ -1382,27 +1382,35 @@ class OrderCard extends ConsumerWidget {
       // Generate default filename
       final defaultFileName = 'Order_${order.orderNumber}.pdf';
       
-      // Open Save As dialog - works on Windows, macOS, Linux
-      String? outputPath = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save Order PDF',
-        fileName: defaultFileName,
-        type: FileType.custom,
-        allowedExtensions: ['pdf'],
-      );
+      // Platform-specific file picker behavior
+      String? outputPath;
+      
+      if (Platform.isLinux) {
+        // Linux workaround: GTK file picker doesn't properly support saveFile
+        // Ask for directory, then append filename
+        print('[PDF SAVE] Linux detected - using directory picker');
+        String? directoryPath = await FilePicker.platform.getDirectoryPath(
+          dialogTitle: 'Select folder to save Order PDF',
+        );
+        
+        if (directoryPath != null) {
+          outputPath = '$directoryPath/$defaultFileName';
+          print('[PDF SAVE] Linux: Selected directory: $directoryPath');
+        }
+      } else {
+        // Windows/macOS: Use standard saveFile dialog
+        outputPath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save Order PDF',
+          fileName: defaultFileName,
+          type: FileType.custom,
+          allowedExtensions: ['pdf'],
+        );
+      }
       
       print('[PDF SAVE] File picker returned: $outputPath');
       
       if (outputPath != null) {
         print('[PDF SAVE] Saving to: $outputPath');
-        
-        // Linux fix: If path is a directory or missing filename, append default filename
-        if (outputPath.endsWith('/') || !outputPath.contains('.')) {
-          // Path is a directory, append filename
-          outputPath = outputPath.endsWith('/') 
-              ? '$outputPath$defaultFileName' 
-              : '$outputPath/$defaultFileName';
-          print('[PDF SAVE] Path was directory, adjusted to: $outputPath');
-        }
         
         // Ensure .pdf extension
         if (!outputPath.toLowerCase().endsWith('.pdf')) {
@@ -1413,7 +1421,7 @@ class OrderCard extends ConsumerWidget {
         // User selected a location, save the file
         final file = File(outputPath);
         
-        // Create parent directory if it doesn't exist (Linux compatibility)
+        // Create parent directory if it doesn't exist
         final parentDir = file.parent;
         if (!await parentDir.exists()) {
           print('[PDF SAVE] Creating parent directory: ${parentDir.path}');
@@ -1443,12 +1451,12 @@ class OrderCard extends ConsumerWidget {
           );
         }
       } else {
-        print('[PDF SAVE] User cancelled or dialog failed to open');
+        print('[PDF SAVE] User cancelled');
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Save cancelled - if dialog did not open, check app permissions'),
-              duration: Duration(seconds: 3),
+              content: Text('Save cancelled'),
+              duration: Duration(seconds: 2),
             ),
           );
         }
