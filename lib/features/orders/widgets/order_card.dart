@@ -1379,10 +1379,15 @@ class OrderCard extends ConsumerWidget {
       print('[PDF SAVE] PDF generated, size: ${bytes.length} bytes');
       print('[PDF SAVE] Opening file picker dialog...');
       
+      // Generate default filename
+      final defaultFileName = 'Order_${order.orderNumber}.pdf';
+      
       // Open Save As dialog - works on Windows, macOS, Linux
       String? outputPath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save Order PDF',
-        fileName: 'Order_${order.orderNumber}.pdf',
+        fileName: defaultFileName,
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
       );
       
       print('[PDF SAVE] File picker returned: $outputPath');
@@ -1390,16 +1395,34 @@ class OrderCard extends ConsumerWidget {
       if (outputPath != null) {
         print('[PDF SAVE] Saving to: $outputPath');
         
+        // Linux fix: If path is a directory or missing filename, append default filename
+        if (outputPath.endsWith('/') || !outputPath.contains('.')) {
+          // Path is a directory, append filename
+          outputPath = outputPath.endsWith('/') 
+              ? '$outputPath$defaultFileName' 
+              : '$outputPath/$defaultFileName';
+          print('[PDF SAVE] Path was directory, adjusted to: $outputPath');
+        }
+        
         // Ensure .pdf extension
         if (!outputPath.toLowerCase().endsWith('.pdf')) {
           outputPath = '$outputPath.pdf';
+          print('[PDF SAVE] Added .pdf extension: $outputPath');
         }
         
         // User selected a location, save the file
         final file = File(outputPath);
+        
+        // Create parent directory if it doesn't exist (Linux compatibility)
+        final parentDir = file.parent;
+        if (!await parentDir.exists()) {
+          print('[PDF SAVE] Creating parent directory: ${parentDir.path}');
+          await parentDir.create(recursive: true);
+        }
+        
         await file.writeAsBytes(bytes);
         
-        print('[PDF SAVE] File saved successfully');
+        print('[PDF SAVE] File saved successfully to: ${file.path}');
         
         if (context.mounted) {
           Navigator.of(context).pop(); // Close the preview
@@ -1410,7 +1433,7 @@ class OrderCard extends ConsumerWidget {
                   const Icon(Icons.check_circle, color: Colors.white),
             const SizedBox(width: 8),
             Expanded(
-                    child: Text('PDF saved: ${outputPath.split('/').last}'),
+                    child: Text('PDF saved: ${file.path.split('/').last}'),
             ),
           ],
         ),

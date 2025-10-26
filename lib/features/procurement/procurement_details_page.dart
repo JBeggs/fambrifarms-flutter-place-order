@@ -976,14 +976,24 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
         
         // Clean supplier name for filename
         final cleanName = supplierName.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
+        final defaultFileName = '${cleanName}_${printData['trip_date']}.pdf';
         
         // Open Save As dialog for each supplier
         String? outputPath = await FilePicker.platform.saveFile(
           dialogTitle: 'Save $supplierName Procurement List',
-          fileName: '${cleanName}_${printData['trip_date']}.pdf',
+          fileName: defaultFileName,
+          type: FileType.custom,
+          allowedExtensions: ['pdf'],
         );
         
         if (outputPath != null) {
+          // Linux fix: If path is a directory or missing filename, append default filename
+          if (outputPath.endsWith('/') || !outputPath.contains('.')) {
+            outputPath = outputPath.endsWith('/') 
+                ? '$outputPath$defaultFileName' 
+                : '$outputPath/$defaultFileName';
+          }
+          
           // Ensure .pdf extension
           if (!outputPath.toLowerCase().endsWith('.pdf')) {
             outputPath = '$outputPath.pdf';
@@ -991,6 +1001,13 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
           
           // Save the file
           final file = File(outputPath);
+          
+          // Create parent directory if it doesn't exist
+          final parentDir = file.parent;
+          if (!await parentDir.exists()) {
+            await parentDir.create(recursive: true);
+          }
+          
           await file.writeAsBytes(bytes);
           
           print('[PDF SAVE] $supplierName PDF saved successfully');
@@ -2829,18 +2846,37 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
       final bytes = await pdf.save();
       print('[PDF SAVE] PDF generated, size: ${bytes.length} bytes');
       
+      // Generate default filename
+      final defaultFileName = '${supplierName}_$tripDate.pdf';
+      
       // Open Save As dialog
       String? outputPath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save Supplier Procurement PDF',
-        fileName: '${supplierName}_$tripDate.pdf',
+        fileName: defaultFileName,
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
       );
       
       if (outputPath != null) {
+        // Linux fix: If path is a directory or missing filename, append default filename
+        if (outputPath.endsWith('/') || !outputPath.contains('.')) {
+          outputPath = outputPath.endsWith('/') 
+              ? '$outputPath$defaultFileName' 
+              : '$outputPath/$defaultFileName';
+        }
+        
         if (!outputPath.toLowerCase().endsWith('.pdf')) {
           outputPath = '$outputPath.pdf';
         }
         
         final file = File(outputPath);
+        
+        // Create parent directory if it doesn't exist
+        final parentDir = file.parent;
+        if (!await parentDir.exists()) {
+          await parentDir.create(recursive: true);
+        }
+        
         await file.writeAsBytes(bytes);
         
         if (mounted) {
