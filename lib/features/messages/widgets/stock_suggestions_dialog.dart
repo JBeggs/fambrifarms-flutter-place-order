@@ -259,8 +259,8 @@ class _StockSuggestionsDialogState extends ConsumerState<StockSuggestionsDialog>
             }
             
             // Tertiary sort: stock level
-            final stockA = (a['current_inventory'] ?? 0.0) as double;
-            final stockB = (b['current_inventory'] ?? 0.0) as double;
+            final stockA = ((a['current_inventory'] ?? 0.0) as num).toDouble();
+            final stockB = ((b['current_inventory'] ?? 0.0) as num).toDouble();
             if (stockA != stockB) {
               return stockB.compareTo(stockA); // Higher stock first
             }
@@ -430,8 +430,8 @@ class _StockSuggestionsDialogState extends ConsumerState<StockSuggestionsDialog>
         }
         
         // Then by stock level (higher stock first)
-        final stockA = (a['current_inventory'] ?? 0.0) as double;
-        final stockB = (b['current_inventory'] ?? 0.0) as double;
+        final stockA = ((a['current_inventory'] ?? 0.0) as num).toDouble();
+        final stockB = ((b['current_inventory'] ?? 0.0) as num).toDouble();
         
         if (stockA != stockB) {
           return stockB.compareTo(stockA);
