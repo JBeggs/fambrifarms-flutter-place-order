@@ -18,15 +18,16 @@ import '../features/messages/messages_page.dart';
 import '../features/orders/orders_page.dart';
 import '../features/pricing/pricing_dashboard_page.dart';
 import '../features/inventory/inventory_page.dart';
+import '../features/inventory/bulk_stock_take_page.dart';
 import '../features/dashboard/dashboard_page.dart';
 import 'professional_theme.dart';
 
-final routerProvider = Provider<GoRouter>((ref) {
+final routerProvider = Provider.family<GoRouter, String?>((ref, initialRoute) {
   // Watch for auth state changes to trigger router refresh
   ref.watch(karlAuthProvider);
   
   return GoRouter(
-    initialLocation: '/loading',
+    initialLocation: initialRoute ?? '/loading',
     redirect: (context, state) {
       final isAuthenticated = ref.read(isAuthenticatedProvider);
       final isLoading = ref.read(authLoadingProvider);
@@ -41,6 +42,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       
       // After loading is complete, redirect appropriately
       if (!isLoading) {
+        // Allow direct access to bulk stock take WITHOUT authentication
+        if (state.uri.path == '/bulk-stock-take') {
+          return null; // Allow access regardless of auth status
+        }
+        
         if (!isAuthenticated && state.uri.path != '/login') {
           // print('[ROUTER] Redirecting to login');
           return '/login';
@@ -157,16 +163,22 @@ final routerProvider = Provider<GoRouter>((ref) {
               path: '/inventory',
               builder: (context, state) => const InventoryPage(),
             ),
+            GoRoute(
+              path: '/bulk-stock-take',
+              builder: (context, state) => const BulkStockTakePage(),
+            ),
           ],
         );
       });
 
 class PlaceOrderApp extends ConsumerWidget {
-  const PlaceOrderApp({super.key});
+  final String? initialRoute;
+  
+  const PlaceOrderApp({super.key, this.initialRoute});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final router = ref.watch(routerProvider);
+    final router = ref.watch(routerProvider(initialRoute));
     
     return MaterialApp.router(
       title: 'Fambri Farms Management',

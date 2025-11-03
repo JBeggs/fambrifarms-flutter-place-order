@@ -22,6 +22,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
   
   bool _enableSeasonalAdjustments = true;
   bool _autoCreateBuffers = true;
+  bool _enableBufferCalculations = true;
   String _bufferCalculationMethod = 'additive';
   
   Map<String, dynamic> _departmentSettings = {};
@@ -72,6 +73,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
           
           _enableSeasonalAdjustments = settings['enable_seasonal_adjustments'] ?? true;
           _autoCreateBuffers = settings['auto_create_buffers'] ?? true;
+          _enableBufferCalculations = settings['enable_buffer_calculations'] ?? true;
           _bufferCalculationMethod = settings['buffer_calculation_method'] ?? 'additive';
           _departmentSettings = Map<String, dynamic>.from(settings['department_buffer_settings'] ?? {});
           
@@ -109,6 +111,7 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
         'default_peak_season_multiplier': double.parse(_defaultPeakSeasonMultiplierController.text),
         'enable_seasonal_adjustments': _enableSeasonalAdjustments,
         'auto_create_buffers': _autoCreateBuffers,
+        'enable_buffer_calculations': _enableBufferCalculations,
         'buffer_calculation_method': _bufferCalculationMethod,
         'department_buffer_settings': _departmentSettings,
       };
@@ -149,6 +152,120 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
       return double.tryParse(value) ?? defaultValue;
     }
     return defaultValue;
+  }
+
+  void _setAllBuffersToZero() async {
+    // Show confirmation dialog first
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Disable All Buffers'),
+        content: const Text(
+          'This will set buffer rates to 0% for:\n'
+          '• Spoilage, Cutting Waste, Quality Rejection\n'
+          '• Disable seasonal adjustments\n'
+          '• Keep existing market pack sizes unchanged\n\n'
+          'This action will update the database immediately.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Disable All Buffers'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // Show loading
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                CircularProgressIndicator(strokeWidth: 2),
+                SizedBox(width: 16),
+                Text('Updating all product buffers...'),
+              ],
+            ),
+            duration: Duration(seconds: 10),
+          ),
+        );
+      }
+
+      // 1. Set default rates to zero
+      setState(() {
+        _defaultSpoilageRateController.text = '0';
+        _defaultCuttingWasteRateController.text = '0';
+        _defaultQualityRejectionRateController.text = '0';
+        _defaultPeakSeasonMultiplierController.text = '1';
+        _defaultMarketPackSizeController.text = '1';
+      });
+
+      // 2. Get all existing product buffers and set them to zero
+      final buffers = await _apiService.getProcurementBuffers();
+      
+      // 3. Update each product buffer to zero
+      for (final buffer in buffers) {
+        final productId = buffer['product_id'] ?? buffer['product'];
+        if (productId != null) {
+          await _apiService.updateProcurementBuffer(productId, {
+            'spoilage_rate': 0.0,
+            'cutting_waste_rate': 0.0,
+            'quality_rejection_rate': 0.0,
+            'market_pack_size': buffer['market_pack_size'] ?? 1.0,
+            'market_pack_unit': buffer['market_pack_unit'] ?? 'kg',
+            'is_seasonal': false,
+            'peak_season_months': [],
+            'peak_season_buffer_multiplier': 1.0,
+          });
+        }
+      }
+
+      // 4. Save the default settings
+      await _saveSettings();
+
+      // 5. FORCE regenerate any existing market recommendations to use new buffer settings
+      try {
+        await _apiService.generateMarketRecommendation({
+          'use_historical_dates': true,
+        });
+        print('🔄 Regenerated market recommendations with zero buffers');
+      } catch (e) {
+        print('⚠️ Could not regenerate market recommendations: $e');
+        // Don't fail the whole operation if this fails
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ All buffers set to 0%! Updated ${buffers.length} products + defaults. Market recommendations regenerated.'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error disabling buffers: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -230,28 +347,77 @@ class _BusinessSettingsPageState extends State<BusinessSettingsPage> {
                   const SizedBox(height: 16),
                   
                   SwitchListTile(
-                    title: const Text('Enable Seasonal Adjustments'),
-                    subtitle: const Text('Apply seasonal multipliers to buffer calculations'),
-                    value: _enableSeasonalAdjustments,
+                    title: const Text('Enable Buffer Calculations'),
+                    subtitle: const Text('Turn ON/OFF all buffer calculations globally'),
+                    value: _enableBufferCalculations,
                     onChanged: (value) {
                       setState(() {
-                        _enableSeasonalAdjustments = value;
+                        _enableBufferCalculations = value;
                       });
                     },
                     activeColor: const Color(0xFF2D5016),
                   ),
                   
                   SwitchListTile(
-                    title: const Text('Auto-Create Buffers'),
-                    subtitle: const Text('Automatically create procurement buffers for new products'),
+                    title: Text(
+                      'Enable Seasonal Adjustments',
+                      style: TextStyle(
+                        color: _enableBufferCalculations ? null : Colors.grey,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Apply seasonal multipliers to buffer calculations',
+                      style: TextStyle(
+                        color: _enableBufferCalculations ? null : Colors.grey,
+                      ),
+                    ),
+                    value: _enableSeasonalAdjustments,
+                    onChanged: _enableBufferCalculations ? (value) {
+                      setState(() {
+                        _enableSeasonalAdjustments = value;
+                      });
+                    } : null,
+                    activeColor: const Color(0xFF2D5016),
+                  ),
+                  
+                  SwitchListTile(
+                    title: Text(
+                      'Auto-Create Buffers',
+                      style: TextStyle(
+                        color: _enableBufferCalculations ? null : Colors.grey,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Automatically create procurement buffers for new products',
+                      style: TextStyle(
+                        color: _enableBufferCalculations ? null : Colors.grey,
+                      ),
+                    ),
                     value: _autoCreateBuffers,
-                    onChanged: (value) {
+                    onChanged: _enableBufferCalculations ? (value) {
                       setState(() {
                         _autoCreateBuffers = value;
                       });
-                    },
+                    } : null,
                     activeColor: const Color(0xFF2D5016),
                   ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Quick disable all buffers button
+                  if (_enableBufferCalculations)
+                    Container(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _setAllBuffersToZero,
+                        icon: const Icon(Icons.clear_all),
+                        label: const Text('Set All Buffer Rates to 0%'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          side: const BorderSide(color: Colors.red),
+                        ),
+                      ),
+                    ),
                   
                   const SizedBox(height: 16),
                   

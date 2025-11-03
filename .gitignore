@@ -45,6 +45,14 @@ ENV/
 build/
 .fvm/
 
+# Flutter platform directories
+android/
+ios/
+linux/
+macos/
+web/
+windows/
+
 # macOS
 .DS_Store
 .AppleDouble

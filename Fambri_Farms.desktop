@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Fambri Farms Order System
+GenericName=Order Management System
+Comment=Modern WhatsApp Order Processing and Inventory Management System
+Exec=/home/fambri/Documents/app/fambrifarms-flutter-place-order/build/linux/x64/release/bundle/fambri-farms-order-system
+Icon=/home/fambri/Documents/app/fambrifarms-flutter-place-order/web/icons/Icon-512.png
+Terminal=false
+Categories=Office;Business;Finance;
+Keywords=fambri;farms;orders;inventory;whatsapp;stock;procurement;
+StartupNotify=true
+StartupWMClass=com.fambrifarms.order_system
+Path=/home/fambri/Documents/app/fambrifarms-flutter-place-order

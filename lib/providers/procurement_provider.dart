@@ -281,6 +281,27 @@ class ProcurementNotifier extends StateNotifier<ProcurementState> {
     }
   }
 
+  // Delete market recommendation - remove from state after successful deletion
+  Future<bool> deleteRecommendation(int recommendationId) async {
+    try {
+      await _apiService.deleteMarketRecommendation(recommendationId);
+      
+      // Remove the recommendation from the list
+      final updatedRecommendations = state.recommendations.where((r) => r.id != recommendationId).toList();
+      
+      state = state.copyWith(
+        recommendations: updatedRecommendations,
+        // Clear active recommendation if it was the deleted one
+        activeRecommendation: state.activeRecommendation?.id == recommendationId ? null : state.activeRecommendation,
+      );
+      
+      return true;
+    } catch (e) {
+      state = state.copyWith(error: e.toString());
+      return false;
+    }
+  }
+
   // Update buffer settings for a product
   Future<bool> updateProductBuffer(int productId, Map<String, dynamic> bufferData) async {
     try {

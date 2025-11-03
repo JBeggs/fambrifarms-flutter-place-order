@@ -4,7 +4,7 @@ import 'package:window_manager/window_manager.dart';
 import 'core/app.dart';
 import 'config/app_config.dart';
 
-void main() async {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   
   // Debug: Print configuration to verify environment variables
@@ -33,9 +33,13 @@ void main() async {
     await windowManager.focus();
   });
   
+  // Check for bulk stock take argument (from dart-define or command line)
+  const isBulkStockTakeDefine = String.fromEnvironment('BULK_STOCK_TAKE') == 'true';
+  final isBulkStockTake = isBulkStockTakeDefine || args.contains('--bulk-stock-take');
+  
   runApp(
-    const ProviderScope(
-      child: PlaceOrderApp(),
+    ProviderScope(
+      child: PlaceOrderApp(initialRoute: isBulkStockTake ? '/bulk-stock-take' : null),
     ),
   );
 }

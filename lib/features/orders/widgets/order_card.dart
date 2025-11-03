@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:file_picker/file_picker.dart';
 import '../../../models/order.dart';
 import '../../../services/api_service.dart';
+import '../../../providers/orders_provider.dart';
 import 'order_status_chip.dart';
 import '../edit_order_page.dart';
 
@@ -636,15 +637,9 @@ class OrderCard extends ConsumerWidget {
         isLoadingDialogOpen = true;
       }
 
-      // Delete the order
-      final apiService = ref.read(apiServiceProvider);
-      
-      // Check authentication before attempting delete
-      if (!apiService.isAuthenticated) {
-        throw Exception('Authentication required. Please log in again.');
-      }
-      
-      await apiService.deleteOrder(order.id);
+      // Use the orders provider to delete the order (this handles state properly)
+      final ordersNotifier = ref.read(ordersProvider.notifier);
+      await ordersNotifier.deleteOrder(order.id);
 
       // Success: Show success message and call callback
       if (context.mounted) {

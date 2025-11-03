@@ -223,14 +223,22 @@ class OrdersNotifier extends StateNotifier<OrdersState> {
   }
 
   Future<void> deleteOrder(int orderId) async {
+    state = state.copyWith(isLoading: true, error: null);
+    
     try {
       await _apiService.deleteOrder(orderId);
       
       // Remove the order from the list
       final updatedOrders = state.orders.where((order) => order.id != orderId).toList();
-      state = state.copyWith(orders: updatedOrders);
+      state = state.copyWith(
+        orders: updatedOrders,
+        isLoading: false,
+      );
     } catch (e) {
-      state = state.copyWith(error: e.toString());
+      state = state.copyWith(
+        isLoading: false,
+        error: e.toString(),
+      );
     }
   }
 

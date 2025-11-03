@@ -710,11 +710,14 @@ class _ProcurementPageState extends ConsumerState<ProcurementPage> {
       ref.read(procurementProvider.notifier).loadProcurementData();
       
       if (mounted && result['success'] == true) {
+        final ordersConfirmed = result['orders_confirmed'] ?? 0;
+        final messagesDeleted = result['messages_deleted'] ?? 0;
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('✅ Approved recommendation for R${recommendation.totalEstimatedCost.toStringAsFixed(2)}'),
+            content: Text('✅ System reset complete!\n• $ordersConfirmed orders confirmed\n• $messagesDeleted messages deleted\n• Ready for next order day'),
             backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
+            duration: const Duration(seconds: 5),
           ),
         );
       }

@@ -1,6 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:path_provider/path_provider.dart';
+import 'package:excel/excel.dart' as excel;
 import '../../../models/product.dart';
 import '../../../providers/inventory_provider.dart';
 import '../../../services/api_service.dart';
@@ -19,7 +24,12 @@ class BulkStockTakeDialog extends ConsumerStatefulWidget {
 
 class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   final Map<int, TextEditingController> _controllers = {};
-  final Map<int, int> _originalStock = {};
+  final Map<int, TextEditingController> _commentControllers = {};
+  final Map<int, double> _originalStock = {};
+  // Dynamic list of products in stock take (can be added/removed)
+  List<Product> _stockTakeProducts = [];
+  // All products for searching (loaded from inventory provider)
+  List<Product> _allProducts = [];
   bool _isLoading = false;
   String _searchQuery = '';
   List<Map<String, dynamic>> _stockHistory = [];
@@ -28,12 +38,52 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   @override
   void initState() {
     super.initState();
-    for (final product in widget.products) {
+    // Initialize with products that have stock (passed from parent)
+    _stockTakeProducts = List.from(widget.products);
+    
+    // Load all products from inventory provider for search
+    final inventoryState = ref.read(inventoryProvider);
+    _allProducts = inventoryState.products;
+    
+    for (final product in _stockTakeProducts) {
       _controllers[product.id] = TextEditingController();
-      _originalStock[product.id] = product.stockLevel.toInt();
-      _controllers[product.id]!.text = product.stockLevel.toInt().toString();
+      _commentControllers[product.id] = TextEditingController(); // Initialize comment controllers
+      _originalStock[product.id] = product.stockLevel;
+      _controllers[product.id]!.text = product.stockLevel % 1 == 0
+          ? product.stockLevel.toInt().toString()
+          : product.stockLevel.toStringAsFixed(2);
     }
     _loadStockHistory();
+  }
+  
+  // Add a product to the stock take list
+  void _addProductToStockTake(Product product) {
+    if (_stockTakeProducts.any((p) => p.id == product.id)) {
+      // Already in list, just scroll to it
+      return;
+    }
+    
+    setState(() {
+      _stockTakeProducts.add(product);
+      _controllers[product.id] = TextEditingController();
+      _commentControllers[product.id] = TextEditingController(); // Initialize comment controller for new products
+      _originalStock[product.id] = product.stockLevel;
+      _controllers[product.id]!.text = product.stockLevel % 1 == 0
+          ? product.stockLevel.toInt().toString()
+          : product.stockLevel.toStringAsFixed(2);
+    });
+  }
+  
+  // Remove a product from the stock take list
+  void _removeProductFromStockTake(int productId) {
+    setState(() {
+      _stockTakeProducts.removeWhere((p) => p.id == productId);
+      _controllers[productId]?.dispose();
+      _commentControllers[productId]?.dispose(); // Dispose comment controller
+      _controllers.remove(productId);
+      _commentControllers.remove(productId); // Remove comment controller
+      _originalStock.remove(productId);
+    });
   }
 
   Future<void> _loadStockHistory() async {
@@ -57,18 +107,474 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     for (final controller in _controllers.values) {
       controller.dispose();
     }
+    for (final controller in _commentControllers.values) {
+      controller.dispose(); // Dispose all comment controllers
+    }
     super.dispose();
   }
 
-  List<Product> get _filteredProducts {
-    if (_searchQuery.isEmpty) return widget.products;
+  // Get products currently in the stock take list (filtered by search)
+  List<Product> get _filteredStockTakeProducts {
+    if (_searchQuery.isEmpty) return _stockTakeProducts;
     
-    return widget.products.where((product) {
+    return _stockTakeProducts.where((product) {
       final name = product.name.toLowerCase();
       final sku = product.sku?.toLowerCase() ?? '';
       final query = _searchQuery.toLowerCase();
       return name.contains(query) || sku.contains(query);
     }).toList();
+  }
+  
+  // Get products from all products that match search but aren't in stock take list
+  List<Product> get _searchResultsNotInList {
+    if (_searchQuery.isEmpty) return [];
+    
+    final query = _searchQuery.toLowerCase();
+    final stockTakeIds = _stockTakeProducts.map((p) => p.id).toSet();
+    
+    return _allProducts.where((product) {
+      final name = product.name.toLowerCase();
+      final sku = product.sku?.toLowerCase() ?? '';
+      final matchesSearch = name.contains(query) || sku.contains(query);
+      final notInList = !stockTakeIds.contains(product.id);
+      return matchesSearch && notInList;
+    }).toList();
+  }
+
+  // Check if search query doesn't match any existing products
+  bool get _shouldShowAddProductButton {
+    if (_searchQuery.trim().isEmpty) return false;
+    
+    final query = _searchQuery.toLowerCase().trim();
+    
+    // Check if any product name exactly matches or starts with the search query
+    // This is more restrictive than contains() to show the button more often
+    final hasMatchingProduct = _allProducts.any((product) {
+      final name = product.name.toLowerCase();
+      final sku = product.sku?.toLowerCase() ?? '';
+      return name == query || name.startsWith(query) || 
+             sku == query || sku.startsWith(query);
+    });
+    
+    // Debug info
+    print('[BULK_STOCK_TAKE] Search query: "$query"');
+    print('[BULK_STOCK_TAKE] Total products: ${_allProducts.length}');
+    print('[BULK_STOCK_TAKE] Has matching product: $hasMatchingProduct');
+    print('[BULK_STOCK_TAKE] Should show add button: ${!hasMatchingProduct}');
+    
+    return !hasMatchingProduct;
+  }
+
+  // Create a new product and add it to the stock take list
+  Future<void> _createAndAddProduct() async {
+    print('[BULK_STOCK_TAKE] _createAndAddProduct called');
+    final productName = _searchQuery.trim();
+    if (productName.isEmpty) {
+      print('[BULK_STOCK_TAKE] Empty product name, returning');
+      return;
+    }
+
+    print('[BULK_STOCK_TAKE] Showing add product dialog for: $productName');
+    
+    // Show dialog to get additional product details
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => _AddProductDialog(productName: productName),
+    );
+
+    print('[BULK_STOCK_TAKE] Dialog result: $result');
+    if (result == null) {
+      print('[BULK_STOCK_TAKE] Dialog cancelled');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final apiService = ref.read(apiServiceProvider);
+      
+      // Create product using the standard products endpoint
+      // The result should already contain the department ID from the dialog
+      final newProduct = await apiService.createProduct({
+        'name': result['name'],
+        'unit': result['unit'],
+        'price': result['price'],
+        'department': result['department_id'], // Use department ID from dialog
+        'is_active': true,
+        // Don't include stock_level - it's read-only according to serializer
+        'minimum_stock': 5.0,
+      });
+      
+      // Refresh inventory to get the new product
+      await ref.read(inventoryProvider.notifier).refreshAll();
+      
+      // Update local products list
+      final inventoryState = ref.read(inventoryProvider);
+      _allProducts = inventoryState.products;
+      
+      // Add the new product to stock take list
+      _addProductToStockTake(newProduct);
+      
+      // Clear search query
+      setState(() {
+        _searchQuery = '';
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Product "${newProduct.name}" created and added to stock take'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Failed to create product: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<String?> _generateStockTakePdf(List<Map<String, dynamic>> entries) async {
+    try {
+      print('[STOCK_TAKE_PDF] Generating PDF for ${entries.length} entries');
+      
+      // Get current date for filename
+      final now = DateTime.now();
+      final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final timeStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final filename = 'BulkStockTake_${dateStr}_$timeStr.pdf';
+      
+      // Get Documents directory with better error handling
+      Directory? documentsDir;
+      try {
+        if (Platform.isLinux || Platform.isMacOS) {
+          final homeDir = Platform.environment['HOME'];
+          print('[STOCK_TAKE_PDF] Home directory: $homeDir');
+          if (homeDir != null) {
+            documentsDir = Directory('$homeDir/Documents');
+            print('[STOCK_TAKE_PDF] Documents directory path: ${documentsDir.path}');
+            print('[STOCK_TAKE_PDF] Documents directory exists: ${documentsDir.existsSync()}');
+            
+            // Create Documents directory if it doesn't exist
+            if (!documentsDir.existsSync()) {
+              print('[STOCK_TAKE_PDF] Creating Documents directory...');
+              documentsDir.createSync(recursive: true);
+            }
+          }
+        } else if (Platform.isWindows) {
+          documentsDir = await getApplicationDocumentsDirectory();
+          print('[STOCK_TAKE_PDF] Windows documents directory: ${documentsDir?.path}');
+        }
+      } catch (e) {
+        print('[STOCK_TAKE_PDF] Error getting documents directory: $e');
+        throw Exception('Failed to access Documents directory: $e');
+      }
+      
+      if (documentsDir == null) {
+        throw Exception('Could not determine Documents directory path');
+      }
+      
+      final filePath = '${documentsDir.path}/$filename';
+      print('[STOCK_TAKE_PDF] Full file path: $filePath');
+      
+      // Create PDF document
+      final pdf = pw.Document();
+      
+      // Build PDF content
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(32),
+          build: (pw.Context context) {
+            return [
+              // Header
+              pw.Header(
+                level: 0,
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'BULK STOCK TAKE REPORT',
+                      style: pw.TextStyle(
+                        fontSize: 20,
+                        fontWeight: pw.FontWeight.bold,
+                      ),
+                    ),
+                    pw.Text(
+                      'Date: ${now.day}/${now.month}/${now.year}',
+                      style: const pw.TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              
+              pw.SizedBox(height: 20),
+              
+              // Table Header
+              pw.Container(
+                padding: const pw.EdgeInsets.all(8),
+                decoration: const pw.BoxDecoration(
+                  color: PdfColors.grey200,
+                ),
+                  child: pw.Row(
+                    children: [
+                      pw.Expanded(flex: 3, child: pw.Text('Product Name', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      // pw.Expanded(flex: 2, child: pw.Text('Previous Stock', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text('Counted Stock', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      // pw.Expanded(flex: 2, child: pw.Text('Difference', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 1, child: pw.Text('Unit', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 3, child: pw.Text('Comments', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                    ],
+                  ),
+              ),
+              
+              // Table Rows
+              ...entries.map((entry) {
+                final productId = entry['product_id'] as int;
+                final product = _stockTakeProducts.firstWhere((p) => p.id == productId);
+                final currentStock = entry['current_stock'] as double;
+                final countedStock = entry['counted_quantity'] as double;
+                final difference = countedStock - currentStock;
+                final comment = entry['comment'] as String? ?? '';
+                
+                return pw.Container(
+                  padding: const pw.EdgeInsets.all(8),
+                  decoration: const pw.BoxDecoration(
+                    border: pw.Border(
+                      bottom: pw.BorderSide(color: PdfColors.grey300),
+                    ),
+                  ),
+                  child: pw.Row(
+                    children: [
+                      pw.Expanded(flex: 3, child: pw.Text(product.name, style: const pw.TextStyle(fontSize: 10))),
+                      // pw.Expanded(flex: 2, child: pw.Text(
+                      //   currentStock % 1 == 0 ? currentStock.toInt().toString() : currentStock.toStringAsFixed(2),
+                      //   style: const pw.TextStyle(fontSize: 10),
+                      // )),
+                      pw.Expanded(flex: 2, child: pw.Text(
+                        countedStock % 1 == 0 ? countedStock.toInt().toString() : countedStock.toStringAsFixed(2),
+                        style: const pw.TextStyle(fontSize: 10),
+                      )),
+                      // pw.Expanded(flex: 2, child: pw.Text(
+                      //   '${difference >= 0 ? '+' : ''}${difference % 1 == 0 ? difference.toInt().toString() : difference.toStringAsFixed(2)}',
+                      //   style: pw.TextStyle(
+                      //     fontSize: 10,
+                      //     color: difference > 0 ? PdfColors.green : difference < 0 ? PdfColors.red : PdfColors.black,
+                      //   ),
+                      // )),
+                      pw.Expanded(flex: 1, child: pw.Text(product.unit, style: const pw.TextStyle(fontSize: 10))),
+                      pw.Expanded(flex: 3, child: pw.Text(comment.isEmpty ? '-' : comment, style: const pw.TextStyle(fontSize: 9))),
+                    ],
+                  ),
+                );
+              }).toList(),
+              
+              pw.SizedBox(height: 20),
+              
+              // Footer
+              pw.Text(
+                'Generated by Fambri Farms Stock Management System',
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: PdfColors.grey600,
+                  fontStyle: pw.FontStyle.italic,
+                ),
+              ),
+            ];
+          },
+        ),
+      );
+      
+      // Save PDF to file
+      try {
+        print('[STOCK_TAKE_PDF] Generating PDF bytes...');
+        final pdfBytes = await pdf.save();
+        print('[STOCK_TAKE_PDF] PDF bytes generated: ${pdfBytes.length} bytes');
+        
+        final file = File(filePath);
+        print('[STOCK_TAKE_PDF] Writing to file: $filePath');
+        await file.writeAsBytes(pdfBytes);
+        
+        // Verify file was created
+        if (file.existsSync()) {
+          final fileSize = file.lengthSync();
+          print('[STOCK_TAKE_PDF] ✅ PDF saved successfully!');
+          print('[STOCK_TAKE_PDF] File: $filePath');
+          print('[STOCK_TAKE_PDF] Size: $fileSize bytes');
+          return filePath; // Return the successful file path
+        } else {
+          throw Exception('File was not created after write operation');
+        }
+      } catch (e) {
+        print('[STOCK_TAKE_PDF] Error writing PDF file: $e');
+        throw Exception('Failed to save PDF file: $e');
+      }
+      
+    } catch (e) {
+      print('[STOCK_TAKE_PDF] Error generating PDF: $e');
+      // Return null on failure - PDF generation failure shouldn't stop stock take completion
+      return null;
+    }
+  }
+
+  Future<String?> _generateStockTakeExcel(List<Map<String, dynamic>> entries) async {
+    try {
+      print('[STOCK_TAKE_EXCEL] Generating Excel for ${entries.length} entries');
+      
+      // Get current date for filename
+      final now = DateTime.now();
+      final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final timeStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final filename = 'BulkStockTake_${dateStr}_$timeStr.xlsx';
+      
+      // Get Documents directory
+      Directory? documentsDir;
+      try {
+        if (Platform.isLinux || Platform.isMacOS) {
+          final homeDir = Platform.environment['HOME'];
+          print('[STOCK_TAKE_EXCEL] Home directory: $homeDir');
+          if (homeDir != null) {
+            documentsDir = Directory('$homeDir/Documents');
+            print('[STOCK_TAKE_EXCEL] Documents directory path: ${documentsDir.path}');
+            
+            // Create Documents directory if it doesn't exist
+            if (!documentsDir.existsSync()) {
+              print('[STOCK_TAKE_EXCEL] Creating Documents directory...');
+              documentsDir.createSync(recursive: true);
+            }
+          }
+        } else if (Platform.isWindows) {
+          documentsDir = await getApplicationDocumentsDirectory();
+          print('[STOCK_TAKE_EXCEL] Windows documents directory: ${documentsDir?.path}');
+        }
+      } catch (e) {
+        print('[STOCK_TAKE_EXCEL] Error getting documents directory: $e');
+        throw Exception('Failed to access Documents directory: $e');
+      }
+      
+      if (documentsDir == null) {
+        throw Exception('Could not determine Documents directory path');
+      }
+      
+      final filePath = '${documentsDir.path}/$filename';
+      print('[STOCK_TAKE_EXCEL] Full file path: $filePath');
+      
+      // Create Excel workbook
+      final excelFile = excel.Excel.createExcel();
+      final sheet = excelFile['Stock Take'];
+      
+      // Remove default sheet if it exists
+      if (excelFile.sheets.containsKey('Sheet1')) {
+        excelFile.delete('Sheet1');
+      }
+      
+      // Add header row
+      final headerRow = [
+        excel.TextCellValue('Product Name'),
+        excel.TextCellValue('Counted Stock'),
+        excel.TextCellValue('Unit'),
+        excel.TextCellValue('Comments'),
+      ];
+      
+      sheet.appendRow(headerRow);
+      
+      // Style header row
+      for (int i = 0; i < headerRow.length; i++) {
+        final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0));
+        cell.cellStyle = excel.CellStyle(
+          bold: true,
+          horizontalAlign: excel.HorizontalAlign.Center,
+        );
+      }
+      
+      // Add data rows
+      for (final entry in entries) {
+        final productId = entry['product_id'] as int;
+        final product = _stockTakeProducts.firstWhere((p) => p.id == productId);
+        final countedStock = entry['counted_quantity'] as double;
+        final comment = entry['comment'] as String? ?? '';
+        
+        final dataRow = [
+          excel.TextCellValue(product.name),
+          excel.DoubleCellValue(countedStock),
+          excel.TextCellValue(product.unit),
+          excel.TextCellValue(comment.isEmpty ? '-' : comment),
+        ];
+        
+        sheet.appendRow(dataRow);
+      }
+      
+      // Auto-fit columns
+      sheet.setColumnAutoFit(0); // Product Name
+      sheet.setColumnAutoFit(1); // Counted Stock
+      sheet.setColumnAutoFit(2); // Unit
+      sheet.setColumnAutoFit(3); // Comments
+      
+      // Save Excel file
+      try {
+        print('[STOCK_TAKE_EXCEL] Generating Excel bytes...');
+        final excelBytes = excelFile.save();
+        
+        if (excelBytes != null) {
+          print('[STOCK_TAKE_EXCEL] Excel bytes generated: ${excelBytes.length} bytes');
+          
+          final file = File(filePath);
+          print('[STOCK_TAKE_EXCEL] Writing to file: $filePath');
+          await file.writeAsBytes(excelBytes);
+          
+          // Verify file was created
+          if (file.existsSync()) {
+            final fileSize = file.lengthSync();
+            print('[STOCK_TAKE_EXCEL] ✅ Excel saved successfully!');
+            print('[STOCK_TAKE_EXCEL] File: $filePath');
+            print('[STOCK_TAKE_EXCEL] Size: $fileSize bytes');
+            return filePath; // Return the successful file path
+          } else {
+            throw Exception('File was not created after write operation');
+          }
+        } else {
+          throw Exception('Failed to generate Excel bytes');
+        }
+      } catch (e) {
+        print('[STOCK_TAKE_EXCEL] Error writing Excel file: $e');
+        throw Exception('Failed to save Excel file: $e');
+      }
+      
+    } catch (e) {
+      print('[STOCK_TAKE_EXCEL] Error generating Excel: $e');
+      // Return null on failure - Excel generation failure shouldn't stop stock take completion
+      return null;
+    }
+  }
+
+  String _buildSuccessMessage(int entryCount, String? pdfPath, String? excelPath) {
+    final buffer = StringBuffer();
+    buffer.write('Bulk stock take completed for $entryCount products.');
+    
+    if (pdfPath != null && excelPath != null) {
+      buffer.write('\n✅ PDF saved: $pdfPath');
+      buffer.write('\n✅ Excel saved: $excelPath');
+    } else if (pdfPath != null) {
+      buffer.write('\n✅ PDF saved: $pdfPath');
+      buffer.write('\n❌ Excel generation failed - check console for details.');
+    } else if (excelPath != null) {
+      buffer.write('\n❌ PDF generation failed - check console for details.');
+      buffer.write('\n✅ Excel saved: $excelPath');
+    } else {
+      buffer.write('\n❌ Both PDF and Excel generation failed - check console for details.');
+    }
+    
+    return buffer.toString();
   }
 
   Future<void> _submitBulkStockTake() async {
@@ -77,25 +583,41 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     try {
       final entries = <Map<String, dynamic>>[];
       
-      for (final product in widget.products) {
-        final controller = _controllers[product.id]!;
-        if (controller.text.isNotEmpty) {
-          final countedQuantity = int.tryParse(controller.text) ?? 0;
-          final currentStock = _originalStock[product.id] ?? 0;
-          
-          // Only add if there's an actual change in stock
-          if (countedQuantity != currentStock) {
-            entries.add({
-              'product_id': product.id,
-              'counted_quantity': countedQuantity,
-              'current_stock': currentStock,
-            });
-          }
-        }
+      for (final product in _stockTakeProducts) {
+        final controller = _controllers[product.id];
+        if (controller == null || controller.text.isEmpty) continue;
+        
+        // Parse as double to support kg and other decimal units
+        final countedQuantity = double.tryParse(controller.text) ?? 0.0;
+        final currentStock = _originalStock[product.id] ?? 0.0;
+        
+        // Get comment from comment controller
+        final commentController = _commentControllers[product.id];
+        final comment = commentController?.text.trim() ?? '';
+        
+        // For complete stock take, include ALL entries with counted quantities
+        entries.add({
+          'product_id': product.id,
+          'counted_quantity': countedQuantity,
+          'current_stock': currentStock,
+          'comment': comment, // Include the comment
+        });
       }
 
       if (entries.isEmpty) {
-        throw Exception('No stock entries to process');
+        // Check if user entered any quantities at all
+        bool hasAnyEntries = false;
+        for (final product in _stockTakeProducts) {
+          final controller = _controllers[product.id];
+          if (controller != null && controller.text.isNotEmpty) {
+            hasAnyEntries = true;
+            break;
+          }
+        }
+        
+        if (!hasAnyEntries) {
+          throw Exception('Please enter counted quantities for at least one product to complete the stock take');
+        }
       }
 
       // Submit stock take and wait for completion
@@ -107,12 +629,28 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       // Force UI refresh
       ref.read(inventoryProvider.notifier).forceRefresh();
 
+      // Generate PDF and Excel reports
+      String? pdfPath;
+      String? excelPath;
+      try {
+        pdfPath = await _generateStockTakePdf(entries);
+      } catch (e) {
+        print('[STOCK_TAKE] PDF generation failed: $e');
+      }
+      
+      try {
+        excelPath = await _generateStockTakeExcel(entries);
+      } catch (e) {
+        print('[STOCK_TAKE] Excel generation failed: $e');
+      }
+
       if (mounted) {
         Navigator.of(context).pop(true);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Bulk stock take completed for ${entries.length} products'),
-            backgroundColor: Colors.green,
+            content: Text(_buildSuccessMessage(entries.length, pdfPath, excelPath)),
+            backgroundColor: (pdfPath != null || excelPath != null) ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 6),
           ),
         );
       }
@@ -133,8 +671,13 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   }
 
   void _fillWithCurrentStock() {
-    for (final product in widget.products) {
-      _controllers[product.id]!.text = product.stockLevel.toString();
+    for (final product in _stockTakeProducts) {
+      final controller = _controllers[product.id];
+      if (controller != null) {
+        controller.text = product.stockLevel % 1 == 0
+            ? product.stockLevel.toInt().toString()
+            : product.stockLevel.toStringAsFixed(2);
+      }
     }
     setState(() {});
   }
@@ -148,8 +691,6 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final filteredProducts = _filteredProducts;
-    
     return Dialog(
       child: Container(
         width: MediaQuery.of(context).size.width * 0.95,
@@ -277,6 +818,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                       border: OutlineInputBorder(),
                     ),
                     onChanged: (value) {
+                      print('[BULK_STOCK_TAKE] Search field changed: "$value"');
                       setState(() => _searchQuery = value);
                     },
                   ),
@@ -323,122 +865,302 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
 
             // Products List
             Expanded(
-              child: ListView.builder(
-                itemCount: filteredProducts.length,
-                itemBuilder: (context, index) {
-                  final product = filteredProducts[index];
-                  final controller = _controllers[product.id]!;
-                  final originalStock = _originalStock[product.id] ?? 0;
-                  
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: Padding(
+              child: Column(
+                children: [
+                  // Add Product Button (when no products match search)
+                  if (_shouldShowAddProductButton) ...[
+                    Container(
                       padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.orange[50],
+                        border: Border.all(color: Colors.orange[200]!),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                       child: Row(
                         children: [
-                          // Product Info
+                          Icon(Icons.add_circle_outline, color: Colors.orange[700]),
+                          const SizedBox(width: 12),
                           Expanded(
-                            flex: 2,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  product.name,
-                                  style: const TextStyle(fontWeight: FontWeight.w500),
-                                ),
-                                if (product.sku != null)
-                                  Text(
-                                    'SKU: ${product.sku}',
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                Text(
-                                  'Current: $originalStock ${product.unit}',
+                                  'Product not found: "$_searchQuery"',
                                   style: TextStyle(
-                                    color: Colors.blue[700],
-                                    fontSize: 12,
                                     fontWeight: FontWeight.w500,
+                                    color: Colors.orange[800],
                                   ),
                                 ),
+                                const SizedBox(height: 4),
                                 Text(
-                                  'From SHALLOME stock updates',
+                                  'Create this product and add it to the stock take',
                                   style: TextStyle(
-                                    color: Colors.green[600],
-                                    fontSize: 10,
-                                    fontStyle: FontStyle.italic,
+                                    fontSize: 12,
+                                    color: Colors.orange[600],
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          
-                          // Stock Entry Field
-                          Expanded(
-                            child: TextFormField(
-                              controller: controller,
-                              decoration: InputDecoration(
-                                labelText: 'Counted',
-                                border: const OutlineInputBorder(),
-                                suffixText: product.unit,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
-                              ),
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              inputFormatters: [
-                                FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
-                              ],
-                              onChanged: (value) {
-                                setState(() {}); // Trigger rebuild for difference calculation
-                              },
-                            ),
-                          ),
-                          
-                          // Difference Indicator
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 60,
-                            child: Builder(
-                              builder: (context) {
-                                final countedText = controller.text;
-                                if (countedText.isEmpty) return const SizedBox();
-                                
-                                final counted = int.tryParse(countedText) ?? 0;
-                                final difference = counted - originalStock;
-                                
-                                if (difference == 0) {
-                                  return const Icon(Icons.check, color: Colors.green, size: 20);
-                                }
-                                
-                                return Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      difference > 0 ? Icons.arrow_upward : Icons.arrow_downward,
-                                      color: difference > 0 ? Colors.green : Colors.red,
-                                      size: 16,
-                                    ),
-                                    Text(
-                                      difference.abs().toString(),
-                                      style: TextStyle(
-                                        color: difference > 0 ? Colors.green : Colors.red,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                );
-                              },
+                          ElevatedButton.icon(
+                            onPressed: _isLoading ? null : _createAndAddProduct,
+                            icon: _isLoading 
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.add, size: 18),
+                            label: const Text('Add Product'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange[600],
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                             ),
                           ),
                         ],
                       ),
                     ),
+                  ],
+                  
+                  // Search Results (products not in stock take list)
+                  if (_searchResultsNotInList.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      color: Colors.blue[50],
+                      child: Row(
+                        children: [
+                          Icon(Icons.search, size: 16, color: Colors.blue[700]),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Add from search (${_searchResultsNotInList.length})',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w500,
+                              color: Colors.blue[700],
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(
+                      height: 120,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _searchResultsNotInList.length,
+                        itemBuilder: (context, index) {
+                          final product = _searchResultsNotInList[index];
+                          return Card(
+                            margin: const EdgeInsets.all(4),
+                            child: Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      SizedBox(
+                                        width: 150,
+                                        child: Text(
+                                          product.name,
+                                          style: const TextStyle(fontWeight: FontWeight.w500),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      Text(
+                                        'Current: ${product.stockLevel % 1 == 0 ? product.stockLevel.toInt() : product.stockLevel.toStringAsFixed(2)} ${product.unit}',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    icon: const Icon(Icons.add_circle, color: Colors.green),
+                                    onPressed: () => _addProductToStockTake(product),
+                                    tooltip: 'Add to stock take',
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const Divider(),
+                  ],
+                  
+                  // Stock Take Products
+                  Expanded(
+                    child: _filteredStockTakeProducts.isEmpty
+                        ? Center(
+                            child: Text(
+                              _searchQuery.isEmpty
+                                  ? 'No products in stock take'
+                                  : 'No products match your search',
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                          )
+                        : ListView.builder(
+                            itemCount: _filteredStockTakeProducts.length,
+                            itemBuilder: (context, index) {
+                              final product = _filteredStockTakeProducts[index];
+                              final controller = _controllers[product.id];
+                              final originalStock = _originalStock[product.id] ?? 0.0;
+                              if (controller == null) return const SizedBox.shrink();
+                  
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        children: [
+                          // Main row with product info, count field, difference, delete
+                          Row(
+                            children: [
+                              // Product Info
+                              Expanded(
+                                flex: 2,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      product.name,
+                                      style: const TextStyle(fontWeight: FontWeight.w500),
+                                    ),
+                                    if (product.sku != null)
+                                      Text(
+                                        'SKU: ${product.sku}',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    Text(
+                                      'Current: ${originalStock % 1 == 0 ? originalStock.toInt() : originalStock.toStringAsFixed(2)} ${product.unit}',
+                                      style: TextStyle(
+                                        color: Colors.blue[700],
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    Text(
+                                      'From SHALLOME stock updates',
+                                      style: TextStyle(
+                                        color: Colors.green[600],
+                                        fontSize: 10,
+                                        fontStyle: FontStyle.italic,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              
+                              // Stock Entry Field
+                              Expanded(
+                                child: TextFormField(
+                                  controller: controller,
+                                  decoration: InputDecoration(
+                                    labelText: 'Counted',
+                                    border: const OutlineInputBorder(),
+                                    suffixText: product.unit,
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                  ),
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                                  ],
+                                  onChanged: (value) {
+                                    setState(() {}); // Trigger rebuild for difference calculation
+                                  },
+                                ),
+                              ),
+                              
+                              // Difference Indicator
+                              const SizedBox(width: 8),
+                              SizedBox(
+                                width: 60,
+                                child: Builder(
+                                  builder: (context) {
+                                    final countedText = controller.text;
+                                    if (countedText.isEmpty) return const SizedBox();
+                                    
+                                    final counted = double.tryParse(countedText) ?? 0.0;
+                                    final difference = counted - originalStock;
+                                    
+                                    if (difference.abs() < 0.001) {
+                                      return const Icon(Icons.check, color: Colors.green, size: 20);
+                                    }
+                                    
+                                    return Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          difference > 0 ? Icons.arrow_upward : Icons.arrow_downward,
+                                          color: difference > 0 ? Colors.green : Colors.red,
+                                          size: 16,
+                                        ),
+                                        Text(
+                                          difference.abs() % 1 == 0
+                                              ? difference.abs().toInt().toString()
+                                              : difference.abs().toStringAsFixed(2),
+                                          style: TextStyle(
+                                            color: difference > 0 ? Colors.green : Colors.red,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                              ),
+                              
+                              // Delete Button
+                              const SizedBox(width: 4),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                onPressed: () => _removeProductFromStockTake(product.id),
+                                tooltip: 'Remove from stock take',
+                                iconSize: 20,
+                              ),
+                            ],
+                          ),
+                          
+                          // Comment field row
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _commentControllers[product.id],
+                            decoration: const InputDecoration(
+                              labelText: 'Comments (Optional)',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.comment_outlined, size: 18),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              isDense: true,
+                            ),
+                            style: const TextStyle(fontSize: 14),
+                            maxLines: 1,
+                          ),
+                        ],
+                      ),
+                    ),
                   );
-                },
+                            },
+                          ),
+                  ),
+                ],
               ),
             ),
 
@@ -447,7 +1169,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
             Row(
               children: [
                 Text(
-                  '${filteredProducts.length} products',
+                  '${_stockTakeProducts.length} products in stock take',
                   style: TextStyle(color: Colors.grey[600]),
                 ),
                 const Spacer(),
@@ -471,6 +1193,264 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AddProductDialog extends StatefulWidget {
+  final String productName;
+
+  const _AddProductDialog({required this.productName});
+
+  @override
+  State<_AddProductDialog> createState() => _AddProductDialogState();
+}
+
+class _AddProductDialogState extends State<_AddProductDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _priceController = TextEditingController();
+  
+  String _selectedUnit = 'piece';
+  String _selectedDepartment = 'Vegetables';
+  
+  List<Map<String, dynamic>> _units = [];
+  List<Map<String, dynamic>> _departments = [];
+  bool _isLoadingData = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController.text = widget.productName;
+    _loadBackendData();
+  }
+
+  Future<void> _loadBackendData() async {
+    print('[ADD_PRODUCT] Starting to load backend data...');
+    
+    // Set fallback data immediately to prevent white screen
+    _departments = [
+      {'id': 1, 'name': 'Vegetables'},
+      {'id': 2, 'name': 'Fruits'},
+      {'id': 3, 'name': 'Herbs'},
+      {'id': 4, 'name': 'Dairy'},
+      {'id': 5, 'name': 'Meat'},
+      {'id': 6, 'name': 'Bakery'},
+      {'id': 7, 'name': 'Pantry'},
+      {'id': 8, 'name': 'Beverages'},
+      {'id': 9, 'name': 'Other'},
+    ];
+    _units = [
+      {'id': 1, 'name': 'piece'},
+      {'id': 2, 'name': 'kg'},
+      {'id': 3, 'name': 'g'},
+      {'id': 4, 'name': 'each'},
+      {'id': 5, 'name': 'bunch'},
+      {'id': 6, 'name': 'box'},
+      {'id': 7, 'name': 'bag'},
+      {'id': 8, 'name': 'packet'},
+      {'id': 9, 'name': 'L'},
+    ];
+    _selectedDepartment = 'Vegetables';
+    _selectedUnit = 'piece';
+    
+    // Show dialog immediately with fallback data
+    setState(() {
+      _isLoadingData = false;
+    });
+    
+    // Try to load from backend in background
+    try {
+      print('[ADD_PRODUCT] Attempting to load from API...');
+      final apiService = ApiService();
+      
+      final departments = await apiService.getDepartments();
+      final units = await apiService.getUnitsOfMeasure();
+      
+      print('[ADD_PRODUCT] Successfully loaded ${departments.length} departments and ${units.length} units');
+      print('[ADD_PRODUCT] Units: ${units.map((u) => '${u['name']}(${u['abbreviation']})').join(', ')}');
+      print('[ADD_PRODUCT] Departments: ${departments.map((d) => d['name']).join(', ')}');
+      
+      setState(() {
+        _departments = departments;
+        _units = units;
+        
+        // Update selected values if they exist in new data
+        final validDepartments = _departments.where((d) => d['name'] != null).toList();
+        // Use 'name' field for units since 'abbreviation' is null in backend
+        final validUnits = _units.where((u) => u['name'] != null).toList();
+        
+        print('[ADD_PRODUCT] Valid units after filtering: ${validUnits.map((u) => u['name']).join(', ')}');
+        print('[ADD_PRODUCT] Current selected unit: $_selectedUnit');
+        
+        // Always ensure we have valid selected values
+        if (validDepartments.isNotEmpty) {
+          if (!validDepartments.any((d) => d['name'] == _selectedDepartment)) {
+            _selectedDepartment = validDepartments.first['name'];
+            print('[ADD_PRODUCT] Updated selected department to: $_selectedDepartment');
+          }
+        }
+        
+        if (validUnits.isNotEmpty) {
+          // Check if current selection exists in valid units (by name)
+          if (!validUnits.any((u) => u['name'] == _selectedUnit)) {
+            _selectedUnit = validUnits.first['name'];
+            print('[ADD_PRODUCT] Updated selected unit to: $_selectedUnit');
+          }
+        }
+      });
+      
+      print('[ADD_PRODUCT] Backend data loaded successfully');
+    } catch (e) {
+      print('[ADD_PRODUCT] Failed to load backend data: $e');
+      // Already have fallback data, so just continue
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Using offline data. API error: $e'),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _priceController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add New Product'),
+      content: SizedBox(
+        width: 400,
+        child: _isLoadingData
+            ? const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Loading departments and units...'),
+                ],
+              )
+            : Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Product Name',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Product name is required';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedUnit,
+                      decoration: const InputDecoration(
+                        labelText: 'Unit',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _units.where((unit) => unit['name'] != null).map((unit) => DropdownMenuItem(
+                        value: unit['name'] as String,
+                        child: Text(unit['name'] as String),
+                      )).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedUnit = value!;
+                        });
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _priceController,
+                      decoration: const InputDecoration(
+                        labelText: 'Price',
+                        border: OutlineInputBorder(),
+                        prefixText: 'R ',
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Price is required';
+                        }
+                        final price = double.tryParse(value);
+                        if (price == null || price < 0) {
+                          return 'Enter a valid price';
+                        }
+                        return null;
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              
+              DropdownButtonFormField<String>(
+                value: _selectedDepartment,
+                decoration: const InputDecoration(
+                  labelText: 'Department',
+                  border: OutlineInputBorder(),
+                ),
+                items: _departments.where((dept) => dept['name'] != null).map((dept) => DropdownMenuItem(
+                  value: dept['name'] as String,
+                  child: Text(dept['name'] as String),
+                )).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedDepartment = value!;
+                  });
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        if (!_isLoadingData)
+          ElevatedButton(
+            onPressed: () {
+              if (_formKey.currentState!.validate()) {
+                // Find the selected department to get its ID
+                final selectedDept = _departments.firstWhere(
+                  (d) => d['name'] == _selectedDepartment,
+                  orElse: () => _departments.first,
+                );
+                
+                Navigator.of(context).pop({
+                  'name': _nameController.text.trim(),
+                  'unit': _selectedUnit,
+                  'price': double.parse(_priceController.text),
+                  'department': _selectedDepartment,
+                  'department_id': selectedDept['id'],
+                });
+              }
+            },
+            child: const Text('Create Product'),
+          ),
+      ],
     );
   }
 }

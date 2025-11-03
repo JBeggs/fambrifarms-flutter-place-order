@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Bulk Stock Take
+Comment=Quick access to inventory stock take
+Exec=/home/fambri/Documents/app/fambrifarms-flutter-place-order/bulk_stock_take.sh
+Icon=/home/fambri/Documents/app/fambrifarms-flutter-place-order/web/icons/Icon-512.png
+Path=/home/fambri/Documents/app/fambrifarms-flutter-place-order
+Terminal=false
+StartupNotify=true
+Categories=Office;Utility;
+Keywords=inventory;stock;take;fambri;farms;
+StartupWMClass=com.fambrifarms.order_system

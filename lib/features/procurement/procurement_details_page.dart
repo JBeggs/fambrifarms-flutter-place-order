@@ -40,6 +40,19 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
   List<Map<String, dynamic>> _allSuppliers = [];
   bool _isEditMode = false;
 
+  bool _isInternalSupplierName(String name) {
+    // Treat Fambri Garden (NULL supplier from backend) and any supplier containing 'Fambri' as internal
+    final lower = name.toLowerCase();
+    return lower.contains('fambri garden') || lower.contains('fambri');
+  }
+
+  bool _isInternalSupplierMap(Map<String, dynamic> supplier) {
+    // Prefer ID-based check: null supplier_id represents Fambri Garden in backend
+    if (supplier.containsKey('supplier_id') && supplier['supplier_id'] == null) return true;
+    final name = (supplier['supplier_name'] ?? '').toString();
+    return _isInternalSupplierName(name);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1088,6 +1101,9 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
   Future<void> _buildMarketTripPdf(pw.Document pdf, Map<String, dynamic> printData, [Map<String, dynamic>? supplier]) async {
     print('[PDF BUILD] Building PDF for market trip: ${printData['trip_date']}');
     
+    // Check if this is Fambri Garden (internal supplier) - no buffer needed
+    final isInternalSupplier = supplier != null ? _isInternalSupplierMap(supplier) : false;
+    
     // Capture data before build context
     final tripDate = printData['trip_date'] ?? '';
     final approvedBy = printData['approved_by'] ?? '';
@@ -1097,25 +1113,49 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
     
     // Get all items in a flat list for pagination (filtered by supplier if specified)
     final List<Map<String, dynamic>> allItems = [];
-    groupedItems.forEach((priority, items) {
-      for (var item in items as List) {
+    
+    // If supplier is specified, use supplier items directly (they have needed_quantity)
+    if (supplier != null) {
+      final supplierItems = supplier['items'] as List? ?? [];
+      print('[PDF BUILD] Processing ${supplierItems.length} items for supplier: ${supplier['supplier_name']}');
+      
+      for (var item in supplierItems) {
         final itemMap = item as Map<String, dynamic>;
         
-        // If supplier is specified, only include items for that supplier
-        if (supplier != null) {
-          final supplierItems = supplier['items'] as List? ?? [];
-          final matchingItem = supplierItems.any((supplierItem) => 
-            supplierItem['product_name'] == itemMap['product_name']);
-          
-          if (!matchingItem) continue; // Skip items not for this supplier
+        // Debug: check if needed_quantity exists
+        if (!itemMap.containsKey('needed_quantity')) {
+          print('[PDF BUILD] WARNING: Item ${itemMap['product_name']} missing needed_quantity');
+        } else {
+          print('[PDF BUILD] Item ${itemMap['product_name']}: needed=${itemMap['needed_quantity']}, recommended=${itemMap['recommended_quantity']}');
         }
+        
+        // Try to find priority from groupedItems
+        String priority = 'medium';
+        groupedItems.forEach((p, items) {
+          for (var groupedItem in items as List) {
+            if (groupedItem['product_name'] == itemMap['product_name']) {
+              priority = p;
+            }
+          }
+        });
         
         allItems.add({
           ...itemMap,
           'priority': priority,
         });
       }
-    });
+    } else {
+      // No supplier specified - use all grouped items
+      groupedItems.forEach((priority, items) {
+        for (var item in items as List) {
+          final itemMap = item as Map<String, dynamic>;
+          allItems.add({
+            ...itemMap,
+            'priority': priority,
+          });
+        }
+      });
+    }
     
     print('[PDF BUILD] Total items to render: ${allItems.length}');
     
@@ -1150,7 +1190,23 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                   child: pw.Row(
                     children: [
                       pw.Expanded(flex: 4, child: pw.Text(item['product_name'], style: const pw.TextStyle(fontSize: 10))),
-                      pw.Expanded(flex: 2, child: pw.Text(_formatPracticalQuantity(double.tryParse(item['recommended_quantity']?.toString() ?? '0') ?? 0.0, item['unit']?.toString() ?? 'units'), style: const pw.TextStyle(fontSize: 10))),
+                      pw.Expanded(
+                        flex: 3,
+                        child: () {
+                          final unitStr = (item['unit'] ?? '').toString();
+                          final recommended = double.tryParse((item['recommended_quantity'] ?? '0').toString()) ?? 0.0;
+                          
+                          // Show buffer only for external suppliers (not Fambri Garden)
+                          final qtyText = isInternalSupplier
+                              ? _formatPracticalQuantity(recommended, unitStr)
+                              : () {
+                                  final needed = double.tryParse((item['needed_quantity'] ?? '0').toString()) ?? 0.0;
+                                  final bufferQty = (recommended - needed);
+                                  return _formatPracticalQuantity(recommended, unitStr) + (bufferQty > 0 ? ' (+${_formatPracticalQuantity(bufferQty, unitStr)} buffer)' : '');
+                                }();
+                          return pw.Text(qtyText, style: const pw.TextStyle(fontSize: 10));
+                        }(),
+                      ),
                       pw.Expanded(flex: 2, child: pw.Text(priority.toUpperCase(), style: pw.TextStyle(fontSize: 10, color: _getPdfPriorityColor(priority)))),
                     ],
                   ),
@@ -1993,7 +2049,7 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: supplier['supplier_name'] == 'Fambri Farms Internal'
+                    colors: _isInternalSupplierMap(supplier)
                         ? [const Color(0xFF2D5016), const Color(0xFF2D5016).withOpacity(0.8)]
                         : [Colors.blue.shade700, Colors.blue.shade800],
                     begin: Alignment.topLeft,
@@ -2014,7 +2070,7 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Icon(
-                        supplier['supplier_name'] == 'Fambri Farms Internal' 
+                        _isInternalSupplierMap(supplier)
                             ? Icons.agriculture 
                             : Icons.business,
                         color: Colors.white,
@@ -2036,7 +2092,7 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            supplier['supplier_name'] == 'Fambri Farms Internal'
+                            _isInternalSupplierMap(supplier)
                                 ? '🌱 Internal Supply • Fresh from our farms'
                                 : '🚚 External Supplier • Market sourced',
                             style: const TextStyle(
@@ -2109,12 +2165,12 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                       Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: supplier['supplier_name'] == 'Fambri Farms Internal'
+                          color: _isInternalSupplierMap(supplier)
                               ? const Color(0xFF2D5016).withOpacity(0.1)
                               : Colors.blue.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: supplier['supplier_name'] == 'Fambri Farms Internal'
+                            color: _isInternalSupplierMap(supplier)
                                 ? const Color(0xFF2D5016).withOpacity(0.3)
                                 : Colors.blue.withOpacity(0.3),
                           ),
@@ -2125,7 +2181,7 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                             Row(
                               children: [
                                 Icon(Icons.scale, 
-                                  color: supplier['supplier_name'] == 'Fambri Farms Internal'
+                                  color: _isInternalSupplierMap(supplier)
                                       ? const Color(0xFF2D5016)
                                       : Colors.blue, 
                                   size: 16),
@@ -2133,7 +2189,7 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                                 Text('📦 Kg Products (Total by Weight)', 
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold, 
-                                    color: supplier['supplier_name'] == 'Fambri Farms Internal'
+                                    color: _isInternalSupplierMap(supplier)
                                         ? const Color(0xFF2D5016)
                                         : Colors.blue,
                                   )),
@@ -2141,7 +2197,7 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                   decoration: BoxDecoration(
-                                    color: supplier['supplier_name'] == 'Fambri Farms Internal'
+                                    color: _isInternalSupplierMap(supplier)
                                         ? const Color(0xFF2D5016).withOpacity(0.2)
                                         : Colors.blue.withOpacity(0.2),
                                     borderRadius: BorderRadius.circular(12),
@@ -2150,7 +2206,7 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                                     '${((supplierProcessed['totalKg'] as double) * 2).ceil() / 2} kg',
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold, 
-                                      color: supplier['supplier_name'] == 'Fambri Farms Internal'
+                                      color: _isInternalSupplierMap(supplier)
                                           ? const Color(0xFF2D5016)
                                           : Colors.blue, 
                                       fontSize: 12,
@@ -2532,14 +2588,14 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                               width: 40,
                               height: 40,
                               decoration: BoxDecoration(
-                                color: supplier['supplier_name'] == 'Fambri Farms Internal' 
+                                color: _isInternalSupplierMap(supplier)
                                     ? const Color(0xFF2D5016).withOpacity(0.2)
                                     : Colors.blue.withOpacity(0.2),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Icon(
-                                supplier['supplier_name'] == 'Fambri Farms Internal' ? Icons.agriculture : Icons.business,
-                                color: supplier['supplier_name'] == 'Fambri Farms Internal' 
+                                _isInternalSupplierMap(supplier) ? Icons.agriculture : Icons.business,
+                                color: _isInternalSupplierMap(supplier)
                                     ? const Color(0xFF2D5016) 
                                     : Colors.blue,
                                 size: 20,
@@ -2555,7 +2611,7 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
                                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                                   ),
                                   Text(
-                                    supplier['supplier_name'] == 'Fambri Farms Internal' 
+                                    _isInternalSupplierMap(supplier) 
                                         ? '🌱 Internal Supply' 
                                         : '🚚 External Supplier',
                                     style: TextStyle(fontSize: 12, color: Colors.grey[600]),
@@ -3071,17 +3127,27 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
 
     if (confirmed == true) {
       try {
-        final apiService = ref.read(apiServiceProvider);
-        final result = await apiService.deleteMarketRecommendation(widget.recommendation.id);
+        // Use procurement provider to delete and update state
+        final procurementNotifier = ref.read(procurementProvider.notifier);
+        final success = await procurementNotifier.deleteRecommendation(widget.recommendation.id);
         
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('✅ ${result['message']}'),
-              backgroundColor: Colors.green,
-            ),
-          );
-          context.pop(); // Go back to procurement page
+          if (success) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('✅ Market trip deleted successfully'),
+                backgroundColor: Colors.green,
+              ),
+            );
+            context.pop(); // Go back to procurement page - dashboard will now be updated
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('❌ Failed to delete market trip'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
         }
       } catch (e) {
         if (mounted) {
@@ -3149,6 +3215,7 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
 
   Map<String, dynamic> _processSupplierData(Map<String, dynamic> supplier) {
     final items = supplier['items'] as List;
+    final supplierName = supplier['supplier_name'] ?? '';
     
     // Separate kg products from count products
     final kgItems = <Map<String, dynamic>>[];
@@ -3159,17 +3226,23 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
     final Set<String> otherProductTypes = <String>{};
     
     for (final item in items) {
+      // Add supplier_name to each item so buffer calculations know context
+      final itemWithSupplier = <String, dynamic>{
+        ...item,
+        'supplier_name': supplierName,
+      };
+      
       final unit = (item['unit'] as String? ?? 'piece').toLowerCase();
       
       // Only treat as kg if the unit is actually kg
       if (unit == 'kg') {
-        kgItems.add(item);
+        kgItems.add(itemWithSupplier);
         // Sum up kg quantities  
         final quantity = double.tryParse(item['recommended_quantity']?.toString() ?? '0') ?? 0.0;
         totalKg += quantity;
       } else {
         // All other units (punnet, packet, bunch, etc.) go to other items
-        otherItems.add(item);
+        otherItems.add(itemWithSupplier);
         // Count total items
         final quantity = double.tryParse(item['recommended_quantity']?.toString() ?? '0') ?? 0.0;
         otherProductCount += quantity.toInt();
@@ -3215,6 +3288,13 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
   }
 
   String _calculateBufferDisplay(Map<String, dynamic> item, bool isKgItem) {
+    // Check if this is Fambri Garden - no buffer shown for internal supplier
+    final supplierName = item['supplier_name']?.toString() ?? '';
+    final isFambri = supplierName.toLowerCase().contains('fambri') || supplierName.toLowerCase().contains('garden');
+    if (isFambri) {
+      return '0'; // No buffer for internal stock
+    }
+    
     final neededQuantity = double.tryParse(item['needed_quantity']?.toString() ?? '0') ?? 0.0;
     final recommendedQuantity = double.tryParse(item['recommended_quantity']?.toString() ?? '0') ?? 0.0;
     final buffer = recommendedQuantity - neededQuantity;

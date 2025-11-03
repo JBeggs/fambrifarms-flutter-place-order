@@ -705,7 +705,7 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
   void _showBulkStockTake(BuildContext context) {
     final inventoryState = ref.read(inventoryProvider);
     
-    // Filter to only show products with stock > 0
+    // Filter to only show products with stock > 0 (users can still search and add others)
     final productsWithStock = inventoryState.products.where((product) {
       return product.stockLevel > 0;
     }).toList();
@@ -713,11 +713,11 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
     if (productsWithStock.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No products with stock found. Process WhatsApp stock messages first.'),
+          content: Text('No products with stock found. Use search to add products.'),
           backgroundColor: Colors.orange,
         ),
       );
-      return;
+      // Still show dialog even if empty - users can search and add products
     }
     
     showDialog(
@@ -1660,7 +1660,13 @@ class _StockReportDialog extends StatelessWidget {
     int lowStockProducts,
   ) async {
     try {
+      // Generate filename with current date
+      final now = DateTime.now();
+      final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final filename = 'FambriStock_$dateStr.pdf';
+      
       await Printing.layoutPdf(
+        name: filename,
         onLayout: (PdfPageFormat format) async {
           final pdf = pw.Document();
           
@@ -1723,7 +1729,6 @@ class _StockReportDialog extends StatelessWidget {
                             pw.Text('In Stock: ${inStockProducts.length}', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
                             pw.Text('Good Stock: $goodStockProducts', style: const pw.TextStyle(fontSize: 10, color: PdfColors.green)),
                             pw.Text('Low Stock: $lowStockProducts', style: const pw.TextStyle(fontSize: 10, color: PdfColors.orange)),
-                            pw.Text('Total Value: R${totalValue.toStringAsFixed(2)}', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
                           ],
                         ),
                         pw.SizedBox(height: 12),
@@ -1749,7 +1754,6 @@ class _StockReportDialog extends StatelessWidget {
                             pw.Expanded(flex: 4, child: pw.Text('Product', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
                             pw.Expanded(flex: 2, child: pw.Text('Current Stock', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
                             pw.Expanded(flex: 2, child: pw.Text('Min Stock', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
-                            pw.Expanded(flex: 2, child: pw.Text('Value', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
                             pw.Expanded(flex: 1, child: pw.Text('Status', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
                           ],
                         ),
@@ -1778,10 +1782,6 @@ class _StockReportDialog extends StatelessWidget {
                               pw.Expanded(
                                 flex: 2,
                                 child: pw.Text('${product.minimumStock.toStringAsFixed(1)} ${product.unit}', style: const pw.TextStyle(fontSize: 8)),
-                              ),
-                              pw.Expanded(
-                                flex: 2,
-                                child: pw.Text('R${value.toStringAsFixed(2)}', style: const pw.TextStyle(fontSize: 8)),
                               ),
                               pw.Expanded(
                                 flex: 1,

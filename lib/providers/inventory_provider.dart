@@ -70,7 +70,7 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
         id: -1, 
         name: 'Not found', 
         price: 0.0,
-        unit: 'units',
+        unit: 'each',
         department: 'Unknown'
       )
     );
@@ -100,7 +100,7 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
           stockLevel: _parseQuantity(stockData['available_quantity']),
           minimumStock: _parseQuantity(stockData['minimum_level']),
           price: _parseQuantity(stockData['average_cost']),
-          unit: stockData['unit'] as String? ?? 'units',
+          unit: stockData['unit'] as String? ?? 'each',
         );
       }).toList();
       
@@ -202,7 +202,7 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
       
       await _apiService.adjustStock(productId, {
         'adjustment_type': adjustment_type,
-        'quantity': quantity.toInt(),
+        'quantity': quantity,
         'reason': reason,
         'notes': finalNotes,
       });
@@ -233,44 +233,64 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
 
   Future<void> bulkStockTake(List<Map<String, dynamic>> entries) async {
     try {
-      // Process entries in batches of 5
-      for (var i = 0; i < entries.length; i += 5) {
-        final batch = entries.skip(i).take(5);
-        final futures = <Future>[];
-
-        for (final entry in batch) {
-          final productId = entry['product_id'] as int;
-          final countedQuantity = entry['counted_quantity'] as int;
-          final currentStock = entry['current_stock'] as int;
-          
-          // Calculate difference
-          final difference = countedQuantity - currentStock;
-          
-          if (difference != 0) {  // Only adjust if there's a difference
-            final isIncrease = difference > 0;
-            final adjustmentType = isIncrease ? 'finished_adjust' : 'finished_waste';
-            final quantity = difference.abs();
-            
-            // Create stock adjustment with all required fields
-            futures.add(
-              _apiService.adjustStock(productId, {
-                'adjustment_type': adjustmentType,
-                'quantity': quantity,
-                'reason': 'stock_take',
-                'notes': 'Bulk stock take adjustment: Counted $countedQuantity vs Current $currentStock',
-              })
-            );
-          }
-        }
-
-        // Wait for the current batch to complete
-        if (futures.isNotEmpty) {
-          await Future.wait(futures);
+      print('[INVENTORY] Starting complete stock take with ${entries.length} entries');
+      
+      // Step 1: Get all product IDs that were counted
+      final countedProductIds = entries.map((entry) => entry['product_id'] as int).toSet();
+      print('[INVENTORY] Products being counted: ${countedProductIds.length}');
+      
+      // Step 2: Reset ALL products to zero first (complete stock take)
+      print('[INVENTORY] Resetting all products to zero for complete stock take');
+      final allProducts = state.products;
+      final resetFutures = <Future>[];
+      
+      for (final product in allProducts) {
+        if (product.stockLevel > 0) {
+          resetFutures.add(
+            _apiService.adjustStock(product.id, {
+              'adjustment_type': 'finished_waste',
+              'quantity': product.stockLevel,
+              'reason': 'complete_stock_take_reset',
+              'notes': 'Complete stock take: Reset to zero before applying counted quantities',
+            })
+          );
         }
       }
+      
+      // Wait for all resets to complete
+      if (resetFutures.isNotEmpty) {
+        await Future.wait(resetFutures);
+        print('[INVENTORY] Reset ${resetFutures.length} products to zero');
+      }
+      
+      // Step 3: Set counted quantities (only products with stock > 0)
+      print('[INVENTORY] Setting counted quantities');
+      final setFutures = <Future>[];
+      
+      for (final entry in entries) {
+        final productId = entry['product_id'] as int;
+        final countedQuantity = (entry['counted_quantity'] as double);
+        
+        if (countedQuantity > 0) {
+          setFutures.add(
+            _apiService.adjustStock(productId, {
+              'adjustment_type': 'finished_adjust',
+              'quantity': countedQuantity,
+              'reason': 'complete_stock_take_set',
+              'notes': 'Complete stock take: Set counted quantity to $countedQuantity${entry['comment']?.isNotEmpty == true ? '. ${entry['comment']}' : ''}',
+            })
+          );
+        }
+      }
+      
+      // Wait for all sets to complete
+      if (setFutures.isNotEmpty) {
+        await Future.wait(setFutures);
+        print('[INVENTORY] Set ${setFutures.length} products to counted quantities');
+      }
 
-      // Force a complete refresh after all batches are done
-      await Future.delayed(const Duration(milliseconds: 500)); // Give backend time to process
+      // Force a complete refresh after all operations are done
+      await Future.delayed(const Duration(milliseconds: 1000)); // Give backend time to process
       await loadStockLevels();
     } catch (e) {
       state = state.copyWith(error: 'Failed to complete bulk stock take: $e');
@@ -282,7 +302,7 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
   Future<void> updateProductStock(int productId, double newStockLevel, String reason) async {
     try {
       // Update product stock level in database
-      await _apiService.updateProduct(productId, {'stock_level': newStockLevel.toInt()});
+      await _apiService.updateProduct(productId, {'stock_level': newStockLevel});
       
       // Log the stock adjustment (if API exists)
       try {

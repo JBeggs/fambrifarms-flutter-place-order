@@ -4,6 +4,8 @@ import '../../../providers/orders_provider.dart';
 import '../../../providers/customers_provider.dart';
 import '../../../providers/products_provider.dart';
 import '../../../services/api_service.dart';
+import '../../../services/pdf_service.dart';
+import '../../../services/excel_service.dart';
 import '../../../widgets/common/error_display.dart';
 import '../../../models/order.dart';
 import 'product_selector.dart';
@@ -149,10 +151,51 @@ class _CreateOrderDialogState extends ConsumerState<CreateOrderDialog> {
     final newOrder = await ordersNotifier.createOrder(orderData);
 
     if (newOrder != null && mounted) {
+      // Generate PDF and Excel automatically for manual orders too
+      String? pdfPath;
+      String? excelPath;
+      
+      try {
+        pdfPath = await PdfService.generateOrderPdf(newOrder);
+      } catch (e) {
+        print('[ORDER PDF] Error generating PDF for manual order: $e');
+        // Don't fail the order creation if PDF generation fails
+      }
+      
+      try {
+        excelPath = await ExcelService.generateOrderExcel(newOrder);
+      } catch (e) {
+        print('[ORDER EXCEL] Error generating Excel for manual order: $e');
+        // Don't fail the order creation if Excel generation fails
+      }
+      
+      final filesMessage = _buildFilesMessage(pdfPath, excelPath);
+      
       Navigator.of(context).pop(newOrder);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Order created successfully')),
+        SnackBar(
+          content: Text('Order created successfully!$filesMessage'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+        ),
       );
+    }
+  }
+
+  /// Build message for file generation results
+  String _buildFilesMessage(String? pdfPath, String? excelPath) {
+    if (pdfPath != null && excelPath != null) {
+      final pdfFileName = pdfPath.split('/').last;
+      final excelFileName = excelPath.split('/').last;
+      return ' PDF saved: $pdfFileName, Excel saved: $excelFileName';
+    } else if (pdfPath != null) {
+      final pdfFileName = pdfPath.split('/').last;
+      return ' PDF saved: $pdfFileName (Excel generation failed)';
+    } else if (excelPath != null) {
+      final excelFileName = excelPath.split('/').last;
+      return ' Excel saved: $excelFileName (PDF generation failed)';
+    } else {
+      return ' (File generation failed - check console)';
     }
   }
 

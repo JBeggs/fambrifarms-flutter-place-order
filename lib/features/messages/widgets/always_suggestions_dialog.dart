@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../services/api_service.dart';
+import '../../../services/pdf_service.dart';
+import '../../../services/excel_service.dart';
 import '../../../utils/messages_provider.dart';
 
 class AlwaysSuggestionsDialog extends ConsumerStatefulWidget {
@@ -1092,11 +1094,37 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       
       if (mounted) {
         if (result['status'] == 'success') {
+          // Get the created order ID for PDF and Excel generation
+          final orderId = result['order_id'];
+          String filesMessage = '';
+          
+          // Generate PDF and Excel automatically if order ID is available
+          if (orderId != null) {
+            String? pdfPath;
+            String? excelPath;
+            
+            try {
+              pdfPath = await _generateOrderPdf(orderId);
+            } catch (e) {
+              print('[ORDER PDF] Error generating PDF: $e');
+              // Don't fail the order creation if PDF generation fails
+            }
+            
+            try {
+              excelPath = await _generateOrderExcel(orderId);
+            } catch (e) {
+              print('[ORDER EXCEL] Error generating Excel: $e');
+              // Don't fail the order creation if Excel generation fails
+            }
+            
+            filesMessage = _buildFilesMessage(pdfPath, excelPath);
+          }
+          
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Order created successfully! ${result['message'] ?? ''}'),
+              content: Text('Order created successfully!${result['message'] ?? ''}$filesMessage'),
               backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
+              duration: const Duration(seconds: 4),
             ),
           );
           
@@ -1133,6 +1161,77 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           _isProcessing = false;
         });
       }
+    }
+  }
+
+  /// Generate PDF for the created order
+  Future<String?> _generateOrderPdf(int orderId) async {
+    try {
+      print('[ORDER PDF] Fetching order data for ID: $orderId');
+      
+      // Fetch the complete order data from API
+      final apiService = ApiService();
+      final order = await apiService.getOrder(orderId);
+      
+      print('[ORDER PDF] Order fetched: ${order.orderNumber}');
+      
+      // Generate PDF using the PDF service
+      final pdfPath = await PdfService.generateOrderPdf(order);
+      
+      if (pdfPath != null) {
+        print('[ORDER PDF] PDF generated successfully: $pdfPath');
+        return pdfPath;
+      } else {
+        print('[ORDER PDF] PDF generation returned null');
+        return null;
+      }
+    } catch (e) {
+      print('[ORDER PDF] Error generating PDF: $e');
+      return null;
+    }
+  }
+
+  /// Generate Excel for the created order
+  Future<String?> _generateOrderExcel(int orderId) async {
+    try {
+      print('[ORDER EXCEL] Fetching order data for ID: $orderId');
+      
+      // Fetch the complete order data from API
+      final apiService = ApiService();
+      final order = await apiService.getOrder(orderId);
+      
+      print('[ORDER EXCEL] Order fetched: ${order.orderNumber}');
+      
+      // Generate Excel using the Excel service
+      final excelPath = await ExcelService.generateOrderExcel(order);
+      
+      if (excelPath != null) {
+        print('[ORDER EXCEL] Excel generated successfully: $excelPath');
+        return excelPath;
+      } else {
+        print('[ORDER EXCEL] Excel generation returned null');
+        return null;
+      }
+    } catch (e) {
+      print('[ORDER EXCEL] Error generating Excel: $e');
+      return null;
+    }
+  }
+
+  /// Build message for file generation results
+  String _buildFilesMessage(String? pdfPath, String? excelPath) {
+    if (pdfPath != null && excelPath != null) {
+      final pdfFileName = pdfPath.split('/').last;
+      final excelFileName = excelPath.split('/').last;
+      return ' PDF saved: $pdfFileName, Excel saved: $excelFileName';
+    } else if (pdfPath != null) {
+      final pdfFileName = pdfPath.split('/').last;
+      return ' PDF saved: $pdfFileName (Excel generation failed)';
+    } else if (excelPath != null) {
+      final excelFileName = excelPath.split('/').last;
+      return ' Excel saved: $excelFileName (PDF generation failed)';
+    } else {
+      return ' (File generation failed - check console)';
     }
   }
 

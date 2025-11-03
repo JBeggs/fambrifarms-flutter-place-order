@@ -70,7 +70,7 @@ class Product {
       description: _parseString(json['description']),
       sku: _parseString(json['sku']),
       price: _parseDouble(json['price'] ?? 0.0),
-      unit: _parseString(json['unit'] ?? json['unit_of_measure'], 'each'),
+      unit: _parseString(json['unit'], '') != '' ? _parseString(json['unit'], '') : _parseString(json['unit_of_measure'], 'each'),
       department: _parseString(json['department_name'] ?? json['department'], 'Other'),
       isActive: json['is_active'] ?? true,
       stockLevel: _parseDouble(json['stock_level'] ?? 0.0),
