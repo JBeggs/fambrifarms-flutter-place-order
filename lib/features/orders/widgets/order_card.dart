@@ -1374,8 +1374,9 @@ class OrderCard extends ConsumerWidget {
       print('[PDF SAVE] PDF generated, size: ${bytes.length} bytes');
       print('[PDF SAVE] Opening file picker dialog...');
       
-      // Generate default filename
-      final defaultFileName = 'Order_${order.orderNumber}.pdf';
+      // Generate default filename with restaurant name
+      final restaurantName = order.restaurant?.name?.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_') ?? 'Unknown';
+      final defaultFileName = '${restaurantName}_${order.orderNumber}.pdf';
       
       // Platform-specific file picker behavior
       String? outputPath;

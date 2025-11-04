@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:excel/excel.dart' as excel;
 import '../../../models/product.dart';
 import '../../../providers/inventory_provider.dart';
+import '../../../providers/products_provider.dart';
 import '../../../services/api_service.dart';
 
 class BulkStockTakeDialog extends ConsumerStatefulWidget {
@@ -25,6 +27,8 @@ class BulkStockTakeDialog extends ConsumerStatefulWidget {
 class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   final Map<int, TextEditingController> _controllers = {};
   final Map<int, TextEditingController> _commentControllers = {};
+  final Map<int, TextEditingController> _wastageControllers = {};
+  final Map<int, String> _wastageReasons = {};
   final Map<int, double> _originalStock = {};
   // Dynamic list of products in stock take (can be added/removed)
   List<Product> _stockTakeProducts = [];
@@ -41,21 +45,238 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     // Initialize with products that have stock (passed from parent)
     _stockTakeProducts = List.from(widget.products);
     
-    // Load all products from inventory provider for search
-    final inventoryState = ref.read(inventoryProvider);
-    _allProducts = inventoryState.products;
+    // Load ALL products from products provider for search (not just inventory)
+    final productsState = ref.read(productsProvider);
+    _allProducts = productsState.products;
+    
+    // Debug: Print all products to see what's loaded
+    print('[BULK_STOCK_TAKE] Loaded ${_allProducts.length} products for search (from products provider)');
+    final blueberryProducts = _allProducts.where((p) => p.name.toLowerCase().contains('blueberry')).toList();
+    final cabbageProducts = _allProducts.where((p) => p.name.toLowerCase().contains('cabbage')).toList();
+    final pineappleProducts = _allProducts.where((p) => p.name.toLowerCase().contains('pineapple')).toList();
+    print('[BULK_STOCK_TAKE] Found ${blueberryProducts.length} Blueberry products: ${blueberryProducts.map((p) => p.name).join(', ')}');
+    print('[BULK_STOCK_TAKE] Found ${cabbageProducts.length} Cabbage products: ${cabbageProducts.map((p) => p.name).join(', ')}');
+    print('[BULK_STOCK_TAKE] Found ${pineappleProducts.length} Pineapple products: ${pineappleProducts.map((p) => p.name).join(', ')}');
+    
+    // Print ALL product names for debugging
+    print('[BULK_STOCK_TAKE] ALL PRODUCTS: ${_allProducts.map((p) => '${p.name}(${p.isActive ? "active" : "INACTIVE"})').join(', ')}');
+    
+    // Check specifically for inactive products
+    final inactiveProducts = _allProducts.where((p) => !p.isActive).toList();
+    print('[BULK_STOCK_TAKE] INACTIVE PRODUCTS: ${inactiveProducts.length} found: ${inactiveProducts.map((p) => p.name).join(', ')}');
+    
+    // Refresh inventory data to ensure we have the latest products
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshProductsList();
+    });
     
     for (final product in _stockTakeProducts) {
       _controllers[product.id] = TextEditingController();
       _commentControllers[product.id] = TextEditingController(); // Initialize comment controllers
+      _wastageControllers[product.id] = TextEditingController(); // Initialize wastage controllers
+      _wastageReasons[product.id] = 'Spoilage'; // Default wastage reason
       _originalStock[product.id] = product.stockLevel;
       _controllers[product.id]!.text = product.stockLevel % 1 == 0
           ? product.stockLevel.toInt().toString()
           : product.stockLevel.toStringAsFixed(2);
     }
     _loadStockHistory();
+    _loadSavedProgress();
   }
   
+  // Save current progress to file
+  Future<void> _saveProgress() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/bulk_stock_take_progress.json');
+      
+      final progressData = {
+        'timestamp': DateTime.now().toIso8601String(),
+        'products': _stockTakeProducts.map((product) {
+          final controller = _controllers[product.id];
+          final commentController = _commentControllers[product.id];
+          final wastageController = _wastageControllers[product.id];
+          
+          return {
+            'id': product.id,
+            'name': product.name,
+            'department': product.department,
+            'unit': product.unit,
+            'stockLevel': product.stockLevel,
+            'minimumStock': product.minimumStock,
+            'price': product.price,
+            'enteredValue': controller?.text ?? '',
+            'comment': commentController?.text ?? '',
+            'wastageValue': wastageController?.text ?? '',
+            'wastageReason': _wastageReasons[product.id] ?? 'Spoilage',
+          };
+        }).toList(),
+      };
+      
+      await file.writeAsString(jsonEncode(progressData));
+      print('[BULK_STOCK_TAKE] Progress saved to ${file.path}');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Progress saved successfully'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Error saving progress: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error saving progress: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+  
+  // Load saved progress from file
+  Future<void> _loadSavedProgress() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/bulk_stock_take_progress.json');
+      
+      if (!await file.exists()) {
+        print('[BULK_STOCK_TAKE] No saved progress file found');
+        return;
+      }
+      
+      final content = await file.readAsString();
+      final progressData = jsonDecode(content) as Map<String, dynamic>;
+      final savedProducts = progressData['products'] as List<dynamic>;
+      
+      print('[BULK_STOCK_TAKE] Found saved progress with ${savedProducts.length} products');
+      
+      // Show dialog to ask if user wants to restore
+      if (mounted && savedProducts.isNotEmpty) {
+        final shouldRestore = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Restore Saved Progress?'),
+            content: Text('Found saved progress from ${DateTime.parse(progressData['timestamp']).toString().split('.')[0]} with ${savedProducts.length} products. Restore it?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('No'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Yes, Restore'),
+              ),
+            ],
+          ),
+        );
+        
+        if (shouldRestore == true) {
+          _restoreProgress(savedProducts);
+        }
+      }
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Error loading saved progress: $e');
+    }
+  }
+  
+  // Restore progress from saved data
+  void _restoreProgress(List<dynamic> savedProducts) {
+    try {
+      setState(() {
+        _stockTakeProducts.clear();
+        _controllers.clear();
+        _commentControllers.clear();
+        _wastageControllers.clear();
+        _wastageReasons.clear();
+        
+        for (final productData in savedProducts) {
+          final product = Product(
+            id: productData['id'],
+            name: productData['name'],
+            department: productData['department'],
+            unit: productData['unit'],
+            stockLevel: (productData['stockLevel'] as num).toDouble(),
+            minimumStock: (productData['minimumStock'] as num).toDouble(),
+            price: (productData['price'] as num).toDouble(),
+          );
+          
+          _stockTakeProducts.add(product);
+          
+          final controller = TextEditingController(text: productData['enteredValue']);
+          final commentController = TextEditingController(text: productData['comment']);
+          final wastageController = TextEditingController(text: productData['wastageValue']);
+          
+          _controllers[product.id] = controller;
+          _commentControllers[product.id] = commentController;
+          _wastageControllers[product.id] = wastageController;
+          _wastageReasons[product.id] = productData['wastageReason'];
+          _originalStock[product.id] = product.stockLevel;
+        }
+      });
+      
+      print('[BULK_STOCK_TAKE] Restored ${savedProducts.length} products from saved progress');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Restored ${savedProducts.length} products from saved progress'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Error restoring progress: $e');
+    }
+  }
+  
+  // Clear saved progress file
+  Future<void> _clearSavedProgress() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/bulk_stock_take_progress.json');
+      
+      if (await file.exists()) {
+        await file.delete();
+        print('[BULK_STOCK_TAKE] Cleared saved progress file');
+      }
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Error clearing saved progress: $e');
+    }
+  }
+  
+  // Refresh the products list from products provider (ALL products)
+  Future<void> _refreshProductsList() async {
+    try {
+      print('[BULK_STOCK_TAKE] Refreshing ALL products list...');
+      await ref.read(productsProvider.notifier).loadProducts();
+      
+      final productsState = ref.read(productsProvider);
+      setState(() {
+        _allProducts = productsState.products;
+      });
+      
+      print('[BULK_STOCK_TAKE] Refreshed ${_allProducts.length} products (ALL products from products API)');
+      final blueberryProducts = _allProducts.where((p) => p.name.toLowerCase().contains('blueberry')).toList();
+      final cabbageProducts = _allProducts.where((p) => p.name.toLowerCase().contains('cabbage')).toList();
+      final pineappleProducts = _allProducts.where((p) => p.name.toLowerCase().contains('pineapple')).toList();
+      print('[BULK_STOCK_TAKE] After refresh - Found ${blueberryProducts.length} Blueberry products: ${blueberryProducts.map((p) => p.name).join(', ')}');
+      print('[BULK_STOCK_TAKE] After refresh - Found ${cabbageProducts.length} Cabbage products: ${cabbageProducts.map((p) => p.name).join(', ')}');
+      print('[BULK_STOCK_TAKE] After refresh - Found ${pineappleProducts.length} Pineapple products: ${pineappleProducts.map((p) => p.name).join(', ')}');
+      
+      // Print ALL product names after refresh for debugging
+      print('[BULK_STOCK_TAKE] ALL PRODUCTS AFTER REFRESH: ${_allProducts.map((p) => p.name).join(', ')}');
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Error refreshing products: $e');
+    }
+  }
+
   // Add a product to the stock take list
   void _addProductToStockTake(Product product) {
     if (_stockTakeProducts.any((p) => p.id == product.id)) {
@@ -67,6 +288,8 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       _stockTakeProducts.add(product);
       _controllers[product.id] = TextEditingController();
       _commentControllers[product.id] = TextEditingController(); // Initialize comment controller for new products
+      _wastageControllers[product.id] = TextEditingController(); // Initialize wastage controller for new products
+      _wastageReasons[product.id] = 'Spoilage'; // Default wastage reason for new products
       _originalStock[product.id] = product.stockLevel;
       _controllers[product.id]!.text = product.stockLevel % 1 == 0
           ? product.stockLevel.toInt().toString()
@@ -110,6 +333,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     for (final controller in _commentControllers.values) {
       controller.dispose(); // Dispose all comment controllers
     }
+    for (final controller in _wastageControllers.values) {
+      controller.dispose(); // Dispose all wastage controllers
+    }
     super.dispose();
   }
 
@@ -132,13 +358,24 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     final query = _searchQuery.toLowerCase();
     final stockTakeIds = _stockTakeProducts.map((p) => p.id).toSet();
     
-    return _allProducts.where((product) {
+    final results = _allProducts.where((product) {
       final name = product.name.toLowerCase();
       final sku = product.sku?.toLowerCase() ?? '';
       final matchesSearch = name.contains(query) || sku.contains(query);
       final notInList = !stockTakeIds.contains(product.id);
       return matchesSearch && notInList;
     }).toList();
+    
+    // Debug search results
+    print('[BULK_STOCK_TAKE] Search query: "$query"');
+    print('[BULK_STOCK_TAKE] Total products to search: ${_allProducts.length}');
+    print('[BULK_STOCK_TAKE] Products already in stock take: ${stockTakeIds.length}');
+    print('[BULK_STOCK_TAKE] Search results: ${results.length}');
+    if (results.isNotEmpty) {
+      print('[BULK_STOCK_TAKE] Found products: ${results.map((p) => p.name).join(', ')}');
+    }
+    
+    return results;
   }
 
   // Check if search query doesn't match any existing products
@@ -595,11 +832,18 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         final commentController = _commentControllers[product.id];
         final comment = commentController?.text.trim() ?? '';
         
+        // Get wastage data
+        final wastageController = _wastageControllers[product.id];
+        final wastageQuantity = double.tryParse(wastageController?.text ?? '') ?? 0.0;
+        final wastageReason = _wastageReasons[product.id] ?? 'Spoilage';
+        
         // For complete stock take, include ALL entries with counted quantities
         entries.add({
           'product_id': product.id,
           'counted_quantity': countedQuantity,
           'current_stock': currentStock,
+          'wastage_quantity': wastageQuantity,
+          'wastage_reason': wastageReason,
           'comment': comment, // Include the comment
         });
       }
@@ -644,6 +888,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         print('[STOCK_TAKE] Excel generation failed: $e');
       }
 
+      // Clear saved progress file since stock take is complete
+      await _clearSavedProgress();
+      
       if (mounted) {
         Navigator.of(context).pop(true);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -824,6 +1071,20 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                // Save progress button
+                IconButton(
+                  icon: const Icon(Icons.save),
+                  onPressed: _saveProgress,
+                  tooltip: 'Save progress',
+                ),
+                const SizedBox(width: 8),
+                // Refresh products button
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: _refreshProductsList,
+                  tooltip: 'Refresh products list',
+                ),
+                const SizedBox(width: 8),
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),
                   onSelected: (value) {
@@ -945,7 +1206,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                       ),
                     ),
                     SizedBox(
-                      height: 120,
+                      height: 200,
                       child: ListView.builder(
                         scrollDirection: Axis.horizontal,
                         itemCount: _searchResultsNotInList.length,
@@ -1152,6 +1413,63 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                             ),
                             style: const TextStyle(fontSize: 14),
                             maxLines: 1,
+                          ),
+                          
+                          // Wastage fields row
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              // Wastage quantity field
+                              Expanded(
+                                flex: 2,
+                                child: TextFormField(
+                                  controller: _wastageControllers[product.id],
+                                  decoration: const InputDecoration(
+                                    labelText: 'Wastage Qty',
+                                    border: OutlineInputBorder(),
+                                    prefixIcon: Icon(Icons.delete_outline, size: 18),
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    isDense: true,
+                                  ),
+                                  style: const TextStyle(fontSize: 14),
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // Wastage reason dropdown
+                              Expanded(
+                                flex: 3,
+                                child: DropdownButtonFormField<String>(
+                                  value: _wastageReasons[product.id],
+                                  decoration: const InputDecoration(
+                                    labelText: 'Wastage Reason',
+                                    border: OutlineInputBorder(),
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 8,
+                                    ),
+                                    isDense: true,
+                                  ),
+                                  style: const TextStyle(fontSize: 14),
+                                  items: const [
+                                    DropdownMenuItem(value: 'Spoilage', child: Text('Spoilage')),
+                                    DropdownMenuItem(value: 'Damage', child: Text('Damage')),
+                                    DropdownMenuItem(value: 'Expiry', child: Text('Expiry')),
+                                    DropdownMenuItem(value: 'Theft', child: Text('Theft')),
+                                    DropdownMenuItem(value: 'Processing Loss', child: Text('Processing Loss')),
+                                    DropdownMenuItem(value: 'Other', child: Text('Other')),
+                                  ],
+                                  onChanged: (value) {
+                                    setState(() {
+                                      _wastageReasons[product.id] = value ?? 'Spoilage';
+                                    });
+                                  },
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

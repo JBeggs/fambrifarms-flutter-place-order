@@ -51,9 +51,10 @@ class ExcelService {
       // Get the orders directory for the specified date (or today)
       final ordersDir = await _getOrdersDirectory(saveDate);
       
-      // Generate unique filename with timestamp
+      // Generate unique filename with restaurant name and timestamp
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final filename = 'Order_${order.orderNumber}_$timestamp.xlsx';
+      final restaurantName = order.restaurant?.name?.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_') ?? 'Unknown';
+      final filename = '${restaurantName}_${order.orderNumber}_$timestamp.xlsx';
       final filePath = '${ordersDir.path}/$filename';
       
       print('[EXCEL SERVICE] Saving to: $filePath');
@@ -93,13 +94,24 @@ class ExcelService {
     print('[EXCEL SERVICE] Building Excel for order: ${order.orderNumber}');
     print('[EXCEL SERVICE] Order has ${order.items.length} items');
     
-    // Remove default sheet if it exists
+    // Debug: List all sheets before creating custom sheet
+    print('[EXCEL SERVICE] Sheets before creating custom sheet: ${excel.sheets.keys.toList()}');
+    
+    // Create main order sheet first
+    final sheet = excel['Order ${order.orderNumber}'];
+    
+    // Debug: List all sheets after creating custom sheet
+    print('[EXCEL SERVICE] Sheets after creating custom sheet: ${excel.sheets.keys.toList()}');
+    
+    // Remove default sheet AFTER creating our custom sheet
     if (excel.sheets.containsKey('Sheet1')) {
       excel.delete('Sheet1');
+      print('[EXCEL SERVICE] Removed default Sheet1');
+      print('[EXCEL SERVICE] Final sheets: ${excel.sheets.keys.toList()}');
+    } else {
+      print('[EXCEL SERVICE] No Sheet1 found to remove');
+      print('[EXCEL SERVICE] Final sheets: ${excel.sheets.keys.toList()}');
     }
-    
-    // Create main order sheet
-    final sheet = excel['Order ${order.orderNumber}'];
     
     // Add order header information
     sheet.cell(CellIndex.indexByString('A1')).value = TextCellValue('ORDER DETAILS');

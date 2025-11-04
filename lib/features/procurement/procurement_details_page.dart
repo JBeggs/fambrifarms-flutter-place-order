@@ -832,13 +832,18 @@ class _ProcurementDetailsPageState extends ConsumerState<ProcurementDetailsPage>
   void _approveRecommendation() async {
     try {
       final apiService = ref.read(apiServiceProvider);
-      await apiService.approveMarketRecommendation(widget.recommendation.id);
+      final result = await apiService.approveMarketRecommendation(widget.recommendation.id);
       
       if (mounted) {
+        final ordersConfirmed = result['orders_confirmed'] ?? 0;
+        final messagesDeleted = result['messages_deleted'] ?? 0;
+        final stockReset = result['stock_reset'] ?? 0;
+        
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Recommendation approved! Ready for market trip.'),
-            backgroundColor: Color(0xFF4CAF50),
+          SnackBar(
+            content: Text('✅ System reset complete!\n• $ordersConfirmed orders confirmed\n• $messagesDeleted messages deleted\n• $stockReset stock items reset\n• Ready for next order day'),
+            backgroundColor: const Color(0xFF4CAF50),
+            duration: const Duration(seconds: 5),
           ),
         );
         context.pop(); // Go back to procurement page

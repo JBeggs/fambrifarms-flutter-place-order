@@ -52,9 +52,10 @@ class PdfService {
       // Get the orders directory for the specified date (or today)
       final ordersDir = await _getOrdersDirectory(saveDate);
       
-      // Generate unique filename with timestamp
+      // Generate unique filename with restaurant name and timestamp
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final filename = 'Order_${order.orderNumber}_$timestamp.pdf';
+      final restaurantName = order.restaurant?.name?.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_') ?? 'Unknown';
+      final filename = '${restaurantName}_${order.orderNumber}_$timestamp.pdf';
       final filePath = '${ordersDir.path}/$filename';
       
       print('[PDF SERVICE] Saving to: $filePath');

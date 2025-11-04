@@ -161,27 +161,17 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
 
   void _showBulkStockTakeDialog() {
     print('[BULK_STOCK_TAKE] 🎯 Showing bulk stock take dialog...');
-    final inventoryState = ref.read(inventoryProvider);
     
-    // Get products with stock > 0
-    final productsWithStock = inventoryState.products.where((product) {
-      return product.stockLevel > 0;
-    }).toList();
-
-    print('[BULK_STOCK_TAKE] Found ${productsWithStock.length} products with stock');
-
-    if (productsWithStock.isEmpty) {
-      print('[BULK_STOCK_TAKE] No products with stock - showing no products dialog');
-      _showNoProductsDialog();
-      return;
-    }
+    // Start with empty list - let the dialog handle loading ALL products via search
+    // This avoids the 43-product limitation from inventory provider
+    print('[BULK_STOCK_TAKE] Starting with empty product list - dialog will load ALL products for search');
 
     print('[BULK_STOCK_TAKE] Opening BulkStockTakeDialog...');
     showDialog(
       context: context,
       barrierDismissible: false, // Prevent dismissing by clicking outside
       builder: (context) => BulkStockTakeDialog(
-        products: productsWithStock,
+        products: [], // Empty list - dialog loads ALL products internally
       ),
     ).then((completed) {
       print('[BULK_STOCK_TAKE] Dialog completed with result: $completed');

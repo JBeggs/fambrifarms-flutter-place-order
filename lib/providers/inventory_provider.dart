@@ -263,30 +263,46 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
         print('[INVENTORY] Reset ${resetFutures.length} products to zero');
       }
       
-      // Step 3: Set counted quantities (only products with stock > 0)
-      print('[INVENTORY] Setting counted quantities');
-      final setFutures = <Future>[];
+      // Step 3: Process wastage and set counted quantities
+      print('[INVENTORY] Processing wastage and setting counted quantities');
+      final adjustmentFutures = <Future>[];
       
       for (final entry in entries) {
         final productId = entry['product_id'] as int;
         final countedQuantity = (entry['counted_quantity'] as double);
+        final wastageQuantity = (entry['wastage_quantity'] as double? ?? 0.0);
+        final wastageReason = entry['wastage_reason'] as String? ?? 'Spoilage';
+        final comment = entry['comment'] as String? ?? '';
         
+        // Record wastage if any
+        if (wastageQuantity > 0) {
+          adjustmentFutures.add(
+            _apiService.adjustStock(productId, {
+              'adjustment_type': 'finished_waste',
+              'quantity': wastageQuantity,
+              'reason': 'stock_take_wastage',
+              'notes': 'Stock take wastage: $wastageReason${comment.isNotEmpty ? '. $comment' : ''}',
+            })
+          );
+        }
+        
+        // Set counted quantities (only products with stock > 0)
         if (countedQuantity > 0) {
-          setFutures.add(
+          adjustmentFutures.add(
             _apiService.adjustStock(productId, {
               'adjustment_type': 'finished_adjust',
               'quantity': countedQuantity,
               'reason': 'complete_stock_take_set',
-              'notes': 'Complete stock take: Set counted quantity to $countedQuantity${entry['comment']?.isNotEmpty == true ? '. ${entry['comment']}' : ''}',
+              'notes': 'Complete stock take: Set counted quantity to $countedQuantity${comment.isNotEmpty ? '. $comment' : ''}',
             })
           );
         }
       }
       
-      // Wait for all sets to complete
-      if (setFutures.isNotEmpty) {
-        await Future.wait(setFutures);
-        print('[INVENTORY] Set ${setFutures.length} products to counted quantities');
+      // Wait for all adjustments to complete
+      if (adjustmentFutures.isNotEmpty) {
+        await Future.wait(adjustmentFutures);
+        print('[INVENTORY] Processed ${adjustmentFutures.length} stock adjustments (wastage + counts)');
       }
 
       // Force a complete refresh after all operations are done
