@@ -30,6 +30,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   final Map<int, TextEditingController> _wastageControllers = {};
   final Map<int, String> _wastageReasons = {};
   final Map<int, double> _originalStock = {};
+  final TextEditingController _searchController = TextEditingController(); // Search field controller
   // Dynamic list of products in stock take (can be added/removed)
   List<Product> _stockTakeProducts = [];
   // All products for searching (loaded from inventory provider)
@@ -81,14 +82,21 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
           : product.stockLevel.toStringAsFixed(2);
     }
     _loadStockHistory();
-    _loadSavedProgress();
+    // Auto-load saved progress after frame is rendered
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSavedProgress(autoLoad: true);
+    });
   }
   
   // Save current progress to file
   Future<void> _saveProgress() async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/bulk_stock_take_progress.json');
+      // Get project root from executable path (level 9 up)
+      final executablePath = Platform.resolvedExecutable;
+      final projectRoot = File(executablePath).parent.parent.parent.parent.parent.parent.parent.parent.parent.path;
+      final file = File('$projectRoot/bulk_stock_take_progress.json');
+      
+      print('[BULK_STOCK_TAKE] Saving to: ${file.path}');
       
       final progressData = {
         'timestamp': DateTime.now().toIso8601String(),
@@ -140,13 +148,26 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   }
   
   // Load saved progress from file
-  Future<void> _loadSavedProgress() async {
+  Future<void> _loadSavedProgress({bool autoLoad = false}) async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/bulk_stock_take_progress.json');
+      // Get project root from executable path (level 9 up)
+      final executablePath = Platform.resolvedExecutable;
+      final projectRoot = File(executablePath).parent.parent.parent.parent.parent.parent.parent.parent.parent.path;
+      final file = File('$projectRoot/bulk_stock_take_progress.json');
+      
+      print('[BULK_STOCK_TAKE] Loading from: ${file.path}');
       
       if (!await file.exists()) {
         print('[BULK_STOCK_TAKE] No saved progress file found');
+        if (!autoLoad && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('❌ No saved progress file found\n${file.path}'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
         return;
       }
       
@@ -156,39 +177,60 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       
       print('[BULK_STOCK_TAKE] Found saved progress with ${savedProducts.length} products');
       
-      // Show dialog to ask if user wants to restore
-      if (mounted && savedProducts.isNotEmpty) {
-        final shouldRestore = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Restore Saved Progress?'),
-            content: Text('Found saved progress from ${DateTime.parse(progressData['timestamp']).toString().split('.')[0]} with ${savedProducts.length} products. Restore it?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('No'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Yes, Restore'),
-              ),
-            ],
-          ),
-        );
-        
-        if (shouldRestore == true) {
-          _restoreProgress(savedProducts);
-        }
+      // Auto-load on init, or ask when manually triggered
+      if (autoLoad) {
+        _restoreProgress(savedProducts);
+      } else {
+        _showRestoreDialog(progressData, savedProducts);
       }
     } catch (e) {
       print('[BULK_STOCK_TAKE] Error loading saved progress: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error loading progress: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+  
+  Future<void> _showRestoreDialog(Map<String, dynamic> progressData, List<dynamic> savedProducts) async {
+    if (!mounted || savedProducts.isEmpty) return;
+    
+    final shouldRestore = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restore Saved Progress?'),
+        content: Text('Found saved progress from ${DateTime.parse(progressData['timestamp']).toString().split('.')[0]} with ${savedProducts.length} products. Restore it?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Yes, Restore'),
+          ),
+        ],
+      ),
+    );
+    
+    if (shouldRestore == true) {
+      _restoreProgress(savedProducts);
     }
   }
   
   // Restore progress from saved data
   void _restoreProgress(List<dynamic> savedProducts) {
     try {
+      // CLEAR THE SEARCH FIRST!
+      _searchController.clear();
+      
       setState(() {
+        _searchQuery = '';  // Clear search query
         _stockTakeProducts.clear();
         _controllers.clear();
         _commentControllers.clear();
@@ -239,8 +281,10 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   // Clear saved progress file
   Future<void> _clearSavedProgress() async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/bulk_stock_take_progress.json');
+      // Get project root from executable path (level 9 up)
+      final executablePath = Platform.resolvedExecutable;
+      final projectRoot = File(executablePath).parent.parent.parent.parent.parent.parent.parent.parent.parent.path;
+      final file = File('$projectRoot/bulk_stock_take_progress.json');
       
       if (await file.exists()) {
         await file.delete();
@@ -327,6 +371,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
 
   @override
   void dispose() {
+    _searchController.dispose(); // Dispose search controller
     for (final controller in _controllers.values) {
       controller.dispose();
     }
@@ -453,6 +498,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       _addProductToStockTake(newProduct);
       
       // Clear search query
+      _searchController.clear();
       setState(() {
         _searchQuery = '';
       });
@@ -484,6 +530,15 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   Future<String?> _generateStockTakePdf(List<Map<String, dynamic>> entries) async {
     try {
       print('[STOCK_TAKE_PDF] Generating PDF for ${entries.length} entries');
+      
+      // Sort entries by product name alphabetically
+      final sortedEntries = List<Map<String, dynamic>>.from(entries)
+        ..sort((a, b) {
+          final productA = _stockTakeProducts.firstWhere((p) => p.id == a['product_id']);
+          final productB = _stockTakeProducts.firstWhere((p) => p.id == b['product_id']);
+          return productA.name.toLowerCase().compareTo(productB.name.toLowerCase());
+        });
+      print('[STOCK_TAKE_PDF] Sorted ${sortedEntries.length} entries alphabetically by product name');
       
       // Get current date for filename
       final now = DateTime.now();
@@ -566,22 +621,22 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                   child: pw.Row(
                     children: [
                       pw.Expanded(flex: 3, child: pw.Text('Product Name', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-                      // pw.Expanded(flex: 2, child: pw.Text('Previous Stock', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
                       pw.Expanded(flex: 2, child: pw.Text('Counted Stock', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-                      // pw.Expanded(flex: 2, child: pw.Text('Difference', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
                       pw.Expanded(flex: 1, child: pw.Text('Unit', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
                       pw.Expanded(flex: 3, child: pw.Text('Comments', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text('Wastage', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text('Wastage Reason', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
                     ],
                   ),
               ),
               
               // Table Rows
-              ...entries.map((entry) {
+              ...sortedEntries.map((entry) {
                 final productId = entry['product_id'] as int;
                 final product = _stockTakeProducts.firstWhere((p) => p.id == productId);
-                final currentStock = entry['current_stock'] as double;
                 final countedStock = entry['counted_quantity'] as double;
-                final difference = countedStock - currentStock;
+                final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
+                final wastageReason = entry['wastage_reason'] as String? ?? '';
                 final comment = entry['comment'] as String? ?? '';
                 
                 return pw.Container(
@@ -594,23 +649,20 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                   child: pw.Row(
                     children: [
                       pw.Expanded(flex: 3, child: pw.Text(product.name, style: const pw.TextStyle(fontSize: 10))),
-                      // pw.Expanded(flex: 2, child: pw.Text(
-                      //   currentStock % 1 == 0 ? currentStock.toInt().toString() : currentStock.toStringAsFixed(2),
-                      //   style: const pw.TextStyle(fontSize: 10),
-                      // )),
                       pw.Expanded(flex: 2, child: pw.Text(
                         countedStock % 1 == 0 ? countedStock.toInt().toString() : countedStock.toStringAsFixed(2),
                         style: const pw.TextStyle(fontSize: 10),
                       )),
-                      // pw.Expanded(flex: 2, child: pw.Text(
-                      //   '${difference >= 0 ? '+' : ''}${difference % 1 == 0 ? difference.toInt().toString() : difference.toStringAsFixed(2)}',
-                      //   style: pw.TextStyle(
-                      //     fontSize: 10,
-                      //     color: difference > 0 ? PdfColors.green : difference < 0 ? PdfColors.red : PdfColors.black,
-                      //   ),
-                      // )),
                       pw.Expanded(flex: 1, child: pw.Text(product.unit, style: const pw.TextStyle(fontSize: 10))),
                       pw.Expanded(flex: 3, child: pw.Text(comment.isEmpty ? '-' : comment, style: const pw.TextStyle(fontSize: 9))),
+                      pw.Expanded(flex: 2, child: pw.Text(
+                        wastageQuantity > 0 ? (wastageQuantity % 1 == 0 ? wastageQuantity.toInt().toString() : wastageQuantity.toStringAsFixed(2)) : '-',
+                        style: pw.TextStyle(fontSize: 10, color: wastageQuantity > 0 ? PdfColors.red : PdfColors.black),
+                      )),
+                      pw.Expanded(flex: 2, child: pw.Text(
+                        wastageQuantity > 0 ? wastageReason : '-',
+                        style: const pw.TextStyle(fontSize: 9),
+                      )),
                     ],
                   ),
                 );
@@ -668,6 +720,15 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     try {
       print('[STOCK_TAKE_EXCEL] Generating Excel for ${entries.length} entries');
       
+      // Sort entries by product name alphabetically
+      final sortedEntries = List<Map<String, dynamic>>.from(entries)
+        ..sort((a, b) {
+          final productA = _stockTakeProducts.firstWhere((p) => p.id == a['product_id']);
+          final productB = _stockTakeProducts.firstWhere((p) => p.id == b['product_id']);
+          return productA.name.toLowerCase().compareTo(productB.name.toLowerCase());
+        });
+      print('[STOCK_TAKE_EXCEL] Sorted ${sortedEntries.length} entries alphabetically by product name');
+      
       // Get current date for filename
       final now = DateTime.now();
       final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
@@ -721,6 +782,8 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         excel.TextCellValue('Counted Stock'),
         excel.TextCellValue('Unit'),
         excel.TextCellValue('Comments'),
+        excel.TextCellValue('Wastage Qty'),
+        excel.TextCellValue('Wastage Reason'),
       ];
       
       sheet.appendRow(headerRow);
@@ -735,10 +798,12 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       }
       
       // Add data rows
-      for (final entry in entries) {
+      for (final entry in sortedEntries) {
         final productId = entry['product_id'] as int;
         final product = _stockTakeProducts.firstWhere((p) => p.id == productId);
         final countedStock = entry['counted_quantity'] as double;
+        final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
+        final wastageReason = entry['wastage_reason'] as String? ?? '';
         final comment = entry['comment'] as String? ?? '';
         
         final dataRow = [
@@ -746,6 +811,8 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
           excel.DoubleCellValue(countedStock),
           excel.TextCellValue(product.unit),
           excel.TextCellValue(comment.isEmpty ? '-' : comment),
+          wastageQuantity > 0 ? excel.DoubleCellValue(wastageQuantity) : excel.TextCellValue('-'),
+          excel.TextCellValue(wastageQuantity > 0 ? wastageReason : '-'),
         ];
         
         sheet.appendRow(dataRow);
@@ -756,6 +823,8 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       sheet.setColumnAutoFit(1); // Counted Stock
       sheet.setColumnAutoFit(2); // Unit
       sheet.setColumnAutoFit(3); // Comments
+      sheet.setColumnAutoFit(4); // Wastage Qty
+      sheet.setColumnAutoFit(5); // Wastage Reason
       
       // Save Excel file
       try {
@@ -1059,10 +1128,21 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
               children: [
                 Expanded(
                   child: TextField(
-                    decoration: const InputDecoration(
+                    controller: _searchController,
+                    decoration: InputDecoration(
                       hintText: 'Search products...',
-                      prefixIcon: Icon(Icons.search),
-                      border: OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.search),
+                      border: const OutlineInputBorder(),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _searchQuery = '');
+                              },
+                              tooltip: 'Clear search',
+                            )
+                          : null,
                     ),
                     onChanged: (value) {
                       print('[BULK_STOCK_TAKE] Search field changed: "$value"');
@@ -1076,6 +1156,14 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                   icon: const Icon(Icons.save),
                   onPressed: _saveProgress,
                   tooltip: 'Save progress',
+                ),
+                const SizedBox(width: 8),
+                // Load progress button
+                IconButton(
+                  icon: const Icon(Icons.folder_open),
+                  onPressed: () => _loadSavedProgress(autoLoad: false),
+                  tooltip: 'Load saved progress',
+                  color: Colors.blue,
                 ),
                 const SizedBox(width: 8),
                 // Refresh products button

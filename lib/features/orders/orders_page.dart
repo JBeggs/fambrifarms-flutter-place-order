@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:excel/excel.dart' as excel;
 import '../../models/order.dart';
 import '../../providers/orders_provider.dart';
 import '../../providers/inventory_provider.dart';
@@ -79,6 +81,11 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
           onPressed: () => context.go('/'),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.table_chart),
+            onPressed: () => _generateWorkbook(context, ordersState.orders),
+            tooltip: 'Generate Workbook',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: ordersNotifier.refreshOrders,
@@ -831,6 +838,282 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
             ),
           );
         }
+      }
+    }
+  }
+
+  /// Generate workbook with all received orders
+  Future<void> _generateWorkbook(BuildContext context, List<Order> allOrders) async {
+    try {
+      print('[WORKBOOK] Starting workbook generation for ${allOrders.length} orders');
+      
+      // Filter for received orders only
+      final receivedOrders = allOrders.where((order) => order.status == 'received').toList();
+      
+      if (receivedOrders.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ No received orders to export'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+      
+      print('[WORKBOOK] Found ${receivedOrders.length} received orders');
+      
+      // Generate filename with current date
+      final now = DateTime.now();
+      final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final timeStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final filename = 'ReceivedOrders_${dateStr}_$timeStr.xlsx';
+      
+      // Get Documents directory (cross-platform)
+      Directory? documentsDir;
+      try {
+        if (Platform.isLinux || Platform.isMacOS) {
+          final homeDir = Platform.environment['HOME'];
+          if (homeDir != null) {
+            documentsDir = Directory('$homeDir/Documents');
+            if (!documentsDir.existsSync()) {
+              documentsDir.createSync(recursive: true);
+            }
+          }
+        } else if (Platform.isWindows) {
+          final homeDir = Platform.environment['USERPROFILE'];
+          if (homeDir != null) {
+            documentsDir = Directory('$homeDir\\Documents');
+            if (!documentsDir.existsSync()) {
+              documentsDir.createSync(recursive: true);
+            }
+          }
+        }
+      } catch (e) {
+        print('[WORKBOOK] Error getting documents directory: $e');
+        throw Exception('Failed to access Documents directory: $e');
+      }
+      
+      if (documentsDir == null) {
+        throw Exception('Could not determine Documents directory path');
+      }
+      
+      final filePath = '${documentsDir.path}/$filename';
+      print('[WORKBOOK] Saving to: $filePath');
+      
+      // Create Excel workbook
+      final workbook = excel.Excel.createExcel();
+      
+      // Create a sheet for each order
+      for (final order in receivedOrders) {
+        // Use business name from profile, fallback to restaurant name
+        String businessName = order.restaurant.profile?.businessName ?? order.restaurant.name;
+        
+        // Use business name as sheet name (sanitize for Excel)
+        String sheetName = businessName
+            .replaceAll(RegExp(r'[^\w\s-]'), '')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+        
+        // Excel sheet names must be max 31 chars and unique
+        if (sheetName.length > 31) {
+          sheetName = sheetName.substring(0, 31);
+        }
+        
+        // Make sure sheet name is unique
+        int counter = 1;
+        String uniqueSheetName = sheetName;
+        while (workbook.sheets.containsKey(uniqueSheetName)) {
+          final suffix = '_$counter';
+          final maxLength = 31 - suffix.length;
+          uniqueSheetName = '${sheetName.substring(0, maxLength < sheetName.length ? maxLength : sheetName.length)}$suffix';
+          counter++;
+        }
+        
+        print('[WORKBOOK] Creating sheet: $uniqueSheetName for order ${order.orderNumber}');
+        
+        final sheet = workbook[uniqueSheetName];
+        
+        // Add professional header with business name
+        sheet.cell(excel.CellIndex.indexByString('A1')).value = excel.TextCellValue(businessName.toUpperCase());
+        sheet.cell(excel.CellIndex.indexByString('A1')).cellStyle = excel.CellStyle(
+          bold: true,
+          fontSize: 18,
+        );
+        
+        // Contact information row
+        int currentRow = 2;
+        List<String> contactParts = [];
+        if (order.restaurant.email.isNotEmpty) {
+          contactParts.add('Email: ${order.restaurant.email}');
+        }
+        if (order.restaurant.phone.isNotEmpty) {
+          contactParts.add('Tel: ${order.restaurant.phone}');
+        }
+        if (contactParts.isNotEmpty) {
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue(contactParts.join(' | '));
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+            fontSize: 10,
+          );
+          currentRow++;
+        }
+        
+        // Address information
+        if (order.restaurant.profile?.deliveryAddress?.isNotEmpty == true) {
+          final addressParts = [order.restaurant.profile!.deliveryAddress!];
+          if (order.restaurant.profile?.city?.isNotEmpty == true) {
+            addressParts.add(order.restaurant.profile!.city!);
+          }
+          if (order.restaurant.profile?.postalCode?.isNotEmpty == true) {
+            addressParts.add(order.restaurant.profile!.postalCode!);
+          }
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue(addressParts.join(', '));
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+            fontSize: 10,
+          );
+          currentRow++;
+        }
+        
+        currentRow++; // Add space
+        
+        // Order details section
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('ORDER DETAILS');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+          bold: true,
+          fontSize: 14,
+        );
+        currentRow += 2;
+        
+        // Order information
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('Order Number:');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(bold: true);
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = excel.TextCellValue(order.orderNumber);
+        currentRow++;
+        
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('Order Date:');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(bold: true);
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = excel.TextCellValue(order.orderDate);
+        currentRow++;
+        
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('Delivery Date:');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(bold: true);
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = excel.TextCellValue(order.deliveryDate);
+        currentRow++;
+        
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('Status:');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(bold: true);
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = excel.TextCellValue(order.status.toUpperCase());
+        currentRow += 2;
+        
+        // Order items table
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('ORDER ITEMS');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+          bold: true,
+          fontSize: 14,
+        );
+        currentRow += 2;
+        
+        // Table headers
+        final headers = ['Product', 'Quantity', 'Unit', 'Stock Status', 'Notes'];
+        for (int i = 0; i < headers.length; i++) {
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+            bold: true,
+            horizontalAlign: excel.HorizontalAlign.Center,
+          );
+        }
+        currentRow++;
+        
+        // Add order items
+        for (final item in order.items) {
+          // Product name with notes
+          String productName = item.product.name;
+          if (item.notes?.isNotEmpty == true) {
+            productName += ' (${item.notes})';
+          }
+          
+          // Stock status
+          String stockStatus = 'Unknown';
+          if (item.isStockReserved) {
+            stockStatus = 'Reserved';
+          } else if (item.isNoReserve) {
+            stockStatus = 'No Reserve';
+          } else if (item.isStockReservationFailed) {
+            stockStatus = 'Reservation Failed';
+          }
+          
+          final rowData = [
+            excel.TextCellValue(productName),
+            excel.DoubleCellValue(item.quantity),
+            excel.TextCellValue(item.product.unit),
+            excel.TextCellValue(stockStatus),
+            excel.TextCellValue(item.notes ?? ''),
+          ];
+          
+          for (int i = 0; i < rowData.length; i++) {
+            sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+          }
+          currentRow++;
+        }
+        
+        // Auto-fit columns
+        for (int i = 0; i < headers.length; i++) {
+          sheet.setColumnAutoFit(i);
+        }
+      }
+      
+      // Remove default Sheet1 AFTER creating all custom sheets
+      if (workbook.sheets.containsKey('Sheet1')) {
+        workbook.delete('Sheet1');
+        print('[WORKBOOK] Removed default Sheet1');
+      }
+      
+      // Save Excel file
+      print('[WORKBOOK] Generating Excel bytes...');
+      final excelBytes = workbook.save();
+      
+      if (excelBytes != null) {
+        print('[WORKBOOK] Excel bytes generated: ${excelBytes.length} bytes');
+        
+        final file = File(filePath);
+        await file.writeAsBytes(excelBytes);
+        
+        // Verify file was created
+        if (file.existsSync()) {
+          final fileSize = file.lengthSync();
+          print('[WORKBOOK] ✅ Workbook saved successfully!');
+          print('[WORKBOOK] File: $filePath');
+          print('[WORKBOOK] Size: $fileSize bytes');
+          
+          // Show success message
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ Workbook saved with ${receivedOrders.length} orders:\n$filePath'),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          }
+        } else {
+          throw Exception('File was not created after write operation');
+        }
+      } else {
+        throw Exception('Failed to generate Excel bytes');
+      }
+      
+    } catch (e) {
+      print('[WORKBOOK] Error generating workbook: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error generating workbook: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
       }
     }
   }

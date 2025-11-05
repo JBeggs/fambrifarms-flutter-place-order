@@ -1,9 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:excel/excel.dart' as excel;
 import '../../providers/inventory_provider.dart';
 import '../../models/product.dart';
 import '../../models/stock_alert.dart';
@@ -1228,11 +1231,41 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
     }
   }
 
-  void _showPrintPreview(BuildContext context, List<Product> products) {
-    showDialog(
-      context: context,
-      builder: (context) => _StockReportDialog(products: products),
-    );
+  Future<void> _showPrintPreview(BuildContext context, List<Product> products) async {
+    // Try to load last stock take wastage data
+    Map<int, Map<String, dynamic>> wastageData = {};
+    try {
+      final executablePath = Platform.resolvedExecutable;
+      final projectRoot = File(executablePath).parent.parent.parent.parent.parent.parent.parent.parent.parent.path;
+      final file = File('$projectRoot/bulk_stock_take_progress.json');
+      
+      if (await file.exists()) {
+        final contents = await file.readAsString();
+        final data = json.decode(contents);
+        final productsData = data['products'] as List<dynamic>?;
+        
+        if (productsData != null) {
+          for (final productData in productsData) {
+            final productId = productData['product_id'] as int;
+            wastageData[productId] = {
+              'wastage_quantity': productData['wastage_quantity'] ?? 0.0,
+              'wastage_reason': productData['wastage_reason'] ?? '',
+              'comment': productData['comment'] ?? '',
+            };
+          }
+        }
+        print('[INVENTORY_REPORT] Loaded wastage data for ${wastageData.length} products from last stock take');
+      }
+    } catch (e) {
+      print('[INVENTORY_REPORT] Could not load stock take data: $e');
+    }
+    
+    if (context.mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => _StockReportDialog(products: products, wastageData: wastageData),
+      );
+    }
   }
 }
 
@@ -1406,8 +1439,9 @@ class _EditAlertDialogState extends State<_EditAlertDialog> {
 
 class _StockReportDialog extends StatelessWidget {
   final List<Product> products;
+  final Map<int, Map<String, dynamic>> wastageData;
 
-  const _StockReportDialog({required this.products});
+  const _StockReportDialog({required this.products, this.wastageData = const {}});
 
   @override
   Widget build(BuildContext context) {
@@ -1514,11 +1548,12 @@ class _StockReportDialog extends StatelessWidget {
               ),
               child: const Row(
                 children: [
-                  Expanded(flex: 3, child: Text('Product', style: TextStyle(fontWeight: FontWeight.bold))),
-                  Expanded(flex: 2, child: Text('Current Stock', style: TextStyle(fontWeight: FontWeight.bold))),
-                  Expanded(flex: 2, child: Text('Min Stock', style: TextStyle(fontWeight: FontWeight.bold))),
-                  Expanded(flex: 2, child: Text('Value', style: TextStyle(fontWeight: FontWeight.bold))),
-                  Expanded(flex: 1, child: Text('Status', style: TextStyle(fontWeight: FontWeight.bold))),
+                  Expanded(flex: 3, child: Text('Product Name', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                  Expanded(flex: 2, child: Text('Current Stock', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                  Expanded(flex: 1, child: Text('Unit', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                  Expanded(flex: 2, child: Text('Comments', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                  Expanded(flex: 2, child: Text('Wastage', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
+                  Expanded(flex: 2, child: Text('Wastage Reason', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11))),
                 ],
               ),
             ),
@@ -1541,6 +1576,12 @@ class _StockReportDialog extends StatelessWidget {
                           ? Colors.orange 
                           : Colors.green;
                   
+                  // Get wastage data for this product
+                  final productWastage = wastageData[product.id];
+                  final wastageQty = productWastage?['wastage_quantity'] as double? ?? 0.0;
+                  final wastageReason = productWastage?['wastage_reason'] as String? ?? '';
+                  final comment = productWastage?['comment'] as String? ?? '';
+                  
                   return Container(
                     padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
                     decoration: BoxDecoration(
@@ -1552,47 +1593,44 @@ class _StockReportDialog extends StatelessWidget {
                           flex: 3,
                           child: Text(
                             product.name,
-                            style: const TextStyle(fontSize: 12),
+                            style: const TextStyle(fontSize: 11),
                           ),
                         ),
                         Expanded(
                           flex: 2,
                           child: Text(
-                            '${product.stockLevel.toStringAsFixed(1)} ${product.unit}',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                        Expanded(
-                          flex: 2,
-                          child: Text(
-                            '${product.minimumStock.toStringAsFixed(1)} ${product.unit}',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                        Expanded(
-                          flex: 2,
-                          child: Text(
-                            'R${value.toStringAsFixed(2)}',
-                            style: const TextStyle(fontSize: 12),
+                            product.stockLevel.toStringAsFixed(1),
+                            style: const TextStyle(fontSize: 11),
                           ),
                         ),
                         Expanded(
                           flex: 1,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: statusColor.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              status,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: statusColor,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
+                          child: Text(
+                            product.unit,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            comment.isNotEmpty ? comment : '-',
+                            style: TextStyle(fontSize: 11, color: comment.isNotEmpty ? Colors.black : Colors.grey[600]),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            wastageQty > 0 ? wastageQty.toStringAsFixed(1) : '-',
+                            style: TextStyle(fontSize: 11, color: wastageQty > 0 ? Colors.red : Colors.grey[600]),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            wastageReason.isNotEmpty ? wastageReason : '-',
+                            style: TextStyle(fontSize: 11, color: wastageReason.isNotEmpty ? Colors.black : Colors.grey[600]),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ],
@@ -1610,7 +1648,7 @@ class _StockReportDialog extends StatelessWidget {
           child: const Text('Close'),
         ),
         ElevatedButton.icon(
-          onPressed: () => _printStockReport(context, inStockProducts, reportDate, reportTime, totalValue, goodStockProducts, lowStockProducts),
+          onPressed: () => _printStockReport(context, inStockProducts, reportDate, reportTime, totalValue, goodStockProducts, lowStockProducts, wastageData),
           icon: const Icon(Icons.print),
           label: const Text('Print Report'),
         ),
@@ -1658,37 +1696,75 @@ class _StockReportDialog extends StatelessWidget {
     double totalValue,
     int goodStockProducts,
     int lowStockProducts,
+    Map<int, Map<String, dynamic>> wastageData,
   ) async {
     try {
+      print('[INVENTORY_PRINT] Starting PDF generation for ${inStockProducts.length} products');
+      
       // Generate filename with current date
       final now = DateTime.now();
       final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
-      final filename = 'FambriStock_$dateStr.pdf';
+      final timeStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final filename = 'FambriStock_${dateStr}_$timeStr.pdf';
       
-      await Printing.layoutPdf(
-        name: filename,
-        onLayout: (PdfPageFormat format) async {
-          final pdf = pw.Document();
-          
-          // Split products into pages (30 items per page)
-          const itemsPerPage = 30;
-          final totalPages = (inStockProducts.length / itemsPerPage).ceil();
-          
-          for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
-            final startIndex = pageIndex * itemsPerPage;
-            final endIndex = (startIndex + itemsPerPage).clamp(0, inStockProducts.length);
-            final pageProducts = inStockProducts.sublist(startIndex, endIndex);
-            final isFirstPage = pageIndex == 0;
-            final isLastPage = pageIndex == totalPages - 1;
-            
-            pdf.addPage(
-              pw.Page(
-                pageFormat: PdfPageFormat.a4,
-                margin: const pw.EdgeInsets.all(20),
-                build: (pw.Context context) {
-                  return pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
+      // Get Documents directory
+      Directory? documentsDir;
+      try {
+        if (Platform.isLinux || Platform.isMacOS) {
+          final homeDir = Platform.environment['HOME'];
+          if (homeDir != null) {
+            documentsDir = Directory('$homeDir/Documents');
+            if (!documentsDir.existsSync()) {
+              documentsDir.createSync(recursive: true);
+            }
+          }
+        } else if (Platform.isWindows) {
+          final homeDir = Platform.environment['USERPROFILE'];
+          if (homeDir != null) {
+            documentsDir = Directory('$homeDir\\Documents');
+            if (!documentsDir.existsSync()) {
+              documentsDir.createSync(recursive: true);
+            }
+          }
+        }
+      } catch (e) {
+        print('[INVENTORY_PRINT] Error getting documents directory: $e');
+        throw Exception('Failed to access Documents directory: $e');
+      }
+      
+      if (documentsDir == null) {
+        throw Exception('Could not determine Documents directory path');
+      }
+      
+      final filePath = '${documentsDir.path}/$filename';
+      print('[INVENTORY_PRINT] Saving to: $filePath');
+      
+      // Sort products by name
+      final sortedProducts = List<Product>.from(inStockProducts)
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      print('[INVENTORY_PRINT] Sorted ${sortedProducts.length} products alphabetically');
+      
+      final pdf = pw.Document();
+      
+      // Split products into pages (30 items per page)
+      const itemsPerPage = 30;
+      final totalPages = (sortedProducts.length / itemsPerPage).ceil();
+      
+      for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+        final startIndex = pageIndex * itemsPerPage;
+        final endIndex = (startIndex + itemsPerPage).clamp(0, sortedProducts.length);
+        final pageProducts = sortedProducts.sublist(startIndex, endIndex);
+        final isFirstPage = pageIndex == 0;
+        final isLastPage = pageIndex == totalPages - 1;
+        
+        pdf.addPage(
+          pw.Page(
+            pageFormat: PdfPageFormat.a4,
+            margin: const pw.EdgeInsets.all(20),
+            build: (pw.Context context) {
+              return pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
                       // Header (only on first page)
                       if (isFirstPage) ...[
                         pw.Container(
@@ -1726,7 +1802,7 @@ class _StockReportDialog extends StatelessWidget {
                         pw.Row(
                           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                           children: [
-                            pw.Text('In Stock: ${inStockProducts.length}', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                            pw.Text('In Stock: ${sortedProducts.length}', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
                             pw.Text('Good Stock: $goodStockProducts', style: const pw.TextStyle(fontSize: 10, color: PdfColors.green)),
                             pw.Text('Low Stock: $lowStockProducts', style: const pw.TextStyle(fontSize: 10, color: PdfColors.orange)),
                           ],
@@ -1751,18 +1827,23 @@ class _StockReportDialog extends StatelessWidget {
                         ),
                         child: pw.Row(
                           children: [
-                            pw.Expanded(flex: 4, child: pw.Text('Product', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                            pw.Expanded(flex: 3, child: pw.Text('Product Name', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
                             pw.Expanded(flex: 2, child: pw.Text('Current Stock', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
-                            pw.Expanded(flex: 2, child: pw.Text('Min Stock', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
-                            pw.Expanded(flex: 1, child: pw.Text('Status', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                            pw.Expanded(flex: 1, child: pw.Text('Unit', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                            pw.Expanded(flex: 3, child: pw.Text('Comments', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                            pw.Expanded(flex: 2, child: pw.Text('Wastage', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                            pw.Expanded(flex: 2, child: pw.Text('Wastage Reason', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
                           ],
                         ),
                       ),
                       
                       // Product Rows
                       ...pageProducts.map((product) {
-                        final value = product.stockLevel * product.price;
-                        final status = product.stockLevel <= product.minimumStock ? 'LOW' : 'OK';
+                        // Get wastage data for this product
+                        final productWastage = wastageData[product.id];
+                        final wastageQty = productWastage?['wastage_quantity'] as double? ?? 0.0;
+                        final wastageReason = productWastage?['wastage_reason'] as String? ?? '';
+                        final comment = productWastage?['comment'] as String? ?? '';
                         
                         return pw.Container(
                           padding: const pw.EdgeInsets.symmetric(vertical: 4, horizontal: 8),
@@ -1771,29 +1852,12 @@ class _StockReportDialog extends StatelessWidget {
                           ),
                           child: pw.Row(
                             children: [
-                              pw.Expanded(
-                                flex: 4,
-                                child: pw.Text(product.name, style: const pw.TextStyle(fontSize: 8)),
-                              ),
-                              pw.Expanded(
-                                flex: 2,
-                                child: pw.Text('${product.stockLevel.toStringAsFixed(1)} ${product.unit}', style: const pw.TextStyle(fontSize: 8)),
-                              ),
-                              pw.Expanded(
-                                flex: 2,
-                                child: pw.Text('${product.minimumStock.toStringAsFixed(1)} ${product.unit}', style: const pw.TextStyle(fontSize: 8)),
-                              ),
-                              pw.Expanded(
-                                flex: 1,
-                                child: pw.Text(
-                                  status,
-                                  style: pw.TextStyle(
-                                    fontSize: 8,
-                                    fontWeight: pw.FontWeight.bold,
-                                    color: status == 'LOW' ? PdfColors.orange : PdfColors.green,
-                                  ),
-                                ),
-                              ),
+                              pw.Expanded(flex: 3, child: pw.Text(product.name, style: const pw.TextStyle(fontSize: 8))),
+                              pw.Expanded(flex: 2, child: pw.Text(product.stockLevel.toStringAsFixed(1), style: const pw.TextStyle(fontSize: 8))),
+                              pw.Expanded(flex: 1, child: pw.Text(product.unit, style: const pw.TextStyle(fontSize: 8))),
+                              pw.Expanded(flex: 3, child: pw.Text(comment.isNotEmpty ? comment : '-', style: const pw.TextStyle(fontSize: 8))),
+                              pw.Expanded(flex: 2, child: pw.Text(wastageQty > 0 ? wastageQty.toStringAsFixed(1) : '-', style: const pw.TextStyle(fontSize: 8))),
+                              pw.Expanded(flex: 2, child: pw.Text(wastageReason.isNotEmpty ? wastageReason : '-', style: const pw.TextStyle(fontSize: 8))),
                             ],
                           ),
                         );
@@ -1819,17 +1883,53 @@ class _StockReportDialog extends StatelessWidget {
                             style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
                           ),
                         ),
-                      ],
-                    ],
-                  );
-                },
-              ),
-            );
-          }
-          
-          return pdf.save();
-        },
-      );
+                  ],
+                ],
+              );
+            },
+          ),
+        );
+      }
+      
+      // Save PDF to file
+      print('[INVENTORY_PRINT] Generating PDF bytes...');
+      final pdfBytes = await pdf.save();
+      print('[INVENTORY_PRINT] PDF bytes generated: ${pdfBytes.length} bytes');
+      
+      final file = File(filePath);
+      await file.writeAsBytes(pdfBytes);
+      
+      // Verify file was created
+      if (file.existsSync()) {
+        final fileSize = file.lengthSync();
+        print('[INVENTORY_PRINT] ✅ PDF saved successfully!');
+        print('[INVENTORY_PRINT] File: $filePath');
+        print('[INVENTORY_PRINT] Size: $fileSize bytes');
+      } else {
+        throw Exception('PDF file was not created after write operation');
+      }
+      
+      // Generate Excel file
+      String? excelPath;
+      try {
+        excelPath = await _generateInventoryExcel(documentsDir.path, sortedProducts, reportDate, reportTime, goodStockProducts, lowStockProducts, wastageData);
+      } catch (e) {
+        print('[INVENTORY_PRINT] Excel generation failed: $e');
+      }
+      
+      // Show success message
+      if (context.mounted) {
+        final message = excelPath != null 
+            ? '✅ Stock report saved:\nPDF: $filePath\nExcel: $excelPath'
+            : '✅ PDF saved: $filePath\n❌ Excel generation failed';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: excelPath != null ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1839,6 +1939,134 @@ class _StockReportDialog extends StatelessWidget {
           ),
         );
       }
+    }
+  }
+
+  static Future<String?> _generateInventoryExcel(
+    String documentsPath,
+    List<Product> sortedProducts,
+    String reportDate,
+    String reportTime,
+    int goodStockProducts,
+    int lowStockProducts,
+    Map<int, Map<String, dynamic>> wastageData,
+  ) async {
+    try {
+      print('[INVENTORY_EXCEL] Generating Excel for ${sortedProducts.length} products (sorted)');
+      
+      // Generate filename
+      final now = DateTime.now();
+      final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final timeStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final filename = 'FambriStock_${dateStr}_$timeStr.xlsx';
+      final filePath = '$documentsPath/$filename';
+      
+      // Create Excel workbook
+      final excelFile = excel.Excel.createExcel();
+      final sheet = excelFile['Stock Report'];
+      
+      // Remove default sheet if it exists
+      if (excelFile.sheets.containsKey('Sheet1')) {
+        excelFile.delete('Sheet1');
+      }
+      
+      // Add title and summary
+      sheet.appendRow([
+        excel.TextCellValue('FAMBRI FARMS - STOCK ON HAND REPORT'),
+      ]);
+      sheet.appendRow([
+        excel.TextCellValue('Generated: $reportDate at $reportTime'),
+      ]);
+      sheet.appendRow([
+        excel.TextCellValue(''),
+      ]);
+      sheet.appendRow([
+        excel.TextCellValue('Summary:'),
+        excel.TextCellValue('In Stock: ${sortedProducts.length}'),
+        excel.TextCellValue('Good Stock: $goodStockProducts'),
+        excel.TextCellValue('Low Stock: $lowStockProducts'),
+      ]);
+      sheet.appendRow([
+        excel.TextCellValue(''),
+      ]);
+      
+      // Add header row
+      final headerRow = [
+        excel.TextCellValue('Product Name'),
+        excel.TextCellValue('Current Stock'),
+        excel.TextCellValue('Unit'),
+        excel.TextCellValue('Comments'),
+        excel.TextCellValue('Wastage Qty'),
+        excel.TextCellValue('Wastage Reason'),
+      ];
+      
+      sheet.appendRow(headerRow);
+      
+      // Style header row
+      final headerRowIndex = 5; // After title, date, empty, summary, empty
+      for (int i = 0; i < headerRow.length; i++) {
+        final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: headerRowIndex));
+        cell.cellStyle = excel.CellStyle(
+          bold: true,
+          horizontalAlign: excel.HorizontalAlign.Center,
+        );
+      }
+      
+      // Add data rows
+      for (final product in sortedProducts) {
+        // Get wastage data for this product
+        final productWastage = wastageData[product.id];
+        final wastageQty = productWastage?['wastage_quantity'] as double? ?? 0.0;
+        final wastageReason = productWastage?['wastage_reason'] as String? ?? '';
+        final comment = productWastage?['comment'] as String? ?? '';
+        
+        final dataRow = [
+          excel.TextCellValue(product.name),
+          excel.DoubleCellValue(product.stockLevel),
+          excel.TextCellValue(product.unit),
+          excel.TextCellValue(comment.isNotEmpty ? comment : '-'),
+          wastageQty > 0 ? excel.DoubleCellValue(wastageQty) : excel.TextCellValue('-'),
+          excel.TextCellValue(wastageReason.isNotEmpty ? wastageReason : '-'),
+        ];
+        
+        sheet.appendRow(dataRow);
+      }
+      
+      // Auto-fit columns
+      sheet.setColumnAutoFit(0); // Product Name
+      sheet.setColumnAutoFit(1); // Current Stock
+      sheet.setColumnAutoFit(2); // Unit
+      sheet.setColumnAutoFit(3); // Comments
+      sheet.setColumnAutoFit(4); // Wastage Qty
+      sheet.setColumnAutoFit(5); // Wastage Reason
+      
+      // Save Excel file
+      print('[INVENTORY_EXCEL] Generating Excel bytes...');
+      final excelBytes = excelFile.save();
+      
+      if (excelBytes != null) {
+        print('[INVENTORY_EXCEL] Excel bytes generated: ${excelBytes.length} bytes');
+        
+        final file = File(filePath);
+        print('[INVENTORY_EXCEL] Writing to file: $filePath');
+        await file.writeAsBytes(excelBytes);
+        
+        // Verify file was created
+        if (file.existsSync()) {
+          final fileSize = file.lengthSync();
+          print('[INVENTORY_EXCEL] ✅ Excel saved successfully!');
+          print('[INVENTORY_EXCEL] File: $filePath');
+          print('[INVENTORY_EXCEL] Size: $fileSize bytes');
+          return filePath;
+        } else {
+          throw Exception('File was not created after write operation');
+        }
+      } else {
+        throw Exception('Failed to generate Excel bytes');
+      }
+    } catch (e) {
+      print('[INVENTORY_EXCEL] Error generating Excel: $e');
+      return null;
     }
   }
 }
