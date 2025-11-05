@@ -1235,9 +1235,33 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
     // Try to load last stock take wastage data
     Map<int, Map<String, dynamic>> wastageData = {};
     try {
-      final executablePath = Platform.resolvedExecutable;
-      final projectRoot = File(executablePath).parent.parent.parent.parent.parent.parent.parent.parent.parent.path;
-      final file = File('$projectRoot/bulk_stock_take_progress.json');
+      // Get project root by looking for pubspec.yaml
+      String getProjectRoot() {
+        final currentDir = Directory.current.path;
+        
+        // Check if we're in the Flutter project directory
+        final pubspecFile = File('$currentDir${Platform.pathSeparator}pubspec.yaml');
+        if (pubspecFile.existsSync()) {
+          return currentDir;
+        }
+        
+        // Try to find project root in parent directories
+        var dir = Directory(currentDir);
+        for (int i = 0; i < 5; i++) {
+          final pubspec = File('${dir.path}${Platform.pathSeparator}pubspec.yaml');
+          if (pubspec.existsSync()) {
+            return dir.path;
+          }
+          final parent = dir.parent;
+          if (parent.path == dir.path) break;
+          dir = parent;
+        }
+        
+        return currentDir;
+      }
+      
+      final projectRoot = getProjectRoot();
+      final file = File('$projectRoot${Platform.pathSeparator}bulk_stock_take_progress.json');
       
       if (await file.exists()) {
         final contents = await file.readAsString();

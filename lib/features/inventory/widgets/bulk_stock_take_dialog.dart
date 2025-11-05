@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -39,6 +40,10 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   String _searchQuery = '';
   List<Map<String, dynamic>> _stockHistory = [];
   bool _showHistory = false;
+  
+  // Auto-save functionality
+  Timer? _autoSaveTimer;
+  bool _hasUnsavedChanges = false;
 
   @override
   void initState() {
@@ -88,14 +93,71 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     });
   }
   
-  // Save current progress to file
-  Future<void> _saveProgress() async {
+  // Get project root directory with fallback options
+  String _getProjectRoot() {
+    // First try: Current working directory (should work when app is run from project root)
+    final currentDir = Directory.current.path;
+    
+    // Check if we're in the Flutter project directory by looking for pubspec.yaml
+    final pubspecFile = File('$currentDir${Platform.pathSeparator}pubspec.yaml');
+    if (pubspecFile.existsSync()) {
+      return currentDir;
+    }
+    
+    // Fallback: Try to find project root by looking for pubspec.yaml in parent directories
+    var dir = Directory(currentDir);
+    for (int i = 0; i < 5; i++) { // Check up to 5 levels up
+      final pubspec = File('${dir.path}${Platform.pathSeparator}pubspec.yaml');
+      if (pubspec.existsSync()) {
+        return dir.path;
+      }
+      final parent = dir.parent;
+      if (parent.path == dir.path) break; // Reached filesystem root
+      dir = parent;
+    }
+    
+    // Final fallback: Use current directory
+    return currentDir;
+  }
+
+  // Auto-save functionality
+  void _scheduleAutoSave() {
+    _autoSaveTimer?.cancel();
+    _hasUnsavedChanges = true;
+    
+    // Auto-save after 2 seconds of inactivity
+    _autoSaveTimer = Timer(const Duration(seconds: 2), () {
+      if (_hasUnsavedChanges && mounted) {
+        _autoSaveProgress();
+      }
+    });
+  }
+  
+  Future<void> _autoSaveProgress() async {
+    if (!mounted || _stockTakeProducts.isEmpty) return;
+    
     try {
-      // Get project root from executable path (level 9 up)
-      final executablePath = Platform.resolvedExecutable;
-      final projectRoot = File(executablePath).parent.parent.parent.parent.parent.parent.parent.parent.parent.path;
-      final file = File('$projectRoot/bulk_stock_take_progress.json');
+      await _saveProgressInternal(showSnackbar: false);
+      _hasUnsavedChanges = false;
+      print('[BULK_STOCK_TAKE] Auto-saved progress');
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Auto-save failed: $e');
+    }
+  }
+
+  // Save current progress to file (manual save with snackbar)
+  Future<void> _saveProgress() async {
+    await _saveProgressInternal(showSnackbar: true);
+  }
+  
+  // Internal save method
+  Future<void> _saveProgressInternal({bool showSnackbar = true}) async {
+    try {
+      // Get project root (works on Mac/Linux/Windows)
+      final projectRoot = _getProjectRoot();
+      final file = File('$projectRoot${Platform.pathSeparator}bulk_stock_take_progress.json');
       
+      print('[BULK_STOCK_TAKE] Project root: $projectRoot');
       print('[BULK_STOCK_TAKE] Saving to: ${file.path}');
       
       final progressData = {
@@ -124,7 +186,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       await file.writeAsString(jsonEncode(progressData));
       print('[BULK_STOCK_TAKE] Progress saved to ${file.path}');
       
-      if (mounted) {
+      if (mounted && showSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('✅ Progress saved successfully'),
@@ -135,7 +197,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       }
     } catch (e) {
       print('[BULK_STOCK_TAKE] Error saving progress: $e');
-      if (mounted) {
+      if (mounted && showSnackbar) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('❌ Error saving progress: $e'),
@@ -150,11 +212,11 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   // Load saved progress from file
   Future<void> _loadSavedProgress({bool autoLoad = false}) async {
     try {
-      // Get project root from executable path (level 9 up)
-      final executablePath = Platform.resolvedExecutable;
-      final projectRoot = File(executablePath).parent.parent.parent.parent.parent.parent.parent.parent.parent.path;
-      final file = File('$projectRoot/bulk_stock_take_progress.json');
+      // Get project root (works on Mac/Linux/Windows)
+      final projectRoot = _getProjectRoot();
+      final file = File('$projectRoot${Platform.pathSeparator}bulk_stock_take_progress.json');
       
+      print('[BULK_STOCK_TAKE] Project root: $projectRoot');
       print('[BULK_STOCK_TAKE] Loading from: ${file.path}');
       
       if (!await file.exists()) {
@@ -281,10 +343,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   // Clear saved progress file
   Future<void> _clearSavedProgress() async {
     try {
-      // Get project root from executable path (level 9 up)
-      final executablePath = Platform.resolvedExecutable;
-      final projectRoot = File(executablePath).parent.parent.parent.parent.parent.parent.parent.parent.parent.path;
-      final file = File('$projectRoot/bulk_stock_take_progress.json');
+      // Get project root (works on Mac/Linux/Windows)
+      final projectRoot = _getProjectRoot();
+      final file = File('$projectRoot${Platform.pathSeparator}bulk_stock_take_progress.json');
       
       if (await file.exists()) {
         await file.delete();
@@ -339,6 +400,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
           ? product.stockLevel.toInt().toString()
           : product.stockLevel.toStringAsFixed(2);
     });
+    
+    // Trigger auto-save when product is added
+    _scheduleAutoSave();
   }
   
   // Remove a product from the stock take list
@@ -347,10 +411,16 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       _stockTakeProducts.removeWhere((p) => p.id == productId);
       _controllers[productId]?.dispose();
       _commentControllers[productId]?.dispose(); // Dispose comment controller
+      _wastageControllers[productId]?.dispose(); // Dispose wastage controller
       _controllers.remove(productId);
       _commentControllers.remove(productId); // Remove comment controller
+      _wastageControllers.remove(productId); // Remove wastage controller
+      _wastageReasons.remove(productId); // Remove wastage reason
       _originalStock.remove(productId);
     });
+    
+    // Trigger auto-save when product is removed
+    _scheduleAutoSave();
   }
 
   Future<void> _loadStockHistory() async {
@@ -371,6 +441,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
 
   @override
   void dispose() {
+    // Cancel auto-save timer
+    _autoSaveTimer?.cancel();
+    
     _searchController.dispose(); // Dispose search controller
     for (final controller in _controllers.values) {
       controller.dispose();
@@ -885,6 +958,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
 
   Future<void> _submitBulkStockTake() async {
     setState(() => _isLoading = true);
+    
+    // Cancel auto-save timer when completing stock take
+    _autoSaveTimer?.cancel();
 
     try {
       final entries = <Map<String, dynamic>>[];
@@ -1430,6 +1506,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                                   ],
                                   onChanged: (value) {
                                     setState(() {}); // Trigger rebuild for difference calculation
+                                    _scheduleAutoSave(); // Auto-save when stock count changes
                                   },
                                 ),
                               ),
@@ -1501,6 +1578,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                             ),
                             style: const TextStyle(fontSize: 14),
                             maxLines: 1,
+                            onChanged: (value) {
+                              _scheduleAutoSave(); // Auto-save when comment changes
+                            },
                           ),
                           
                           // Wastage fields row
@@ -1524,6 +1604,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                                   ),
                                   style: const TextStyle(fontSize: 14),
                                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  onChanged: (value) {
+                                    _scheduleAutoSave(); // Auto-save when wastage quantity changes
+                                  },
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -1554,6 +1637,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                                     setState(() {
                                       _wastageReasons[product.id] = value ?? 'Spoilage';
                                     });
+                                    _scheduleAutoSave(); // Auto-save when wastage reason changes
                                   },
                                 ),
                               ),
