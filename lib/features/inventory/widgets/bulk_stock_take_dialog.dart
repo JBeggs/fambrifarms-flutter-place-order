@@ -457,19 +457,28 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     super.dispose();
   }
 
-  // Get products currently in the stock take list (filtered by search)
+  // Get products currently in the stock take list (filtered by search, sorted alphabetically)
   List<Product> get _filteredStockTakeProducts {
-    if (_searchQuery.isEmpty) return _stockTakeProducts;
+    List<Product> products;
     
-    return _stockTakeProducts.where((product) {
-      final name = product.name.toLowerCase();
-      final sku = product.sku?.toLowerCase() ?? '';
-      final query = _searchQuery.toLowerCase();
-      return name.contains(query) || sku.contains(query);
-    }).toList();
+    if (_searchQuery.isEmpty) {
+      products = List.from(_stockTakeProducts);
+    } else {
+      products = _stockTakeProducts.where((product) {
+        final name = product.name.toLowerCase();
+        final sku = product.sku?.toLowerCase() ?? '';
+        final query = _searchQuery.toLowerCase();
+        return name.contains(query) || sku.contains(query);
+      }).toList();
+    }
+    
+    // Sort alphabetically by product name
+    products.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    
+    return products;
   }
   
-  // Get products from all products that match search but aren't in stock take list
+  // Get products from all products that match search but aren't in stock take list (sorted alphabetically)
   List<Product> get _searchResultsNotInList {
     if (_searchQuery.isEmpty) return [];
     
@@ -483,6 +492,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       final notInList = !stockTakeIds.contains(product.id);
       return matchesSearch && notInList;
     }).toList();
+    
+    // Sort alphabetically by product name
+    results.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     
     // Debug search results
     print('[BULK_STOCK_TAKE] Search query: "$query"');
@@ -1033,8 +1045,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         print('[STOCK_TAKE] Excel generation failed: $e');
       }
 
-      // Clear saved progress file since stock take is complete
-      await _clearSavedProgress();
+      // Keep saved progress file for reference (removed auto-delete)
       
       if (mounted) {
         Navigator.of(context).pop(true);

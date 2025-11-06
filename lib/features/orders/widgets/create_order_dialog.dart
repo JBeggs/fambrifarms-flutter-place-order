@@ -163,7 +163,9 @@ class _CreateOrderDialogState extends ConsumerState<CreateOrderDialog> {
       }
       
       try {
-        excelPath = await ExcelService.generateOrderExcel(newOrder);
+        // Get products data for Excel sheets
+        final productsState = ref.read(productsProvider);
+        excelPath = await ExcelService.generateOrderExcel(newOrder, products: productsState.products);
       } catch (e) {
         print('[ORDER EXCEL] Error generating Excel for manual order: $e');
         // Don't fail the order creation if Excel generation fails

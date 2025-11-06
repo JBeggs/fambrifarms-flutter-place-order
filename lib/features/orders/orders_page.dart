@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:excel/excel.dart' as excel;
 import '../../models/order.dart';
+import '../../models/product.dart' as product_model;
 import '../../providers/orders_provider.dart';
 import '../../providers/inventory_provider.dart';
+import '../../providers/products_provider.dart';
 import 'widgets/order_card.dart';
 import 'widgets/create_order_dialog.dart';
 
@@ -1064,6 +1066,16 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
         }
       }
       
+      // Get products data for additional sheets
+      final productsState = ref.read(productsProvider);
+      final products = productsState.products;
+      
+      // Add Reserved Stock sheet
+      _addReservedStockSheet(workbook, receivedOrders, products);
+      
+      // Add Stock to be Ordered sheet
+      _addStockToOrderSheet(workbook, receivedOrders, products);
+      
       // Remove default Sheet1 AFTER creating all custom sheets
       if (workbook.sheets.containsKey('Sheet1')) {
         workbook.delete('Sheet1');
@@ -1116,5 +1128,215 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
         );
       }
     }
+  }
+
+  /// Add Reserved Stock sheet to workbook
+  void _addReservedStockSheet(excel.Excel workbook, List<Order> orders, List<product_model.Product> products) {
+    print('[WORKBOOK] Creating Reserved Stock sheet');
+    
+    final sheet = workbook['Reserved Stock'];
+    
+    // Sheet title
+    sheet.cell(excel.CellIndex.indexByString('A1')).value = excel.TextCellValue('RESERVED STOCK - ALL ORDERS');
+    sheet.cell(excel.CellIndex.indexByString('A1')).cellStyle = excel.CellStyle(
+      bold: true,
+      fontSize: 16,
+    );
+    
+    int currentRow = 3;
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('Summary of all reserved stock across all received orders');
+    currentRow += 2;
+    
+    // Table headers
+    final headers = ['Order #', 'Business Name', 'Product', 'Ordered Qty', 'Unit', 'Reserved Qty', 'Stock Level', 'Status'];
+    for (int i = 0; i < headers.length; i++) {
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+        horizontalAlign: excel.HorizontalAlign.Center,
+      );
+    }
+    currentRow++;
+    
+    // Collect all reserved stock items from all orders
+    List<Map<String, dynamic>> reservedItems = [];
+    for (final order in orders) {
+      for (final item in order.items.where((item) => item.isStockReserved)) {
+        reservedItems.add({
+          'order': order,
+          'item': item,
+        });
+      }
+    }
+    
+    // Sort by product name
+    reservedItems.sort((a, b) => a['item'].product.name.compareTo(b['item'].product.name));
+    
+    // Add reserved stock items to sheet
+    bool hasReservedItems = reservedItems.isNotEmpty;
+    for (final reservedData in reservedItems) {
+      final order = reservedData['order'] as Order;
+      final item = reservedData['item'] as OrderItem;
+      
+      // Find corresponding product in products list
+      final product = products.firstWhere(
+        (p) => p.id == item.product.id,
+        orElse: () => product_model.Product(
+          id: item.product.id,
+          name: item.product.name,
+          department: 'Other',
+          price: item.product.price,
+          unit: item.product.unit,
+          stockLevel: 0,
+          minimumStock: 0,
+        ),
+      );
+      
+      final rowData = [
+        excel.TextCellValue(order.orderNumber),
+        excel.TextCellValue(order.restaurant.profile?.businessName ?? order.restaurant.name),
+        excel.TextCellValue(item.product.name),
+        excel.DoubleCellValue(item.quantity),
+        excel.TextCellValue(item.product.unit),
+        excel.DoubleCellValue(item.quantity), // Assuming full quantity is reserved
+        excel.DoubleCellValue(product.stockLevel),
+        excel.TextCellValue('✅ Reserved'),
+      ];
+      
+      for (int i = 0; i < rowData.length; i++) {
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+      }
+      currentRow++;
+    }
+    
+    // If no reserved items, show message
+    if (!hasReservedItems) {
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('No items have reserved stock across all orders');
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        italic: true,
+      );
+    }
+    
+    // Auto-fit columns
+    for (int i = 0; i < headers.length; i++) {
+      sheet.setColumnAutoFit(i);
+    }
+    
+    print('[WORKBOOK] Reserved Stock sheet created successfully');
+  }
+
+  /// Add Stock to be Ordered sheet to workbook
+  void _addStockToOrderSheet(excel.Excel workbook, List<Order> orders, List<product_model.Product> products) {
+    print('[WORKBOOK] Creating Stock to be Ordered sheet');
+    
+    final sheet = workbook['Stock to be Ordered'];
+    
+    // Sheet title
+    sheet.cell(excel.CellIndex.indexByString('A1')).value = excel.TextCellValue('STOCK TO BE ORDERED - ALL ORDERS');
+    sheet.cell(excel.CellIndex.indexByString('A1')).cellStyle = excel.CellStyle(
+      bold: true,
+      fontSize: 16,
+    );
+    
+    int currentRow = 3;
+    sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('Items that need to be ordered across all received orders');
+    currentRow += 2;
+    
+    // Table headers
+    final headers = ['Order #', 'Business Name', 'Product', 'Ordered Qty', 'Unit', 'Current Stock', 'Shortage', 'Need to Order', 'Status'];
+    for (int i = 0; i < headers.length; i++) {
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+        horizontalAlign: excel.HorizontalAlign.Center,
+      );
+    }
+    currentRow++;
+    
+    // Collect all items that need to be ordered from all orders
+    List<Map<String, dynamic>> itemsToOrder = [];
+    for (final order in orders) {
+      for (final item in order.items) {
+        // Find corresponding product in products list
+        final product = products.firstWhere(
+          (p) => p.id == item.product.id,
+          orElse: () => product_model.Product(
+            id: item.product.id,
+            name: item.product.name,
+            department: 'Other',
+            price: item.product.price,
+            unit: item.product.unit,
+            stockLevel: 0,
+            minimumStock: 0,
+          ),
+        );
+        
+        // Check if this item needs to be ordered
+        final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
+        final needsOrdering = shortage > 0 || item.isStockReservationFailed || item.isNoReserve;
+        
+        if (needsOrdering) {
+          itemsToOrder.add({
+            'order': order,
+            'item': item,
+            'product': product,
+            'shortage': shortage,
+          });
+        }
+      }
+    }
+    
+    // Sort by product name
+    itemsToOrder.sort((a, b) => a['item'].product.name.compareTo(b['item'].product.name));
+    
+    // Add items to sheet
+    bool hasItemsToOrder = itemsToOrder.isNotEmpty;
+    for (final orderData in itemsToOrder) {
+      final order = orderData['order'] as Order;
+      final item = orderData['item'] as OrderItem;
+      final product = orderData['product'] as product_model.Product;
+      final shortage = orderData['shortage'] as double;
+      
+      String status = '';
+      if (item.isStockReservationFailed) {
+        status = '❌ Reservation Failed';
+      } else if (item.isNoReserve) {
+        status = '🔓 No Reservation';
+      } else if (shortage > 0) {
+        status = '📦 Insufficient Stock';
+      }
+      
+      final rowData = [
+        excel.TextCellValue(order.orderNumber),
+        excel.TextCellValue(order.restaurant.profile?.businessName ?? order.restaurant.name),
+        excel.TextCellValue(item.product.name),
+        excel.DoubleCellValue(item.quantity),
+        excel.TextCellValue(item.product.unit),
+        excel.DoubleCellValue(product.stockLevel),
+        excel.DoubleCellValue(shortage),
+        excel.DoubleCellValue(shortage > 0 ? shortage : item.quantity),
+        excel.TextCellValue(status),
+      ];
+      
+      for (int i = 0; i < rowData.length; i++) {
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+      }
+      currentRow++;
+    }
+    
+    // If no items need ordering, show message
+    if (!hasItemsToOrder) {
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('All items are available in stock across all orders');
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        italic: true,
+      );
+    }
+    
+    // Auto-fit columns
+    for (int i = 0; i < headers.length; i++) {
+      sheet.setColumnAutoFit(i);
+    }
+    
+    print('[WORKBOOK] Stock to be Ordered sheet created successfully');
   }
 }

@@ -4,6 +4,7 @@ import '../../../services/api_service.dart';
 import '../../../services/pdf_service.dart';
 import '../../../services/excel_service.dart';
 import '../../../utils/messages_provider.dart';
+import '../../../providers/products_provider.dart';
 
 class AlwaysSuggestionsDialog extends ConsumerStatefulWidget {
   final String messageId;
@@ -1202,8 +1203,11 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       
       print('[ORDER EXCEL] Order fetched: ${order.orderNumber}');
       
+      // Get products data for Excel sheets
+      final productsState = ref.read(productsProvider);
+      
       // Generate Excel using the Excel service
-      final excelPath = await ExcelService.generateOrderExcel(order);
+      final excelPath = await ExcelService.generateOrderExcel(order, products: productsState.products);
       
       if (excelPath != null) {
         print('[ORDER EXCEL] Excel generated successfully: $excelPath');

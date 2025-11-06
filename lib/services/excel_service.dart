@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:excel/excel.dart';
 import '../models/order.dart';
+import '../models/product.dart' as product_model;
 
 class ExcelService {
   static const String _ordersSubfolder = 'Orders';
@@ -44,24 +45,27 @@ class ExcelService {
   }
 
   /// Generate and save order Excel to date-based folder
-  static Future<String?> generateOrderExcel(Order order, {DateTime? saveDate}) async {
+  static Future<String?> generateOrderExcel(Order order, {DateTime? saveDate, List<product_model.Product>? products}) async {
     try {
       print('[EXCEL SERVICE] Generating Excel for order: ${order.orderNumber}');
       
       // Get the orders directory for the specified date (or today)
       final ordersDir = await _getOrdersDirectory(saveDate);
       
-      // Generate unique filename with restaurant name and timestamp
+      // Generate unique filename with business name and timestamp
       final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final restaurantName = order.restaurant?.name?.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_') ?? 'Unknown';
-      final filename = '${restaurantName}_${order.orderNumber}_$timestamp.xlsx';
+      // Use business name from profile, fallback to restaurant name
+      final businessName = (order.restaurant?.profile?.businessName ?? order.restaurant?.name ?? 'Unknown')
+          .replaceAll(RegExp(r'[^\w\s-]'), '')
+          .replaceAll(' ', '_');
+      final filename = '${businessName}_${order.orderNumber}_$timestamp.xlsx';
       final filePath = '${ordersDir.path}/$filename';
       
       print('[EXCEL SERVICE] Saving to: $filePath');
       
       // Generate Excel document
       final excel = Excel.createExcel();
-      await _buildOrderExcel(excel, order);
+      await _buildOrderExcel(excel, order, products);
       
       // Save to file
       final excelBytes = excel.save();
@@ -90,7 +94,7 @@ class ExcelService {
   }
 
   /// Build the Excel document content
-  static Future<void> _buildOrderExcel(Excel excel, Order order) async {
+  static Future<void> _buildOrderExcel(Excel excel, Order order, List<product_model.Product>? products) async {
     print('[EXCEL SERVICE] Building Excel for order: ${order.orderNumber}');
     print('[EXCEL SERVICE] Order has ${order.items.length} items');
     
@@ -260,6 +264,207 @@ class ExcelService {
       sheet.setColumnAutoFit(i);
     }
     
+    // Create additional sheets if products data is available
+    if (products != null) {
+      await _buildReservedStockSheet(excel, order, products);
+      await _buildStockToOrderSheet(excel, order, products);
+    }
+    
     print('[EXCEL SERVICE] Excel document built successfully');
+  }
+
+  /// Build the Reserved Stock sheet
+  static Future<void> _buildReservedStockSheet(Excel excel, Order order, List<product_model.Product> products) async {
+    print('[EXCEL SERVICE] Building Reserved Stock sheet');
+    
+    final sheet = excel['Reserved Stock'];
+    
+    // Sheet title
+    sheet.cell(CellIndex.indexByString('A1')).value = TextCellValue('RESERVED STOCK');
+    sheet.cell(CellIndex.indexByString('A1')).cellStyle = CellStyle(
+      bold: true,
+      fontSize: 16,
+    );
+    
+    // Order info
+    int currentRow = 3;
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('Order Number:');
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = TextCellValue(order.orderNumber);
+    currentRow++;
+    
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('Restaurant:');
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = TextCellValue(order.restaurant.name);
+    currentRow += 2;
+    
+    // Table headers
+    final headers = ['Product', 'Ordered Qty', 'Unit', 'Reserved Qty', 'Stock Level', 'Status'];
+    for (int i = 0; i < headers.length; i++) {
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = TextCellValue(headers[i]);
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = CellStyle(
+        bold: true,
+        horizontalAlign: HorizontalAlign.Center,
+      );
+    }
+    currentRow++;
+    
+    // Add reserved stock items
+    for (final item in order.items.where((item) => item.isStockReserved)) {
+      // Find corresponding product in products list
+      final product = products.firstWhere(
+        (p) => p.id == item.product.id,
+        orElse: () => product_model.Product(
+          id: item.product.id,
+          name: item.product.name,
+          department: 'Other',
+          price: item.product.price,
+          unit: item.product.unit,
+          stockLevel: 0,
+          minimumStock: 0,
+        ),
+      );
+      
+      final rowData = [
+        TextCellValue(item.product.name),
+        DoubleCellValue(item.quantity),
+        TextCellValue(item.product.unit),
+        DoubleCellValue(item.quantity), // Assuming full quantity is reserved
+        DoubleCellValue(product.stockLevel),
+        TextCellValue('✅ Reserved'),
+      ];
+      
+      for (int i = 0; i < rowData.length; i++) {
+        sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+      }
+      currentRow++;
+    }
+    
+    // If no reserved items, show message
+    if (!order.items.any((item) => item.isStockReserved)) {
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('No items have reserved stock');
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = CellStyle(
+        italic: true,
+      );
+    }
+    
+    // Auto-fit columns
+    for (int i = 0; i < headers.length; i++) {
+      sheet.setColumnAutoFit(i);
+    }
+    
+    print('[EXCEL SERVICE] Reserved Stock sheet built successfully');
+  }
+
+  /// Build the Stock to be Ordered sheet
+  static Future<void> _buildStockToOrderSheet(Excel excel, Order order, List<product_model.Product> products) async {
+    print('[EXCEL SERVICE] Building Stock to be Ordered sheet');
+    
+    final sheet = excel['Stock to be Ordered'];
+    
+    // Sheet title
+    sheet.cell(CellIndex.indexByString('A1')).value = TextCellValue('STOCK TO BE ORDERED');
+    sheet.cell(CellIndex.indexByString('A1')).cellStyle = CellStyle(
+      bold: true,
+      fontSize: 16,
+    );
+    
+    // Order info
+    int currentRow = 3;
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('Order Number:');
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = TextCellValue(order.orderNumber);
+    currentRow++;
+    
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('Restaurant:');
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = TextCellValue(order.restaurant.name);
+    currentRow += 2;
+    
+    // Table headers
+    final headers = ['Product', 'Ordered Qty', 'Unit', 'Current Stock', 'Shortage', 'Need to Order', 'Status'];
+    for (int i = 0; i < headers.length; i++) {
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = TextCellValue(headers[i]);
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = CellStyle(
+        bold: true,
+        horizontalAlign: HorizontalAlign.Center,
+      );
+    }
+    currentRow++;
+    
+    // Add items that need to be ordered (insufficient stock or failed reservations)
+    for (final item in order.items) {
+      // Find corresponding product in products list
+      final product = products.firstWhere(
+        (p) => p.id == item.product.id,
+        orElse: () => product_model.Product(
+          id: item.product.id,
+          name: item.product.name,
+          department: 'Other',
+          price: item.product.price,
+          unit: item.product.unit,
+          stockLevel: 0,
+          minimumStock: 0,
+        ),
+      );
+      
+      // Check if this item needs to be ordered
+      final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
+      final needsOrdering = shortage > 0 || item.isStockReservationFailed || item.isNoReserve;
+      
+      if (needsOrdering) {
+        String status = '';
+        if (item.isStockReservationFailed) {
+          status = '❌ Reservation Failed';
+        } else if (item.isNoReserve) {
+          status = '🔓 No Reservation';
+        } else if (shortage > 0) {
+          status = '📦 Insufficient Stock';
+        }
+        
+        final rowData = [
+          TextCellValue(item.product.name),
+          DoubleCellValue(item.quantity),
+          TextCellValue(item.product.unit),
+          DoubleCellValue(product.stockLevel),
+          DoubleCellValue(shortage),
+          DoubleCellValue(shortage > 0 ? shortage : item.quantity),
+          TextCellValue(status),
+        ];
+        
+        for (int i = 0; i < rowData.length; i++) {
+          sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+        }
+        currentRow++;
+      }
+    }
+    
+    // If no items need ordering, show message
+    final hasItemsToOrder = order.items.any((item) {
+      final product = products.firstWhere(
+        (p) => p.id == item.product.id,
+        orElse: () => product_model.Product(
+          id: item.product.id,
+          name: item.product.name,
+          department: 'Other',
+          price: item.product.price,
+          unit: item.product.unit,
+          stockLevel: 0,
+          minimumStock: 0,
+        ),
+      );
+      final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
+      return shortage > 0 || item.isStockReservationFailed || item.isNoReserve;
+    });
+    
+    if (!hasItemsToOrder) {
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('All items are available in stock');
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = CellStyle(
+        italic: true,
+      );
+    }
+    
+    // Auto-fit columns
+    for (int i = 0; i < headers.length; i++) {
+      sheet.setColumnAutoFit(i);
+    }
+    
+    print('[EXCEL SERVICE] Stock to be Ordered sheet built successfully');
   }
 }
