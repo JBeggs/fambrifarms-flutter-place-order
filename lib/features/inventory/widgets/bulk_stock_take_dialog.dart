@@ -59,14 +59,14 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     
     print('[BULK_STOCK_TAKE] Initial products from provider: ${_allProducts.length}, loading: $_isLoadingProducts');
     
-    // Only refresh if no products are loaded or if there's an error
-    if (_allProducts.isEmpty && !_isLoadingProducts) {
+    // Always ensure products are loaded for search functionality
+    if (_allProducts.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _refreshProductsList();
       });
     }
     
-    // Note: Will listen for provider changes in build method
+    // Provider changes are now listened to in build method via ref.watch
     
     for (final product in _stockTakeProducts) {
       _controllers[product.id] = TextEditingController();
@@ -1156,6 +1156,22 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // Listen to products provider changes and update _allProducts accordingly
+    final productsState = ref.watch(productsProvider);
+    
+    // Update _allProducts when provider state changes
+    if (productsState.products != _allProducts) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _allProducts = productsState.products;
+            _isLoadingProducts = productsState.isLoading;
+          });
+          print('[BULK_STOCK_TAKE] Updated products from provider: ${_allProducts.length}, loading: $_isLoadingProducts');
+        }
+      });
+    }
+    
     return Dialog(
       child: Container(
         width: MediaQuery.of(context).size.width * 0.95,

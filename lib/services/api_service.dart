@@ -218,24 +218,43 @@ class ApiService {
   
   Future<Map<String, dynamic>> login(String email, String password) async {
     try {
+      debugPrint('[AUTH] Attempting login for: $email');
+      debugPrint('[AUTH] Using Django URL: $djangoBaseUrl');
+      
       final response = await _djangoDio.post('/auth/login/', data: {
         'email': email,
         'password': password,
       });
+      
+      debugPrint('[AUTH] Login response status: ${response.statusCode}');
+      debugPrint('[AUTH] Login response received successfully');
       
       // Extract tokens from nested structure
       final tokens = response.data['tokens'];
       _accessToken = tokens['access'];
       _refreshToken = tokens['refresh'];
       
+      debugPrint('[AUTH] Tokens extracted successfully');
+      
       // Store tokens in SharedPreferences for persistence
       await _storeTokens();
+      
+      debugPrint('[AUTH] Tokens stored successfully');
       
       // Load app configuration now that we're authenticated
       await loadConfigAfterAuth();
       
+      debugPrint('[AUTH] Login completed successfully');
       return response.data;
     } catch (e) {
+      debugPrint('[AUTH] Login failed with error: $e');
+      debugPrint('[AUTH] Error type: ${e.runtimeType}');
+      if (e is DioException) {
+        debugPrint('[AUTH] DioException type: ${e.type}');
+        debugPrint('[AUTH] DioException message: ${e.message}');
+        debugPrint('[AUTH] Response status: ${e.response?.statusCode}');
+        debugPrint('[AUTH] Response data: ${e.response?.data}');
+      }
       throw ApiException(_extractErrorMessage(e, 'Failed to login'));
     }
   }

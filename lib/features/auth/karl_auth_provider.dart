@@ -95,12 +95,17 @@ class KarlAuthNotifier extends StateNotifier<AuthState> {
   // Karl's login method
   Future<bool> loginAsKarl(String email, String password, {bool rememberMe = true}) async {
     try {
+      print('[KARL_AUTH] Starting login for: $email');
       state = state.copyWith(isLoading: true, error: null);
 
       // Call backend login API
+      print('[KARL_AUTH] Calling API service login...');
       final loginResponse = await _apiService.login(email, password);
       
+      print('[KARL_AUTH] API login response received');
+      
       if (loginResponse['user'] != null) {
+        print('[KARL_AUTH] User data found in response');
         // Create Karl user from backend response
         final karl = KarlUser.fromJson(loginResponse['user']);
         
@@ -112,14 +117,18 @@ class KarlAuthNotifier extends StateNotifier<AuthState> {
         // Enable auto-login for better user experience
         await prefs.setBool('remember_karl', rememberMe);
         
+        print('[KARL_AUTH] Tokens and user data stored successfully');
+        
         state = state.copyWith(
           user: karl,
           isAuthenticated: true,
           isLoading: false,
         );
         
+        print('[KARL_AUTH] Login completed successfully');
         return true;
       } else {
+        print('[KARL_AUTH] No user data in response: $loginResponse');
         state = state.copyWith(
           isLoading: false,
           error: 'Invalid login response from server',
@@ -127,6 +136,8 @@ class KarlAuthNotifier extends StateNotifier<AuthState> {
         return false;
       }
     } catch (e) {
+      print('[KARL_AUTH] Login failed with error: $e');
+      print('[KARL_AUTH] Error type: ${e.runtimeType}');
       state = state.copyWith(
         isLoading: false,
         error: _getErrorMessage(e),
