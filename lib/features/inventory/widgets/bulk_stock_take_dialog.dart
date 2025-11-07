@@ -1292,7 +1292,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         ),
 
         // Search Results (if searching)
-        if (_searchQuery.isNotEmpty && _filteredSearchResults.isNotEmpty) ...[
+        if (_searchQuery.isNotEmpty && _searchResultsNotInList.isNotEmpty) ...[
           const SizedBox(height: 8),
           Container(
             height: 120,
@@ -1316,7 +1316,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                       Icon(Icons.search, color: Colors.green[700], size: 16),
                       const SizedBox(width: 8),
                       Text(
-                        'Search Results (${_filteredSearchResults.length})',
+                        'Search Results (${_searchResultsNotInList.length})',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.green[700],
@@ -1328,9 +1328,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                 ),
                 Expanded(
                   child: ListView.builder(
-                    itemCount: _filteredSearchResults.length,
+                    itemCount: _searchResultsNotInList.length,
                     itemBuilder: (context, index) {
-                      final product = _filteredSearchResults[index];
+                      final product = _searchResultsNotInList[index];
                       final isAlreadyAdded = _stockTakeProducts.any((p) => p.id == product.id);
                       
                       return ListTile(
@@ -1871,25 +1871,15 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
       print('[ADD_PRODUCT] Loading units and departments...');
       
       // Load units
-      final unitsResponse = await ref.read(apiServiceProvider).get('/inventory/units/');
-      if (unitsResponse.statusCode == 200) {
-        final unitsData = jsonDecode(unitsResponse.body);
-        print('[ADD_PRODUCT] Units loaded: ${unitsData.length}');
-        print('[ADD_PRODUCT] Units data: $unitsData');
-        _units = List<Map<String, dynamic>>.from(unitsData);
-      } else {
-        print('[ADD_PRODUCT] Failed to load units: ${unitsResponse.statusCode}');
-      }
+      final unitsData = await ref.read(apiServiceProvider).getUnitsOfMeasure();
+      print('[ADD_PRODUCT] Units loaded: ${unitsData.length}');
+      print('[ADD_PRODUCT] Units data: $unitsData');
+      _units = unitsData;
       
       // Load departments
-      final deptsResponse = await ref.read(apiServiceProvider).get('/products/departments/');
-      if (deptsResponse.statusCode == 200) {
-        final deptsData = jsonDecode(deptsResponse.body);
-        print('[ADD_PRODUCT] Departments loaded: ${deptsData.length}');
-        _departments = List<Map<String, dynamic>>.from(deptsData);
-      } else {
-        print('[ADD_PRODUCT] Failed to load departments: ${deptsResponse.statusCode}');
-      }
+      final deptsData = await ref.read(apiServiceProvider).getDepartments();
+      print('[ADD_PRODUCT] Departments loaded: ${deptsData.length}');
+      _departments = deptsData;
       
       print('[ADD_PRODUCT] Data loading complete');
     } catch (e) {

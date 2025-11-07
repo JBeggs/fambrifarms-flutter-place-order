@@ -253,9 +253,62 @@ class ApiService {
         debugPrint('[AUTH] DioException type: ${e.type}');
         debugPrint('[AUTH] DioException message: ${e.message}');
         debugPrint('[AUTH] Response status: ${e.response?.statusCode}');
+        
+        // If it's a DNS/connection error, try fallback IP address
+        if (e.type == DioExceptionType.connectionError && e.message?.contains('Failed host lookup') == true) {
+          debugPrint('[AUTH] DNS lookup failed, trying fallback IP address...');
+          return await _loginWithFallback(email, password);
+        }
+        
         debugPrint('[AUTH] Response data: ${e.response?.data}');
       }
       throw ApiException(_extractErrorMessage(e, 'Failed to login'));
+    }
+  }
+  
+  Future<Map<String, dynamic>> _loginWithFallback(String email, String password) async {
+    try {
+      debugPrint('[AUTH] Attempting login with fallback URL: ${AppConfig.djangoFallbackUrl}');
+      
+      // Create a temporary Dio instance with fallback URL
+      final fallbackDio = Dio(BaseOptions(
+        baseUrl: AppConfig.djangoFallbackUrl,
+        connectTimeout: AppConfig.connectionTimeout,
+        receiveTimeout: AppConfig.apiTimeout,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ));
+      
+      final response = await fallbackDio.post('/auth/login/', data: {
+        'email': email,
+        'password': password,
+      });
+      
+      debugPrint('[AUTH] Fallback login response status: ${response.statusCode}');
+      debugPrint('[AUTH] Fallback login response received successfully');
+      
+      // Extract tokens from nested structure
+      final tokens = response.data['tokens'];
+      _accessToken = tokens['access'];
+      _refreshToken = tokens['refresh'];
+      
+      debugPrint('[AUTH] Tokens extracted successfully from fallback');
+      
+      // Store tokens in SharedPreferences for persistence
+      await _storeTokens();
+      
+      debugPrint('[AUTH] Tokens stored successfully');
+      
+      // Load app configuration now that we're authenticated
+      await loadConfigAfterAuth();
+      
+      debugPrint('[AUTH] Fallback login completed successfully');
+      return response.data;
+    } catch (e) {
+      debugPrint('[AUTH] Fallback login also failed: $e');
+      throw ApiException(_extractErrorMessage(e, 'Failed to login (both primary and fallback URLs failed)'));
     }
   }
 

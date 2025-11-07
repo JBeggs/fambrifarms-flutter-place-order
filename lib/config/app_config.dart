@@ -8,6 +8,12 @@ class AppConfig {
     defaultValue: 'https://fambridevops.pythonanywhere.com/api'
   );
   
+  // Fallback IP address for DNS resolution issues
+  static const String djangoFallbackUrl = String.fromEnvironment(
+    'DJANGO_FALLBACK_URL', 
+    defaultValue: 'https://35.173.69.207/api'
+  );
+  
   static const String pythonApiUrl = String.fromEnvironment(
     'PYTHON_API_URL',
     defaultValue: 'http://localhost:5001/api'
