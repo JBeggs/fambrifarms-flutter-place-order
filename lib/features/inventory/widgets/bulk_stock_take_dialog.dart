@@ -29,7 +29,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   final Map<int, TextEditingController> _controllers = {};
   final Map<int, TextEditingController> _commentControllers = {};
   final Map<int, TextEditingController> _wastageControllers = {};
-  final Map<int, String> _wastageReasons = {};
+  final Map<int, TextEditingController> _wastageReasonControllers = {};
   final Map<int, double> _originalStock = {};
   final TextEditingController _searchController = TextEditingController(); // Search field controller
   // Dynamic list of products in stock take (can be added/removed)
@@ -72,7 +72,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       _controllers[product.id] = TextEditingController();
       _commentControllers[product.id] = TextEditingController(); // Initialize comment controllers
       _wastageControllers[product.id] = TextEditingController(); // Initialize wastage controllers
-      _wastageReasons[product.id] = 'Spoilage'; // Default wastage reason
+      _wastageReasonControllers[product.id] = TextEditingController(); // Initialize wastage reason controllers
       _originalStock[product.id] = product.stockLevel;
       _controllers[product.id]!.text = product.stockLevel % 1 == 0
           ? product.stockLevel.toInt().toString()
@@ -170,7 +170,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
             'enteredValue': controller?.text ?? '',
             'comment': commentController?.text ?? '',
             'wastageValue': wastageController?.text ?? '',
-            'wastageReason': _wastageReasons[product.id] ?? 'Spoilage',
+            'wastageReason': _wastageReasonControllers[product.id]?.text ?? '',
           };
         }).toList(),
       };
@@ -289,7 +289,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         _controllers.clear();
         _commentControllers.clear();
         _wastageControllers.clear();
-        _wastageReasons.clear();
+        _wastageReasonControllers.clear();
         
         for (final productData in savedProducts) {
           final product = Product(
@@ -311,7 +311,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
           _controllers[product.id] = controller;
           _commentControllers[product.id] = commentController;
           _wastageControllers[product.id] = wastageController;
-          _wastageReasons[product.id] = productData['wastageReason'];
+          _wastageReasonControllers[product.id] = TextEditingController(text: productData['wastageReason']);
           _originalStock[product.id] = product.stockLevel;
         }
       });
@@ -400,7 +400,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       _controllers[product.id] = TextEditingController();
       _commentControllers[product.id] = TextEditingController(); // Initialize comment controller for new products
       _wastageControllers[product.id] = TextEditingController(); // Initialize wastage controller for new products
-      _wastageReasons[product.id] = 'Spoilage'; // Default wastage reason for new products
+      _wastageReasonControllers[product.id] = TextEditingController(); // Initialize wastage reason controller for new products
       _originalStock[product.id] = product.stockLevel;
       _controllers[product.id]!.text = product.stockLevel % 1 == 0
           ? product.stockLevel.toInt().toString()
@@ -418,10 +418,11 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       _controllers[productId]?.dispose();
       _commentControllers[productId]?.dispose(); // Dispose comment controller
       _wastageControllers[productId]?.dispose(); // Dispose wastage controller
+      _wastageReasonControllers[productId]?.dispose(); // Dispose wastage reason controller
       _controllers.remove(productId);
       _commentControllers.remove(productId); // Remove comment controller
       _wastageControllers.remove(productId); // Remove wastage controller
-      _wastageReasons.remove(productId); // Remove wastage reason
+      _wastageReasonControllers.remove(productId); // Remove wastage reason controller
       _originalStock.remove(productId);
     });
     
@@ -459,6 +460,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     }
     for (final controller in _wastageControllers.values) {
       controller.dispose(); // Dispose all wastage controllers
+    }
+    for (final controller in _wastageReasonControllers.values) {
+      controller.dispose(); // Dispose all wastage reason controllers
     }
     super.dispose();
   }
@@ -714,9 +718,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                   child: pw.Row(
                     children: [
                       pw.Expanded(flex: 3, child: pw.Text('Product Name', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-                      pw.Expanded(flex: 2, child: pw.Text('Counted Stock', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text('Stock Counted (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+                      pw.Expanded(flex: 2, child: pw.Text('Packaged', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
                       pw.Expanded(flex: 1, child: pw.Text('Unit', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-                      pw.Expanded(flex: 3, child: pw.Text('Comments', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
                       pw.Expanded(flex: 2, child: pw.Text('Wastage', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
                       pw.Expanded(flex: 2, child: pw.Text('Wastage Reason', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
                     ],
@@ -748,12 +752,21 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                   child: pw.Row(
                     children: [
                       pw.Expanded(flex: 3, child: pw.Text(product.name, style: const pw.TextStyle(fontSize: 10))),
+                      // Stock Counted (kg) column - show value if unit is kg, otherwise show comment
                       pw.Expanded(flex: 2, child: pw.Text(
-                        countedStock % 1 == 0 ? countedStock.toInt().toString() : countedStock.toStringAsFixed(2),
+                        product.unit.toLowerCase() == 'kg' 
+                          ? (countedStock % 1 == 0 ? countedStock.toInt().toString() : countedStock.toStringAsFixed(2))
+                          : (comment.isEmpty ? '-' : comment),
+                        style: const pw.TextStyle(fontSize: 10),
+                      )),
+                      // Packaged column - show value if unit is NOT kg, otherwise empty
+                      pw.Expanded(flex: 2, child: pw.Text(
+                        product.unit.toLowerCase() != 'kg' 
+                          ? (countedStock % 1 == 0 ? countedStock.toInt().toString() : countedStock.toStringAsFixed(2))
+                          : '-',
                         style: const pw.TextStyle(fontSize: 10),
                       )),
                       pw.Expanded(flex: 1, child: pw.Text(product.unit, style: const pw.TextStyle(fontSize: 10))),
-                      pw.Expanded(flex: 3, child: pw.Text(comment.isEmpty ? '-' : comment, style: const pw.TextStyle(fontSize: 9))),
                       pw.Expanded(flex: 2, child: pw.Text(
                         wastageQuantity > 0 ? (wastageQuantity % 1 == 0 ? wastageQuantity.toInt().toString() : wastageQuantity.toStringAsFixed(2)) : '-',
                         style: pw.TextStyle(fontSize: 10, color: wastageQuantity > 0 ? PdfColors.red : PdfColors.black),
@@ -882,9 +895,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       // Add header row
       final headerRow = [
         excel.TextCellValue('Product Name'),
-        excel.TextCellValue('Counted Stock'),
+        excel.TextCellValue('Stock Counted (kg)'),
+        excel.TextCellValue('Packaged'),
         excel.TextCellValue('Unit'),
-        excel.TextCellValue('Comments'),
         excel.TextCellValue('Wastage Qty'),
         excel.TextCellValue('Wastage Reason'),
       ];
@@ -917,9 +930,15 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         
         final dataRow = [
           excel.TextCellValue(product.name),
-          excel.DoubleCellValue(countedStock),
+          // Stock Counted (kg) column - show value if unit is kg, otherwise show comment
+          product.unit.toLowerCase() == 'kg' 
+            ? excel.DoubleCellValue(countedStock)
+            : excel.TextCellValue(comment.isEmpty ? '-' : comment),
+          // Packaged column - show value if unit is NOT kg, otherwise empty
+          product.unit.toLowerCase() != 'kg' 
+            ? excel.DoubleCellValue(countedStock)
+            : excel.TextCellValue('-'),
           excel.TextCellValue(product.unit),
-          excel.TextCellValue(comment.isEmpty ? '-' : comment),
           wastageQuantity > 0 ? excel.DoubleCellValue(wastageQuantity) : excel.TextCellValue('-'),
           excel.TextCellValue(wastageQuantity > 0 ? wastageReason : '-'),
         ];
@@ -929,9 +948,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       
       // Auto-fit columns
       sheet.setColumnAutoFit(0); // Product Name
-      sheet.setColumnAutoFit(1); // Counted Stock
-      sheet.setColumnAutoFit(2); // Unit
-      sheet.setColumnAutoFit(3); // Comments
+      sheet.setColumnAutoFit(1); // Stock Counted (kg)
+      sheet.setColumnAutoFit(2); // Packaged
+      sheet.setColumnAutoFit(3); // Unit
       sheet.setColumnAutoFit(4); // Wastage Qty
       sheet.setColumnAutoFit(5); // Wastage Reason
       
@@ -1036,7 +1055,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         // Remove any units (kg, g, etc.) from the wastage text before parsing
         final cleanWastageText = wastageText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
         final wastageQuantity = double.tryParse(cleanWastageText) ?? 0.0;
-        final wastageReason = _wastageReasons[productId] ?? 'Spoilage';
+        final wastageReason = _wastageReasonControllers[productId]?.text?.trim() ?? '';
         
         final productName = product?.name ?? 'Unknown Product';
         
@@ -1150,8 +1169,512 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   void _clearAllEntries() {
     for (final controller in _controllers.values) {
       controller.clear();
-    }
-    setState(() {});
+  }
+  setState(() {});
+  }
+
+  Widget _buildMainContent() {
+    return Column(
+      children: [
+        // WhatsApp Stock History (if shown)
+        if (_showHistory) ...[
+          Container(
+            height: 200,
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      topRight: Radius.circular(8),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.history, color: Colors.blue[700]),
+                      const SizedBox(width: 8),
+                      Text(
+                        'WhatsApp Stock Messages',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue[700],
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        '${_stockHistory.length} messages',
+                        style: TextStyle(
+                          color: Colors.blue[600],
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: _stockHistory.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'No stock messages found',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: _stockHistory.length,
+                          itemBuilder: (context, index) {
+                            final message = _stockHistory[index];
+                            return ListTile(
+                              dense: true,
+                              title: Text(
+                                message['content'] ?? 'No content',
+                                style: const TextStyle(fontSize: 12),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                'From: ${message['sender'] ?? 'Unknown'} • ${message['timestamp'] ?? 'No date'}',
+                                style: const TextStyle(fontSize: 10),
+                              ),
+                              trailing: message['processed'] == true
+                                  ? Icon(Icons.check_circle, color: Colors.green[600], size: 16)
+                                  : Icon(Icons.pending, color: Colors.orange[600], size: 16),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        // Search and Add Products
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search products to add to stock take...',
+                  prefixIcon: const Icon(Icons.search),
+                  border: const OutlineInputBorder(),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _searchController.clear();
+                            setState(() => _searchQuery = '');
+                          },
+                        )
+                      : null,
+                ),
+                onChanged: (value) {
+                  setState(() => _searchQuery = value);
+                },
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton.icon(
+              onPressed: _fillWithCurrentStock,
+              icon: const Icon(Icons.auto_fix_high, size: 18),
+              label: const Text('Fill Current'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+            ),
+          ],
+        ),
+
+        // Search Results (if searching)
+        if (_searchQuery.isNotEmpty && _filteredSearchResults.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Container(
+            height: 120,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.green[50],
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      topRight: Radius.circular(8),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.search, color: Colors.green[700], size: 16),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Search Results (${_filteredSearchResults.length})',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green[700],
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: _filteredSearchResults.length,
+                    itemBuilder: (context, index) {
+                      final product = _filteredSearchResults[index];
+                      final isAlreadyAdded = _stockTakeProducts.any((p) => p.id == product.id);
+                      
+                      return ListTile(
+                        dense: true,
+                        title: Text(product.name, style: const TextStyle(fontSize: 14)),
+                        subtitle: Text(
+                          'Stock: ${product.stockLevel} ${product.unit} • \$${product.price.toStringAsFixed(2)}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        trailing: isAlreadyAdded
+                            ? Icon(Icons.check_circle, color: Colors.green[600], size: 20)
+                            : IconButton(
+                                icon: const Icon(Icons.add_circle_outline, size: 20),
+                                onPressed: () => _addProductToStockTake(product),
+                              ),
+                        onTap: isAlreadyAdded ? null : () => _addProductToStockTake(product),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
+        const SizedBox(height: 16),
+
+        // Stock Take Products List
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      topRight: Radius.circular(8),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.inventory_2, color: Colors.grey[700]),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Products in Stock Take (${_stockTakeProducts.length})',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[700],
+                        ),
+                      ),
+                      const Spacer(),
+                      if (_stockTakeProducts.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              for (final product in _stockTakeProducts) {
+                                _controllers[product.id]?.dispose();
+                                _commentControllers[product.id]?.dispose();
+                                _wastageControllers[product.id]?.dispose();
+                                _wastageReasonControllers[product.id]?.dispose();
+                              }
+                              _controllers.clear();
+                              _commentControllers.clear();
+                              _wastageControllers.clear();
+                              _wastageReasonControllers.clear();
+                              _originalStock.clear();
+                              _stockTakeProducts.clear();
+                            });
+                            _scheduleAutoSave();
+                          },
+                          icon: const Icon(Icons.clear_all, size: 16),
+                          label: const Text('Clear All'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.red[600],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                
+                // Products List
+                Expanded(
+                  child: _isLoadingProducts
+                      ? const Center(child: CircularProgressIndicator())
+                      : _stockTakeProducts.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.inventory_2_outlined,
+                                    size: 64,
+                                    color: Colors.grey[400],
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'No products in stock take',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Search and add products above, or use "Fill Current" to add all products with stock',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[500],
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              ),
+                            )
+                          : ListView.builder(
+                              itemCount: _filteredStockTakeProducts.length,
+                              itemBuilder: (context, index) {
+                                final product = _filteredStockTakeProducts[index];
+                                final originalStock = _originalStock[product.id] ?? 0.0;
+                                
+                                return Card(
+                                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Column(
+                                      children: [
+                                        // Main row with product info, count field, difference, delete
+                                        Row(
+                                          children: [
+                                            // Product Info
+                                            Expanded(
+                                              flex: 2,
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    product.name,
+                                                    style: const TextStyle(fontWeight: FontWeight.w500),
+                                                  ),
+                                                  if (product.sku != null)
+                                                    Text(
+                                                      'SKU: ${product.sku}',
+                                                      style: TextStyle(
+                                                        color: Colors.grey[600],
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  Text(
+                                                    'Current: ${originalStock % 1 == 0 ? originalStock.toInt() : originalStock.toStringAsFixed(2)} ${product.unit}',
+                                                    style: TextStyle(
+                                                      color: Colors.blue[700],
+                                                      fontSize: 12,
+                                                      fontWeight: FontWeight.w500,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    '\$${product.price.toStringAsFixed(2)} per ${product.unit}',
+                                                    style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 11,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            
+                                            const SizedBox(width: 12),
+                                            
+                                            // Count Field
+                                            Expanded(
+                                              flex: 1,
+                                              child: TextFormField(
+                                                controller: _controllers[product.id],
+                                                decoration: const InputDecoration(
+                                                  labelText: 'Counted',
+                                                  border: OutlineInputBorder(),
+                                                  contentPadding: EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 8,
+                                                  ),
+                                                  isDense: true,
+                                                ),
+                                                style: const TextStyle(fontSize: 14),
+                                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                                inputFormatters: [
+                                                  FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                                                ],
+                                                onChanged: (value) {
+                                                  _scheduleAutoSave(); // Auto-save when count changes
+                                                },
+                                              ),
+                                            ),
+                                            
+                                            const SizedBox(width: 12),
+                                            
+                                            // Difference Display
+                                            Expanded(
+                                              flex: 1,
+                                              child: Builder(
+                                                builder: (context) {
+                                                  final countedText = _controllers[product.id]?.text ?? '';
+                                                  final countedValue = double.tryParse(countedText) ?? 0.0;
+                                                  final difference = countedValue - originalStock;
+                                                  
+                                                  Color diffColor = Colors.grey[600]!;
+                                                  String diffPrefix = '';
+                                                  if (difference > 0) {
+                                                    diffColor = Colors.green[600]!;
+                                                    diffPrefix = '+';
+                                                  } else if (difference < 0) {
+                                                    diffColor = Colors.red[600]!;
+                                                  }
+                                                  
+                                                  return Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                                    children: [
+                                                      Text(
+                                                        'Difference',
+                                                        style: TextStyle(
+                                                          fontSize: 11,
+                                                          color: Colors.grey[600],
+                                                        ),
+                                                      ),
+                                                      Text(
+                                                        '$diffPrefix${difference % 1 == 0 ? difference.toInt() : difference.toStringAsFixed(2)}',
+                                                        style: TextStyle(
+                                                          fontSize: 14,
+                                                          fontWeight: FontWeight.bold,
+                                                          color: diffColor,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                            
+                                            const SizedBox(width: 8),
+                                            
+                                            // Delete Button
+                                            IconButton(
+                                              onPressed: () => _removeProductFromStockTake(product.id),
+                                              icon: const Icon(Icons.delete_outline),
+                                              color: Colors.red[600],
+                                              tooltip: 'Remove from stock take',
+                                            ),
+                                          ],
+                                        ),
+                                        
+                                        const SizedBox(height: 8),
+                                        
+                                        // Comment field
+                                        TextFormField(
+                                          controller: _commentControllers[product.id],
+                                          decoration: const InputDecoration(
+                                            labelText: 'Comments (optional)',
+                                            hintText: 'Add notes about this product...',
+                                            border: OutlineInputBorder(),
+                                            prefixIcon: Icon(Icons.comment_outlined, size: 18),
+                                            contentPadding: EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 8,
+                                            ),
+                                            isDense: true,
+                                          ),
+                                          style: const TextStyle(fontSize: 14),
+                                          maxLines: 2,
+                                          onChanged: (value) {
+                                            _scheduleAutoSave(); // Auto-save when comment changes
+                                          },
+                                        ),
+                                        
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            // Wastage quantity field
+                                            Expanded(
+                                              flex: 2,
+                                              child: TextFormField(
+                                                controller: _wastageControllers[product.id],
+                                                decoration: const InputDecoration(
+                                                  labelText: 'Wastage Qty',
+                                                  border: OutlineInputBorder(),
+                                                  prefixIcon: Icon(Icons.delete_outline, size: 18),
+                                                  contentPadding: EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 8,
+                                                  ),
+                                                  isDense: true,
+                                                ),
+                                                style: const TextStyle(fontSize: 14),
+                                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                                inputFormatters: [
+                                                  FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                                                ],
+                                                onChanged: (value) {
+                                                  _scheduleAutoSave(); // Auto-save when wastage quantity changes
+                                                },
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            // Wastage reason text input
+                                            Expanded(
+                                              flex: 3,
+                                              child: TextFormField(
+                                                controller: _wastageReasonControllers[product.id],
+                                                decoration: const InputDecoration(
+                                                  labelText: 'Wastage Reason',
+                                                  hintText: 'e.g. Spoilage, Damage, Expiry',
+                                                  border: OutlineInputBorder(),
+                                                  contentPadding: EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 8,
+                                                  ),
+                                                  isDense: true,
+                                                ),
+                                                style: const TextStyle(fontSize: 14),
+                                                onChanged: (value) {
+                                                  _scheduleAutoSave(); // Auto-save when wastage reason changes
+                                                },
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -1172,656 +1695,146 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       });
     }
     
-    return Dialog(
-      child: Container(
-        width: MediaQuery.of(context).size.width * 0.95,
-        height: MediaQuery.of(context).size.height * 0.9,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Header
-            Row(
-              children: [
-                Icon(Icons.inventory, color: Theme.of(context).primaryColor),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Bulk Stock Take',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                IconButton(
-                  onPressed: () {
-                    setState(() {
-                      _showHistory = !_showHistory;
-                    });
-                  },
-                  icon: Icon(_showHistory ? Icons.history_toggle_off : Icons.history),
-                  tooltip: _showHistory ? 'Hide WhatsApp History' : 'Show WhatsApp History',
-                ),
-                IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-            const Divider(),
-
-            // WhatsApp Stock History (if shown)
-            if (_showHistory) ...[
-              Container(
-                height: 200,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey[300]!),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.blue[50],
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(8),
-                          topRight: Radius.circular(8),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.message, color: Colors.blue[700], size: 16),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Recent WhatsApp Stock Updates',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w500,
-                              color: Colors.blue[700],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: _stockHistory.isEmpty
-                          ? const Center(
-                              child: Text(
-                                'No recent stock updates found',
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                            )
-                          : ListView.builder(
-                              itemCount: _stockHistory.length,
-                              itemBuilder: (context, index) {
-                                final update = _stockHistory[index];
-                                final timestamp = DateTime.parse(update['timestamp']);
-                                return ListTile(
-                                  dense: true,
-                                  leading: CircleAvatar(
-                                    radius: 12,
-                                    backgroundColor: Colors.green[100],
-                                    child: Text(
-                                      '${update['items_count']}',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.green[700],
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                  title: Text(
-                                    '${update['sender_name']} - ${update['order_day']}',
-                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                  ),
-                                  subtitle: Text(
-                                    '${timestamp.day}/${timestamp.month}/${timestamp.year} ${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')} - ${update['items_count']} items',
-                                    style: const TextStyle(fontSize: 10),
-                                  ),
-                                  trailing: update['processed']
-                                      ? Icon(Icons.check_circle, color: Colors.green[600], size: 16)
-                                      : Icon(Icons.pending, color: Colors.orange[600], size: 16),
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
+    // Check if we're on mobile (screen width < 600px) or tablet/desktop
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    
+    if (isMobile) {
+      // Full screen on mobile
+      return Scaffold(
+        appBar: AppBar(
+          title: Row(
+            children: [
+              Icon(Icons.inventory, color: Theme.of(context).primaryColor),
+              const SizedBox(width: 8),
+              const Text('Bulk Stock Take'),
             ],
-
-            // Search and Actions
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: 'Search products...',
-                      prefixIcon: const Icon(Icons.search),
-                      border: const OutlineInputBorder(),
-                      suffixIcon: _searchQuery.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _searchQuery = '');
-                              },
-                              tooltip: 'Clear search',
-                            )
-                          : null,
-                    ),
-                    onChanged: (value) {
-                      print('[BULK_STOCK_TAKE] Search field changed: "$value"');
-                      setState(() => _searchQuery = value);
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Save progress button
-                IconButton(
-                  icon: const Icon(Icons.save),
-                  onPressed: _saveProgress,
-                  tooltip: 'Save progress',
-                ),
-                const SizedBox(width: 8),
-                // Load progress button
-                IconButton(
-                  icon: const Icon(Icons.folder_open),
-                  onPressed: () => _loadSavedProgress(autoLoad: false),
-                  tooltip: 'Load saved progress',
-                  color: Colors.blue,
-                ),
-                const SizedBox(width: 8),
-                // Refresh products button
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: _refreshProductsList,
-                  tooltip: 'Refresh products list',
-                ),
-                const SizedBox(width: 8),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert),
-                  onSelected: (value) {
-                    switch (value) {
-                      case 'fill_current':
-                        _fillWithCurrentStock();
-                        break;
-                      case 'clear_all':
-                        _clearAllEntries();
-                        break;
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: 'fill_current',
-                      child: Row(
-                        children: [
-                          Icon(Icons.content_copy),
-                          SizedBox(width: 8),
-                          Text('Fill with Current Stock'),
-                        ],
-                      ),
-                    ),
-                    const PopupMenuItem(
-                      value: 'clear_all',
-                      child: Row(
-                        children: [
-                          Icon(Icons.clear_all),
-                          SizedBox(width: 8),
-                          Text('Clear All'),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // Products List
-            Expanded(
-              child: Column(
-                children: [
-                  // Add Product Button (when no products match search)
-                  if (_shouldShowAddProductButton) ...[
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      margin: const EdgeInsets.only(bottom: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.orange[50],
-                        border: Border.all(color: Colors.orange[200]!),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.add_circle_outline, color: Colors.orange[700]),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Product not found: "$_searchQuery"',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.orange[800],
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Create this product and add it to the stock take',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.orange[600],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          ElevatedButton.icon(
-                            onPressed: _isLoading ? null : _createAndAddProduct,
-                            icon: _isLoading 
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : const Icon(Icons.add, size: 18),
-                            label: const Text('Add Product'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.orange[600],
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  
-                  // Search Results (products not in stock take list) or loading indicator
-                  if (_searchQuery.isNotEmpty) ...[
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      color: Colors.blue[50],
-                      child: Row(
-                        children: [
-                          Icon(Icons.search, size: 16, color: Colors.blue[700]),
-                          const SizedBox(width: 8),
-                          _isLoadingProducts
-                              ? Text(
-                                  'Loading products...',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.blue[700],
-                                    fontSize: 12,
-                                  ),
-                                )
-                              : Text(
-                                  'Add from search (${_searchResultsNotInList.length})',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.blue[700],
-                                    fontSize: 12,
-                                  ),
-                                ),
-                          if (_isLoadingProducts) ...[
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.blue[700]!),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    SizedBox(
-                      height: 200,
-                      child: _isLoadingProducts
-                          ? const Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  CircularProgressIndicator(),
-                                  SizedBox(height: 8),
-                                  Text('Loading products...'),
-                                ],
-                              ),
-                            )
-                          : _searchResultsNotInList.isEmpty
-                              ? Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(Icons.search_off, size: 48, color: Colors.grey[400]),
-                                      SizedBox(height: 8),
-                                      Text(
-                                        'No products found matching "${_searchQuery}"',
-                                        style: TextStyle(color: Colors.grey[600]),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ],
-                                  ),
-                                )
-                              : ListView.builder(
-                                  scrollDirection: Axis.horizontal,
-                                  itemCount: _searchResultsNotInList.length,
-                                  itemBuilder: (context, index) {
-                                    final product = _searchResultsNotInList[index];
-                                    return Card(
-                                      margin: const EdgeInsets.all(4),
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(8),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                SizedBox(
-                                                  width: 150,
-                                                  child: Text(
-                                                    product.name,
-                                                    style: const TextStyle(fontWeight: FontWeight.w500),
-                                                    maxLines: 2,
-                                                    overflow: TextOverflow.ellipsis,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  'Current: ${product.stockLevel % 1 == 0 ? product.stockLevel.toInt() : product.stockLevel.toStringAsFixed(2)} ${product.unit}',
-                                                  style: TextStyle(
-                                                    color: Colors.grey[600],
-                                                    fontSize: 11,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(width: 8),
-                                            IconButton(
-                                              icon: const Icon(Icons.add_circle, color: Colors.green),
-                                              onPressed: () => _addProductToStockTake(product),
-                                              tooltip: 'Add to stock take',
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                    ),
-                    const Divider(),
-                  ],
-                  
-                  // Stock Take Products
-                  Expanded(
-                    child: _filteredStockTakeProducts.isEmpty
-                        ? Center(
-                            child: Text(
-                              _searchQuery.isEmpty
-                                  ? 'No products in stock take'
-                                  : 'No products match your search',
-                              style: TextStyle(color: Colors.grey[600]),
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: _filteredStockTakeProducts.length,
-                            itemBuilder: (context, index) {
-                              final product = _filteredStockTakeProducts[index];
-                              final controller = _controllers[product.id];
-                              final originalStock = _originalStock[product.id] ?? 0.0;
-                              if (controller == null) return const SizedBox.shrink();
-                  
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        children: [
-                          // Main row with product info, count field, difference, delete
-                          Row(
-                            children: [
-                              // Product Info
-                              Expanded(
-                                flex: 2,
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      product.name,
-                                      style: const TextStyle(fontWeight: FontWeight.w500),
-                                    ),
-                                    if (product.sku != null)
-                                      Text(
-                                        'SKU: ${product.sku}',
-                                        style: TextStyle(
-                                          color: Colors.grey[600],
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    Text(
-                                      'Current: ${originalStock % 1 == 0 ? originalStock.toInt() : originalStock.toStringAsFixed(2)} ${product.unit}',
-                                      style: TextStyle(
-                                        color: Colors.blue[700],
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    Text(
-                                      'From SHALLOME stock updates',
-                                      style: TextStyle(
-                                        color: Colors.green[600],
-                                        fontSize: 10,
-                                        fontStyle: FontStyle.italic,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              
-                              // Stock Entry Field
-                              Expanded(
-                                child: TextFormField(
-                                  controller: controller,
-                                  decoration: InputDecoration(
-                                    labelText: 'Counted',
-                                    border: const OutlineInputBorder(),
-                                    suffixText: product.unit,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 8,
-                                    ),
-                                  ),
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
-                                  ],
-                                  onChanged: (value) {
-                                    setState(() {}); // Trigger rebuild for difference calculation
-                                    _scheduleAutoSave(); // Auto-save when stock count changes
-                                  },
-                                ),
-                              ),
-                              
-                              // Difference Indicator
-                              const SizedBox(width: 8),
-                              SizedBox(
-                                width: 60,
-                                child: Builder(
-                                  builder: (context) {
-                                    final countedText = controller.text;
-                                    if (countedText.isEmpty) return const SizedBox();
-                                    
-                                    final counted = double.tryParse(countedText) ?? 0.0;
-                                    final difference = counted - originalStock;
-                                    
-                                    if (difference.abs() < 0.001) {
-                                      return const Icon(Icons.check, color: Colors.green, size: 20);
-                                    }
-                                    
-                                    return Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          difference > 0 ? Icons.arrow_upward : Icons.arrow_downward,
-                                          color: difference > 0 ? Colors.green : Colors.red,
-                                          size: 16,
-                                        ),
-                                        Text(
-                                          difference.abs() % 1 == 0
-                                              ? difference.abs().toInt().toString()
-                                              : difference.abs().toStringAsFixed(2),
-                                          style: TextStyle(
-                                            color: difference > 0 ? Colors.green : Colors.red,
-                                            fontSize: 10,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    );
-                                  },
-                                ),
-                              ),
-                              
-                              // Delete Button
-                              const SizedBox(width: 4),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                onPressed: () => _removeProductFromStockTake(product.id),
-                                tooltip: 'Remove from stock take',
-                                iconSize: 20,
-                              ),
-                            ],
-                          ),
-                          
-                          // Comment field row
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _commentControllers[product.id],
-                            decoration: const InputDecoration(
-                              labelText: 'Comments (Optional)',
-                              border: OutlineInputBorder(),
-                              prefixIcon: Icon(Icons.comment_outlined, size: 18),
-                              contentPadding: EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              isDense: true,
-                            ),
-                            style: const TextStyle(fontSize: 14),
-                            maxLines: 1,
-                            onChanged: (value) {
-                              _scheduleAutoSave(); // Auto-save when comment changes
-                            },
-                          ),
-                          
-                          // Wastage fields row
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              // Wastage quantity field
-                              Expanded(
-                                flex: 2,
-                                child: TextFormField(
-                                  controller: _wastageControllers[product.id],
-                                  decoration: const InputDecoration(
-                                    labelText: 'Wastage Qty',
-                                    border: OutlineInputBorder(),
-                                    prefixIcon: Icon(Icons.delete_outline, size: 18),
-                                    contentPadding: EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 8,
-                                    ),
-                                    isDense: true,
-                                  ),
-                                  style: const TextStyle(fontSize: 14),
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
-                                  ],
-                                  onChanged: (value) {
-                                    _scheduleAutoSave(); // Auto-save when wastage quantity changes
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              // Wastage reason dropdown
-                              Expanded(
-                                flex: 3,
-                                child: DropdownButtonFormField<String>(
-                                  value: _wastageReasons[product.id],
-                                  decoration: const InputDecoration(
-                                    labelText: 'Wastage Reason',
-                                    border: OutlineInputBorder(),
-                                    contentPadding: EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 8,
-                                    ),
-                                    isDense: true,
-                                  ),
-                                  style: const TextStyle(fontSize: 14),
-                                  items: const [
-                                    DropdownMenuItem(value: 'Spoilage', child: Text('Spoilage')),
-                                    DropdownMenuItem(value: 'Damage', child: Text('Damage')),
-                                    DropdownMenuItem(value: 'Expiry', child: Text('Expiry')),
-                                    DropdownMenuItem(value: 'Theft', child: Text('Theft')),
-                                    DropdownMenuItem(value: 'Processing Loss', child: Text('Processing Loss')),
-                                    DropdownMenuItem(value: 'Other', child: Text('Other')),
-                                  ],
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _wastageReasons[product.id] = value ?? 'Spoilage';
-                                    });
-                                    _scheduleAutoSave(); // Auto-save when wastage reason changes
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                            },
-                          ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Summary and Actions
-            const Divider(),
-            Row(
-              children: [
-                Text(
-                  '${_stockTakeProducts.length} products in stock take',
-                  style: TextStyle(color: Colors.grey[600]),
-                ),
-                const Spacer(),
-                TextButton(
-                  onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _isLoading ? null : _submitBulkStockTake,
-                  child: _isLoading
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Complete Stock Take'),
-                ),
-              ],
+          ),
+          actions: [
+            IconButton(
+              onPressed: () {
+                setState(() {
+                  _showHistory = !_showHistory;
+                });
+              },
+              icon: Icon(_showHistory ? Icons.history_toggle_off : Icons.history),
+              tooltip: _showHistory ? 'Hide WhatsApp History' : 'Show WhatsApp History',
             ),
           ],
         ),
-      ),
-    );
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Expanded(child: _buildMainContent()),
+                // Mobile action buttons
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    border: Border(
+                      top: BorderSide(color: Colors.grey[300]!),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        '${_stockTakeProducts.length} products in stock take',
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: _isLoading ? null : _submitBulkStockTake,
+                        child: _isLoading
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text('Complete Stock Take'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } else {
+      // Desktop/tablet - use dialog
+      return Dialog(
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.95,
+          height: MediaQuery.of(context).size.height * 0.9,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              // Header
+              Row(
+                children: [
+                  Icon(Icons.inventory, color: Theme.of(context).primaryColor),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Bulk Stock Take',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () {
+                      setState(() {
+                        _showHistory = !_showHistory;
+                      });
+                    },
+                    icon: Icon(_showHistory ? Icons.history_toggle_off : Icons.history),
+                    tooltip: _showHistory ? 'Hide WhatsApp History' : 'Show WhatsApp History',
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const Divider(),
+              Expanded(child: _buildMainContent()),
+              // Desktop action buttons
+              const Divider(),
+              Row(
+                children: [
+                  Text(
+                    '${_stockTakeProducts.length} products in stock take',
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _isLoading ? null : _submitBulkStockTake,
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Complete Stock Take'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
   }
 }
 
@@ -1850,78 +1863,40 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
   void initState() {
     super.initState();
     _nameController.text = widget.productName;
-    _loadBackendData();
+    _loadData();
   }
 
-  Future<void> _loadBackendData() async {
-    print('[ADD_PRODUCT] Starting to load backend data...');
-    
-    // NO FALLBACK DATA - LOAD FROM BACKEND ONLY
-    _departments = [];
-    _units = [];
-    _selectedDepartment = '';
-    _selectedUnit = '';
-    
-    // Keep loading until we get data from backend
-    setState(() {
-      _isLoadingData = true;
-    });
-    
-    // Try to load from backend in background
+  Future<void> _loadData() async {
     try {
-      print('[ADD_PRODUCT] Attempting to load from API...');
-      final apiService = ref.read(apiServiceProvider);
+      print('[ADD_PRODUCT] Loading units and departments...');
       
-      final departments = await apiService.getDepartments();
-      final units = await apiService.getUnitsOfMeasure();
+      // Load units
+      final unitsResponse = await ref.read(apiServiceProvider).get('/inventory/units/');
+      if (unitsResponse.statusCode == 200) {
+        final unitsData = jsonDecode(unitsResponse.body);
+        print('[ADD_PRODUCT] Units loaded: ${unitsData.length}');
+        print('[ADD_PRODUCT] Units data: $unitsData');
+        _units = List<Map<String, dynamic>>.from(unitsData);
+      } else {
+        print('[ADD_PRODUCT] Failed to load units: ${unitsResponse.statusCode}');
+      }
       
-      print('[ADD_PRODUCT] Successfully loaded ${departments.length} departments and ${units.length} units');
-      print('[ADD_PRODUCT] Units: ${units.map((u) => '${u['name']} (${u['abbreviation']})').join(', ')}');
-      print('[ADD_PRODUCT] Departments: ${departments.map((d) => d['name']).join(', ')}');
+      // Load departments
+      final deptsResponse = await ref.read(apiServiceProvider).get('/products/departments/');
+      if (deptsResponse.statusCode == 200) {
+        final deptsData = jsonDecode(deptsResponse.body);
+        print('[ADD_PRODUCT] Departments loaded: ${deptsData.length}');
+        _departments = List<Map<String, dynamic>>.from(deptsData);
+      } else {
+        print('[ADD_PRODUCT] Failed to load departments: ${deptsResponse.statusCode}');
+      }
       
-      setState(() {
-        _departments = departments;
-        _units = units;
-        
-        // Update selected values if they exist in new data
-        final validDepartments = _departments.where((d) => d['name'] != null).toList();
-        // Use 'name' field for units since abbreviation is null from backend
-        final validUnits = _units.where((u) => u['name'] != null).toList();
-        
-        print('[ADD_PRODUCT] Valid units after filtering: ${validUnits.map((u) => u['name']).join(', ')}');
-        print('[ADD_PRODUCT] Current selected unit: $_selectedUnit');
-        
-        // Set first valid values as defaults (from backend only)
-        if (validDepartments.isNotEmpty) {
-          _selectedDepartment = validDepartments.first['name'];
-          print('[ADD_PRODUCT] Set selected department to: $_selectedDepartment');
-        }
-        
-        if (validUnits.isNotEmpty) {
-          _selectedUnit = validUnits.first['name']; // Use name instead of abbreviation
-          print('[ADD_PRODUCT] Set selected unit to: $_selectedUnit');
-        }
-        
-        // Mark as loaded
-        _isLoadingData = false;
-      });
-      
-      print('[ADD_PRODUCT] Backend data loaded successfully');
+      print('[ADD_PRODUCT] Data loading complete');
     } catch (e) {
-      print('[ADD_PRODUCT] Failed to load backend data: $e');
-      // If API fails, close dialog and show error
+      print('[ADD_PRODUCT] Error loading data: $e');
+    } finally {
       if (mounted) {
-        setState(() {
-          _isLoadingData = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load product data from server: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-        Navigator.of(context).pop(); // Close dialog on API failure
+        setState(() => _isLoadingData = false);
       }
     }
   }
@@ -1940,138 +1915,115 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
       content: SizedBox(
         width: 400,
         child: _isLoadingData
-            ? const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Loading departments and units...'),
-                ],
-              )
+            ? const Center(child: CircularProgressIndicator())
             : Form(
                 key: _formKey,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Product Name',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Product name is required';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _units.any((u) => u['name'] == _selectedUnit) ? _selectedUnit : null,
+                    TextFormField(
+                      controller: _nameController,
                       decoration: const InputDecoration(
-                        labelText: 'Unit',
+                        labelText: 'Product Name *',
                         border: OutlineInputBorder(),
                       ),
-                      items: _units.where((unit) => unit['name'] != null).map((unit) => DropdownMenuItem(
-                        value: unit['name'] as String,
-                        child: Text(unit['name'] as String),
-                      )).toList(),
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedUnit = value!;
-                        });
-                      },
                       validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please select a unit';
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter a product name';
                         }
                         return null;
                       },
                     ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: TextFormField(
+                    const SizedBox(height: 16),
+                    
+                    DropdownButtonFormField<String>(
+                      value: _selectedUnit,
+                      decoration: const InputDecoration(
+                        labelText: 'Unit *',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _units.map((unit) {
+                        return DropdownMenuItem<String>(
+                          value: unit['name'],
+                          child: Text(unit['name']),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => _selectedUnit = value);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    TextFormField(
                       controller: _priceController,
                       decoration: const InputDecoration(
-                        labelText: 'Price',
+                        labelText: 'Price per Unit *',
                         border: OutlineInputBorder(),
-                        prefixText: 'R ',
+                        prefixText: '\$',
                       ),
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) {
-                          return 'Price is required';
+                          return 'Please enter a price';
                         }
                         final price = double.tryParse(value);
-                        if (price == null || price < 0) {
-                          return 'Enter a valid price';
+                        if (price == null || price <= 0) {
+                          return 'Please enter a valid price';
                         }
                         return null;
                       },
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              
-              DropdownButtonFormField<String>(
-                value: _departments.any((d) => d['name'] == _selectedDepartment) ? _selectedDepartment : null,
-                decoration: const InputDecoration(
-                  labelText: 'Department',
-                  border: OutlineInputBorder(),
+                    const SizedBox(height: 16),
+                    
+                    DropdownButtonFormField<String>(
+                      value: _selectedDepartment,
+                      decoration: const InputDecoration(
+                        labelText: 'Department *',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: _departments.map((dept) {
+                        return DropdownMenuItem<String>(
+                          value: dept['name'],
+                          child: Text(dept['name']),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => _selectedDepartment = value);
+                        }
+                      },
+                    ),
+                  ],
                 ),
-                items: _departments.where((dept) => dept['name'] != null).map((dept) => DropdownMenuItem(
-                  value: dept['name'] as String,
-                  child: Text(dept['name'] as String),
-                )).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _selectedDepartment = value!;
-                  });
-                },
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please select a department';
-                  }
-                  return null;
-                },
               ),
-            ],
-          ),
-        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        if (!_isLoadingData)
-          ElevatedButton(
-            onPressed: () {
-              if (_formKey.currentState!.validate()) {
-                // Find the selected department to get its ID
-                final selectedDept = _departments.firstWhere(
-                  (d) => d['name'] == _selectedDepartment,
-                  orElse: () => _departments.first,
-                );
-                
-                Navigator.of(context).pop({
-                  'name': _nameController.text.trim(),
-                  'unit': _selectedUnit,
-                  'price': double.parse(_priceController.text),
-                  'department': _selectedDepartment,
-                  'department_id': selectedDept['id'],
-                });
-              }
-            },
-            child: const Text('Create Product'),
-          ),
+        ElevatedButton(
+          onPressed: () {
+            if (_formKey.currentState!.validate()) {
+              // Find the selected department ID
+              final selectedDept = _departments.firstWhere(
+                (d) => d['name'] == _selectedDepartment,
+                orElse: () => _departments.first,
+              );
+              
+              Navigator.of(context).pop({
+                'name': _nameController.text.trim(),
+                'unit': _selectedUnit,
+                'price': double.parse(_priceController.text),
+                'department': _selectedDepartment,
+                'department_id': selectedDept['id'],
+              });
+            }
+          },
+          child: const Text('Create Product'),
+        ),
       ],
     );
   }
