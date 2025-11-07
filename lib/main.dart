@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
@@ -15,23 +16,25 @@ void main(List<String> args) async {
   print('API Timeout: ${AppConfig.apiTimeoutSeconds}s');
   print('Debug Logging: ${AppConfig.enableDebugLogging}');
   
-  // Configure window for desktop
-  await windowManager.ensureInitialized();
-  
-  WindowOptions windowOptions = const WindowOptions(
-    size: Size(1400, 900),
-    minimumSize: Size(1000, 700),
-    center: true,
-    backgroundColor: Colors.transparent,
-    skipTaskbar: false,
-    titleBarStyle: TitleBarStyle.normal,
-    title: 'Place Order Final',
-  );
-  
-  windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.show();
-    await windowManager.focus();
-  });
+  // Configure window for desktop platforms only
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    await windowManager.ensureInitialized();
+    
+    WindowOptions windowOptions = const WindowOptions(
+      size: Size(1400, 900),
+      minimumSize: Size(1000, 700),
+      center: true,
+      backgroundColor: Colors.transparent,
+      skipTaskbar: false,
+      titleBarStyle: TitleBarStyle.normal,
+      title: 'Place Order Final',
+    );
+    
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
   
   // Check for bulk stock take argument (from dart-define or command line)
   const isBulkStockTakeDefine = String.fromEnvironment('BULK_STOCK_TAKE') == 'true';

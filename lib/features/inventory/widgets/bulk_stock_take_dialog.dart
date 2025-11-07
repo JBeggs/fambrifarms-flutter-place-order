@@ -37,6 +37,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   // All products for searching (loaded from inventory provider)
   List<Product> _allProducts = [];
   bool _isLoading = false;
+  bool _isLoadingProducts = true; // Track if products are still loading
   String _searchQuery = '';
   List<Map<String, dynamic>> _stockHistory = [];
   bool _showHistory = false;
@@ -51,30 +52,21 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     // Initialize with products that have stock (passed from parent)
     _stockTakeProducts = List.from(widget.products);
     
-    // Load ALL products from products provider for search (not just inventory)
+    // Try to use already loaded products first (for performance)
     final productsState = ref.read(productsProvider);
     _allProducts = productsState.products;
+    _isLoadingProducts = productsState.isLoading;
     
-    // Debug: Print all products to see what's loaded
-    print('[BULK_STOCK_TAKE] Loaded ${_allProducts.length} products for search (from products provider)');
-    final blueberryProducts = _allProducts.where((p) => p.name.toLowerCase().contains('blueberry')).toList();
-    final cabbageProducts = _allProducts.where((p) => p.name.toLowerCase().contains('cabbage')).toList();
-    final pineappleProducts = _allProducts.where((p) => p.name.toLowerCase().contains('pineapple')).toList();
-    print('[BULK_STOCK_TAKE] Found ${blueberryProducts.length} Blueberry products: ${blueberryProducts.map((p) => p.name).join(', ')}');
-    print('[BULK_STOCK_TAKE] Found ${cabbageProducts.length} Cabbage products: ${cabbageProducts.map((p) => p.name).join(', ')}');
-    print('[BULK_STOCK_TAKE] Found ${pineappleProducts.length} Pineapple products: ${pineappleProducts.map((p) => p.name).join(', ')}');
+    print('[BULK_STOCK_TAKE] Initial products from provider: ${_allProducts.length}, loading: $_isLoadingProducts');
     
-    // Print ALL product names for debugging
-    print('[BULK_STOCK_TAKE] ALL PRODUCTS: ${_allProducts.map((p) => '${p.name}(${p.isActive ? "active" : "INACTIVE"})').join(', ')}');
+    // Only refresh if no products are loaded or if there's an error
+    if (_allProducts.isEmpty && !_isLoadingProducts) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _refreshProductsList();
+      });
+    }
     
-    // Check specifically for inactive products
-    final inactiveProducts = _allProducts.where((p) => !p.isActive).toList();
-    print('[BULK_STOCK_TAKE] INACTIVE PRODUCTS: ${inactiveProducts.length} found: ${inactiveProducts.map((p) => p.name).join(', ')}');
-    
-    // Refresh inventory data to ensure we have the latest products
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _refreshProductsList();
-    });
+    // Note: Will listen for provider changes in build method
     
     for (final product in _stockTakeProducts) {
       _controllers[product.id] = TextEditingController();
@@ -356,29 +348,43 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     }
   }
   
-  // Refresh the products list from products provider (ALL products)
+  // Refresh the products list from products provider (optimized to avoid unnecessary API calls)
   Future<void> _refreshProductsList() async {
     try {
-      print('[BULK_STOCK_TAKE] Refreshing ALL products list...');
-      await ref.read(productsProvider.notifier).loadProducts();
+      print('[BULK_STOCK_TAKE] Checking if products need refresh...');
       
       final productsState = ref.read(productsProvider);
+      
+      // If products are already loaded and not stale, use them
+      if (productsState.products.isNotEmpty && !productsState.isLoading) {
+        setState(() {
+          _allProducts = productsState.products;
+          _isLoadingProducts = false;
+        });
+        print('[BULK_STOCK_TAKE] Using cached products: ${_allProducts.length}');
+        return;
+      }
+      
+      // Only make API call if products are empty or there's an error
       setState(() {
-        _allProducts = productsState.products;
+        _isLoadingProducts = true;
       });
       
-      print('[BULK_STOCK_TAKE] Refreshed ${_allProducts.length} products (ALL products from products API)');
-      final blueberryProducts = _allProducts.where((p) => p.name.toLowerCase().contains('blueberry')).toList();
-      final cabbageProducts = _allProducts.where((p) => p.name.toLowerCase().contains('cabbage')).toList();
-      final pineappleProducts = _allProducts.where((p) => p.name.toLowerCase().contains('pineapple')).toList();
-      print('[BULK_STOCK_TAKE] After refresh - Found ${blueberryProducts.length} Blueberry products: ${blueberryProducts.map((p) => p.name).join(', ')}');
-      print('[BULK_STOCK_TAKE] After refresh - Found ${cabbageProducts.length} Cabbage products: ${cabbageProducts.map((p) => p.name).join(', ')}');
-      print('[BULK_STOCK_TAKE] After refresh - Found ${pineappleProducts.length} Pineapple products: ${pineappleProducts.map((p) => p.name).join(', ')}');
+      print('[BULK_STOCK_TAKE] Loading products from API...');
+      await ref.read(productsProvider.notifier).loadProducts();
       
-      // Print ALL product names after refresh for debugging
-      print('[BULK_STOCK_TAKE] ALL PRODUCTS AFTER REFRESH: ${_allProducts.map((p) => p.name).join(', ')}');
+      final updatedState = ref.read(productsProvider);
+      setState(() {
+        _allProducts = updatedState.products;
+        _isLoadingProducts = false;
+      });
+      
+      print('[BULK_STOCK_TAKE] Loaded ${_allProducts.length} products from API');
     } catch (e) {
       print('[BULK_STOCK_TAKE] Error refreshing products: $e');
+      setState(() {
+        _isLoadingProducts = false;
+      });
     }
   }
 
@@ -511,6 +517,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   // Check if search query doesn't match any existing products
   bool get _shouldShowAddProductButton {
     if (_searchQuery.trim().isEmpty) return false;
+    if (_isLoadingProducts) return false; // Don't show button while loading
     
     final query = _searchQuery.toLowerCase().trim();
     
@@ -527,6 +534,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     print('[BULK_STOCK_TAKE] Search query: "$query"');
     print('[BULK_STOCK_TAKE] Total products: ${_allProducts.length}');
     print('[BULK_STOCK_TAKE] Has matching product: $hasMatchingProduct');
+    print('[BULK_STOCK_TAKE] Is loading products: $_isLoadingProducts');
     print('[BULK_STOCK_TAKE] Should show add button: ${!hasMatchingProduct}');
     
     return !hasMatchingProduct;
@@ -572,12 +580,8 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         'minimum_stock': 5.0,
       });
       
-      // Refresh inventory to get the new product
-      await ref.read(inventoryProvider.notifier).refreshAll();
-      
-      // Update local products list
-      final inventoryState = ref.read(inventoryProvider);
-      _allProducts = inventoryState.products;
+      // Refresh products list to get the new product
+      await _refreshProductsList();
       
       // Add the new product to stock take list
       _addProductToStockTake(newProduct);
@@ -619,8 +623,12 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       // Sort entries by product name alphabetically
       final sortedEntries = List<Map<String, dynamic>>.from(entries)
         ..sort((a, b) {
-          final productA = _stockTakeProducts.firstWhere((p) => p.id == a['product_id']);
-          final productB = _stockTakeProducts.firstWhere((p) => p.id == b['product_id']);
+          final productA = _stockTakeProducts.where((p) => p.id == a['product_id']).firstOrNull;
+          final productB = _stockTakeProducts.where((p) => p.id == b['product_id']).firstOrNull;
+          if (productA == null || productB == null) {
+            print('[PDF] ERROR: Missing product in sort - A: ${productA?.name}, B: ${productB?.name}');
+            return 0; // Keep original order if products not found
+          }
           return productA.name.toLowerCase().compareTo(productB.name.toLowerCase());
         });
       print('[STOCK_TAKE_PDF] Sorted ${sortedEntries.length} entries alphabetically by product name');
@@ -718,11 +726,17 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
               // Table Rows
               ...sortedEntries.map((entry) {
                 final productId = entry['product_id'] as int;
-                final product = _stockTakeProducts.firstWhere((p) => p.id == productId);
+                final product = _stockTakeProducts.where((p) => p.id == productId).firstOrNull;
+                if (product == null) {
+                  print('[PDF] ERROR: Product with ID $productId not found in _stockTakeProducts');
+                  return pw.Container(); // Skip this entry
+                }
                 final countedStock = entry['counted_quantity'] as double;
                 final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
                 final wastageReason = entry['wastage_reason'] as String? ?? '';
                 final comment = entry['comment'] as String? ?? '';
+                
+                print('[PDF] Processing ${product.name}: counted=$countedStock, wastage=$wastageQuantity, reason="$wastageReason"');
                 
                 return pw.Container(
                   padding: const pw.EdgeInsets.all(8),
@@ -808,8 +822,12 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       // Sort entries by product name alphabetically
       final sortedEntries = List<Map<String, dynamic>>.from(entries)
         ..sort((a, b) {
-          final productA = _stockTakeProducts.firstWhere((p) => p.id == a['product_id']);
-          final productB = _stockTakeProducts.firstWhere((p) => p.id == b['product_id']);
+          final productA = _stockTakeProducts.where((p) => p.id == a['product_id']).firstOrNull;
+          final productB = _stockTakeProducts.where((p) => p.id == b['product_id']).firstOrNull;
+          if (productA == null || productB == null) {
+            print('[EXCEL] ERROR: Missing product in sort - A: ${productA?.name}, B: ${productB?.name}');
+            return 0; // Keep original order if products not found
+          }
           return productA.name.toLowerCase().compareTo(productB.name.toLowerCase());
         });
       print('[STOCK_TAKE_EXCEL] Sorted ${sortedEntries.length} entries alphabetically by product name');
@@ -885,11 +903,17 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       // Add data rows
       for (final entry in sortedEntries) {
         final productId = entry['product_id'] as int;
-        final product = _stockTakeProducts.firstWhere((p) => p.id == productId);
+        final product = _stockTakeProducts.where((p) => p.id == productId).firstOrNull;
+        if (product == null) {
+          print('[EXCEL] ERROR: Product with ID $productId not found in _stockTakeProducts');
+          continue; // Skip this entry
+        }
         final countedStock = entry['counted_quantity'] as double;
         final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
         final wastageReason = entry['wastage_reason'] as String? ?? '';
         final comment = entry['comment'] as String? ?? '';
+        
+        print('[EXCEL] Processing ${product.name}: counted=$countedStock, wastage=$wastageQuantity, reason="$wastageReason"');
         
         final dataRow = [
           excel.TextCellValue(product.name),
@@ -977,47 +1001,78 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     try {
       final entries = <Map<String, dynamic>>[];
       
-      for (final product in _stockTakeProducts) {
-        final controller = _controllers[product.id];
-        if (controller == null || controller.text.isEmpty) continue;
+      // Process ALL product IDs that have any controller data
+      final allProductIds = <int>{};
+      allProductIds.addAll(_controllers.keys);
+      allProductIds.addAll(_commentControllers.keys);
+      allProductIds.addAll(_wastageControllers.keys);
+      allProductIds.addAll(_stockTakeProducts.map((p) => p.id));
+      
+      for (final productId in allProductIds) {
+        // Get product info (use from list or create minimal info)
+        final product = _stockTakeProducts.where((p) => p.id == productId).firstOrNull;
+        
+        final controller = _controllers[productId];
+        final commentController = _commentControllers[productId];
+        final wastageController = _wastageControllers[productId];
+        
+        // Check if ANY data was entered for this product
+        final hasCountedQuantity = controller != null && controller.text.trim().isNotEmpty;
+        final hasComment = commentController != null && commentController.text.trim().isNotEmpty;
+        final hasWastage = wastageController != null && wastageController.text.trim().isNotEmpty;
+        
+        // Skip products with NO data at all
+        if (!hasCountedQuantity && !hasComment && !hasWastage) continue;
         
         // Parse as double to support kg and other decimal units
-        final countedQuantity = double.tryParse(controller.text) ?? 0.0;
-        final currentStock = _originalStock[product.id] ?? 0.0;
+        final countedQuantity = double.tryParse(controller?.text ?? '') ?? 0.0;
+        final currentStock = _originalStock[productId] ?? 0.0;
         
         // Get comment from comment controller
-        final commentController = _commentControllers[product.id];
         final comment = commentController?.text.trim() ?? '';
         
-        // Get wastage data
-        final wastageController = _wastageControllers[product.id];
-        final wastageQuantity = double.tryParse(wastageController?.text ?? '') ?? 0.0;
-        final wastageReason = _wastageReasons[product.id] ?? 'Spoilage';
+        // Get wastage data with explicit null checking and verification
+        final wastageText = wastageController?.text?.trim() ?? '';
+        // Remove any units (kg, g, etc.) from the wastage text before parsing
+        final cleanWastageText = wastageText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
+        final wastageQuantity = double.tryParse(cleanWastageText) ?? 0.0;
+        final wastageReason = _wastageReasons[productId] ?? 'Spoilage';
         
-        // For complete stock take, include ALL entries with counted quantities
+        final productName = product?.name ?? 'Unknown Product';
+        
+        print('[STOCK_TAKE] Including $productName: counted=$countedQuantity, wastage=$wastageQuantity, comment="$comment"');
+        
+        // Include ALL entries with ANY data (counted quantities, wastage, or comments)
         entries.add({
-          'product_id': product.id,
+          'product_id': productId,
           'counted_quantity': countedQuantity,
           'current_stock': currentStock,
           'wastage_quantity': wastageQuantity,
           'wastage_reason': wastageReason,
-          'comment': comment, // Include the comment
+          'comment': comment,
         });
       }
 
       if (entries.isEmpty) {
-        // Check if user entered any quantities at all
+        // Check if user entered ANY data at all (counted quantities, wastage, or comments)
         bool hasAnyEntries = false;
         for (final product in _stockTakeProducts) {
           final controller = _controllers[product.id];
-          if (controller != null && controller.text.isNotEmpty) {
+          final commentController = _commentControllers[product.id];
+          final wastageController = _wastageControllers[product.id];
+          
+          final hasCountedQuantity = controller != null && controller.text.isNotEmpty;
+          final hasComment = commentController != null && commentController.text.trim().isNotEmpty;
+          final hasWastage = wastageController != null && wastageController.text.isNotEmpty;
+          
+          if (hasCountedQuantity || hasComment || hasWastage) {
             hasAnyEntries = true;
             break;
           }
         }
         
         if (!hasAnyEntries) {
-          throw Exception('Please enter counted quantities for at least one product to complete the stock take');
+          throw Exception('Please enter data (counted quantities, wastage, or comments) for at least one product to complete the stock take');
         }
       }
 
@@ -1031,6 +1086,13 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       ref.read(inventoryProvider.notifier).forceRefresh();
 
       // Generate PDF and Excel reports
+      print('[STOCK_TAKE] ===== GENERATING REPORTS WITH ${entries.length} ENTRIES =====');
+      for (int i = 0; i < entries.length; i++) {
+        final entry = entries[i];
+        print('[STOCK_TAKE] Entry $i: ProductID=${entry['product_id']}, Counted=${entry['counted_quantity']}, Wastage=${entry['wastage_quantity']}, Reason="${entry['wastage_reason']}"');
+      }
+      print('[STOCK_TAKE] ====================================');
+      
       String? pdfPath;
       String? excelPath;
       try {
@@ -1360,8 +1422,8 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                     ),
                   ],
                   
-                  // Search Results (products not in stock take list)
-                  if (_searchResultsNotInList.isNotEmpty) ...[
+                  // Search Results (products not in stock take list) or loading indicator
+                  if (_searchQuery.isNotEmpty) ...[
                     Container(
                       padding: const EdgeInsets.all(8),
                       color: Colors.blue[50],
@@ -1369,65 +1431,111 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                         children: [
                           Icon(Icons.search, size: 16, color: Colors.blue[700]),
                           const SizedBox(width: 8),
-                          Text(
-                            'Add from search (${_searchResultsNotInList.length})',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w500,
-                              color: Colors.blue[700],
-                              fontSize: 12,
+                          _isLoadingProducts
+                              ? Text(
+                                  'Loading products...',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.blue[700],
+                                    fontSize: 12,
+                                  ),
+                                )
+                              : Text(
+                                  'Add from search (${_searchResultsNotInList.length})',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.blue[700],
+                                    fontSize: 12,
+                                  ),
+                                ),
+                          if (_isLoadingProducts) ...[
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.blue[700]!),
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
                     SizedBox(
                       height: 200,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _searchResultsNotInList.length,
-                        itemBuilder: (context, index) {
-                          final product = _searchResultsNotInList[index];
-                          return Card(
-                            margin: const EdgeInsets.all(4),
-                            child: Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
+                      child: _isLoadingProducts
+                          ? const Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                  CircularProgressIndicator(),
+                                  SizedBox(height: 8),
+                                  Text('Loading products...'),
+                                ],
+                              ),
+                            )
+                          : _searchResultsNotInList.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      SizedBox(
-                                        width: 150,
-                                        child: Text(
-                                          product.name,
-                                          style: const TextStyle(fontWeight: FontWeight.w500),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
+                                      Icon(Icons.search_off, size: 48, color: Colors.grey[400]),
+                                      SizedBox(height: 8),
                                       Text(
-                                        'Current: ${product.stockLevel % 1 == 0 ? product.stockLevel.toInt() : product.stockLevel.toStringAsFixed(2)} ${product.unit}',
-                                        style: TextStyle(
-                                          color: Colors.grey[600],
-                                          fontSize: 11,
-                                        ),
+                                        'No products found matching "${_searchQuery}"',
+                                        style: TextStyle(color: Colors.grey[600]),
+                                        textAlign: TextAlign.center,
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(width: 8),
-                                  IconButton(
-                                    icon: const Icon(Icons.add_circle, color: Colors.green),
-                                    onPressed: () => _addProductToStockTake(product),
-                                    tooltip: 'Add to stock take',
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                                )
+                              : ListView.builder(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: _searchResultsNotInList.length,
+                                  itemBuilder: (context, index) {
+                                    final product = _searchResultsNotInList[index];
+                                    return Card(
+                                      margin: const EdgeInsets.all(4),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(8),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                SizedBox(
+                                                  width: 150,
+                                                  child: Text(
+                                                    product.name,
+                                                    style: const TextStyle(fontWeight: FontWeight.w500),
+                                                    maxLines: 2,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  'Current: ${product.stockLevel % 1 == 0 ? product.stockLevel.toInt() : product.stockLevel.toStringAsFixed(2)} ${product.unit}',
+                                                  style: TextStyle(
+                                                    color: Colors.grey[600],
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(width: 8),
+                                            IconButton(
+                                              icon: const Icon(Icons.add_circle, color: Colors.green),
+                                              onPressed: () => _addProductToStockTake(product),
+                                              tooltip: 'Add to stock take',
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
                     ),
                     const Divider(),
                   ],
@@ -1615,6 +1723,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                                   ),
                                   style: const TextStyle(fontSize: 14),
                                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                                  ],
                                   onChanged: (value) {
                                     _scheduleAutoSave(); // Auto-save when wastage quantity changes
                                   },
@@ -1698,16 +1809,16 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   }
 }
 
-class _AddProductDialog extends StatefulWidget {
+class _AddProductDialog extends ConsumerStatefulWidget {
   final String productName;
 
   const _AddProductDialog({required this.productName});
 
   @override
-  State<_AddProductDialog> createState() => _AddProductDialogState();
+  ConsumerState<_AddProductDialog> createState() => _AddProductDialogState();
 }
 
-class _AddProductDialogState extends State<_AddProductDialog> {
+class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _priceController = TextEditingController();
@@ -1729,47 +1840,27 @@ class _AddProductDialogState extends State<_AddProductDialog> {
   Future<void> _loadBackendData() async {
     print('[ADD_PRODUCT] Starting to load backend data...');
     
-    // Set fallback data immediately to prevent white screen
-    _departments = [
-      {'id': 1, 'name': 'Vegetables'},
-      {'id': 2, 'name': 'Fruits'},
-      {'id': 3, 'name': 'Herbs'},
-      {'id': 4, 'name': 'Dairy'},
-      {'id': 5, 'name': 'Meat'},
-      {'id': 6, 'name': 'Bakery'},
-      {'id': 7, 'name': 'Pantry'},
-      {'id': 8, 'name': 'Beverages'},
-      {'id': 9, 'name': 'Other'},
-    ];
-    _units = [
-      {'id': 1, 'name': 'piece'},
-      {'id': 2, 'name': 'kg'},
-      {'id': 3, 'name': 'g'},
-      {'id': 4, 'name': 'each'},
-      {'id': 5, 'name': 'bunch'},
-      {'id': 6, 'name': 'box'},
-      {'id': 7, 'name': 'bag'},
-      {'id': 8, 'name': 'packet'},
-      {'id': 9, 'name': 'L'},
-    ];
-    _selectedDepartment = 'Vegetables';
-    _selectedUnit = 'piece';
+    // NO FALLBACK DATA - LOAD FROM BACKEND ONLY
+    _departments = [];
+    _units = [];
+    _selectedDepartment = '';
+    _selectedUnit = '';
     
-    // Show dialog immediately with fallback data
+    // Keep loading until we get data from backend
     setState(() {
-      _isLoadingData = false;
+      _isLoadingData = true;
     });
     
     // Try to load from backend in background
     try {
       print('[ADD_PRODUCT] Attempting to load from API...');
-      final apiService = ApiService();
+      final apiService = ref.read(apiServiceProvider);
       
       final departments = await apiService.getDepartments();
       final units = await apiService.getUnitsOfMeasure();
       
       print('[ADD_PRODUCT] Successfully loaded ${departments.length} departments and ${units.length} units');
-      print('[ADD_PRODUCT] Units: ${units.map((u) => '${u['name']}(${u['abbreviation']})').join(', ')}');
+      print('[ADD_PRODUCT] Units: ${units.map((u) => '${u['name']} (${u['abbreviation']})').join(', ')}');
       print('[ADD_PRODUCT] Departments: ${departments.map((d) => d['name']).join(', ')}');
       
       setState(() {
@@ -1778,41 +1869,43 @@ class _AddProductDialogState extends State<_AddProductDialog> {
         
         // Update selected values if they exist in new data
         final validDepartments = _departments.where((d) => d['name'] != null).toList();
-        // Use 'name' field for units since 'abbreviation' is null in backend
+        // Use 'name' field for units since abbreviation is null from backend
         final validUnits = _units.where((u) => u['name'] != null).toList();
         
         print('[ADD_PRODUCT] Valid units after filtering: ${validUnits.map((u) => u['name']).join(', ')}');
         print('[ADD_PRODUCT] Current selected unit: $_selectedUnit');
         
-        // Always ensure we have valid selected values
+        // Set first valid values as defaults (from backend only)
         if (validDepartments.isNotEmpty) {
-          if (!validDepartments.any((d) => d['name'] == _selectedDepartment)) {
-            _selectedDepartment = validDepartments.first['name'];
-            print('[ADD_PRODUCT] Updated selected department to: $_selectedDepartment');
-          }
+          _selectedDepartment = validDepartments.first['name'];
+          print('[ADD_PRODUCT] Set selected department to: $_selectedDepartment');
         }
         
         if (validUnits.isNotEmpty) {
-          // Check if current selection exists in valid units (by name)
-          if (!validUnits.any((u) => u['name'] == _selectedUnit)) {
-            _selectedUnit = validUnits.first['name'];
-            print('[ADD_PRODUCT] Updated selected unit to: $_selectedUnit');
-          }
+          _selectedUnit = validUnits.first['name']; // Use name instead of abbreviation
+          print('[ADD_PRODUCT] Set selected unit to: $_selectedUnit');
         }
+        
+        // Mark as loaded
+        _isLoadingData = false;
       });
       
       print('[ADD_PRODUCT] Backend data loaded successfully');
     } catch (e) {
       print('[ADD_PRODUCT] Failed to load backend data: $e');
-      // Already have fallback data, so just continue
+      // If API fails, close dialog and show error
       if (mounted) {
+        setState(() {
+          _isLoadingData = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Using offline data. API error: $e'),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 2),
+            content: Text('Failed to load product data from server: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
           ),
         );
+        Navigator.of(context).pop(); // Close dialog on API failure
       }
     }
   }
@@ -1863,7 +1956,7 @@ class _AddProductDialogState extends State<_AddProductDialog> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      value: _selectedUnit,
+                      value: _units.any((u) => u['name'] == _selectedUnit) ? _selectedUnit : null,
                       decoration: const InputDecoration(
                         labelText: 'Unit',
                         border: OutlineInputBorder(),
@@ -1876,6 +1969,12 @@ class _AddProductDialogState extends State<_AddProductDialog> {
                         setState(() {
                           _selectedUnit = value!;
                         });
+                      },
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please select a unit';
+                        }
+                        return null;
                       },
                     ),
                   ),
@@ -1906,7 +2005,7 @@ class _AddProductDialogState extends State<_AddProductDialog> {
               const SizedBox(height: 16),
               
               DropdownButtonFormField<String>(
-                value: _selectedDepartment,
+                value: _departments.any((d) => d['name'] == _selectedDepartment) ? _selectedDepartment : null,
                 decoration: const InputDecoration(
                   labelText: 'Department',
                   border: OutlineInputBorder(),
@@ -1919,6 +2018,12 @@ class _AddProductDialogState extends State<_AddProductDialog> {
                   setState(() {
                     _selectedDepartment = value!;
                   });
+                },
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please select a department';
+                  }
+                  return null;
                 },
               ),
             ],
