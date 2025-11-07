@@ -8,6 +8,7 @@ import '../../models/karl_user.dart';
 import '../../services/api_service.dart';
 import '../auth/karl_auth_provider.dart';
 import 'widgets/bulk_stock_take_dialog.dart';
+import 'utils/bulk_stock_take_launcher.dart';
 
 class BulkStockTakePage extends ConsumerStatefulWidget {
   const BulkStockTakePage({super.key});
@@ -166,22 +167,11 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     // This avoids the 43-product limitation from inventory provider
     print('[BULK_STOCK_TAKE] Starting with empty product list - dialog will load ALL products for search');
 
-    print('[BULK_STOCK_TAKE] Opening BulkStockTakeDialog...');
-    showDialog(
+    print('[BULK_STOCK_TAKE] Opening BulkStockTake interface...');
+    BulkStockTakeLauncher.launch(
       context: context,
-      barrierDismissible: false, // Prevent dismissing by clicking outside
-      builder: (context) => BulkStockTakeDialog(
-        products: [], // Empty list - dialog loads ALL products internally
-      ),
-    ).then((completed) {
-      print('[BULK_STOCK_TAKE] Dialog completed with result: $completed');
-      // Exit app after stock take completion or cancellation
-      if (completed == true) {
-        _showCompletionDialog();
-      } else {
-        _exitApp();
-      }
-    });
+      products: [], // Empty list - interface loads ALL products internally
+    );
   }
 
   void _showNoProductsDialog() {

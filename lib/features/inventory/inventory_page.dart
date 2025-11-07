@@ -15,6 +15,7 @@ import '../../services/api_service.dart';
 import 'widgets/stock_level_card.dart';
 import 'widgets/stock_entry_dialog.dart';
 import 'widgets/bulk_stock_take_dialog.dart';
+import 'utils/bulk_stock_take_launcher.dart';
 import 'widgets/inventory_stats_cards.dart';
 import 'widgets/invoice_upload_dialog.dart';
 import 'widgets/pending_invoices_dialog.dart';
@@ -723,11 +724,9 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
       // Still show dialog even if empty - users can search and add products
     }
     
-    showDialog(
+    BulkStockTakeLauncher.launch(
       context: context,
-      builder: (context) => BulkStockTakeDialog(
-        products: productsWithStock,
-      ),
+      products: productsWithStock,
     );
   }
 
@@ -747,11 +746,9 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
       return;
     }
     
-    showDialog(
+    BulkStockTakeLauncher.launch(
       context: context,
-      builder: (context) => BulkStockTakeDialog(
-        products: lowStockProducts,
-      ),
+      products: lowStockProducts,
     );
   }
 
