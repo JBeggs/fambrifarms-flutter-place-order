@@ -38,7 +38,9 @@ class OrdersState {
     bool? isLoading,
     bool? isLoadingMore,
     String? error,
+    bool clearError = false,  // New flag to explicitly clear error
     Order? selectedOrder,
+    bool clearSelectedOrder = false,  // New flag to explicitly clear selectedOrder
     int? totalCount,
     String? nextPageUrl,
     String? previousPageUrl,
@@ -49,8 +51,8 @@ class OrdersState {
       orders: orders ?? this.orders,
       isLoading: isLoading ?? this.isLoading,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
-      error: error ?? this.error,
-      selectedOrder: selectedOrder ?? this.selectedOrder,
+      error: clearError ? null : (error ?? this.error),  // Fixed: can now clear error
+      selectedOrder: clearSelectedOrder ? null : (selectedOrder ?? this.selectedOrder),  // Fixed: can now clear selectedOrder
       totalCount: totalCount ?? this.totalCount,
       nextPageUrl: nextPageUrl ?? this.nextPageUrl,
       previousPageUrl: previousPageUrl ?? this.previousPageUrl,
@@ -67,9 +69,9 @@ class OrdersNotifier extends StateNotifier<OrdersState> {
 
   Future<void> loadOrders({int page = 1, int pageSize = 20, bool append = false}) async {
     if (!append) {
-      state = state.copyWith(isLoading: true, error: null);
+      state = state.copyWith(isLoading: true, clearError: true);
     } else {
-      state = state.copyWith(isLoadingMore: true, error: null);
+      state = state.copyWith(isLoadingMore: true, clearError: true);
     }
     
     try {
@@ -120,7 +122,7 @@ class OrdersNotifier extends StateNotifier<OrdersState> {
   }
 
   Future<Order?> createOrder(Map<String, dynamic> orderData) async {
-    state = state.copyWith(isLoading: true, error: null);
+    state = state.copyWith(isLoading: true, clearError: true);
     
     try {
       final newOrder = await _apiService.createOrder(orderData);
@@ -181,7 +183,7 @@ class OrdersNotifier extends StateNotifier<OrdersState> {
       }).toList();
       
       print('[DEBUG] OrdersProvider: Updating state with ${updatedOrders.length} orders');
-      state = state.copyWith(orders: updatedOrders, error: null);
+      state = state.copyWith(orders: updatedOrders, clearError: true);
       print('[DEBUG] OrdersProvider: Order status update completed successfully');
     } catch (e) {
       print('[ERROR] OrdersProvider: Failed to update order status: $e');

@@ -371,7 +371,25 @@ class PdfService {
   static pw.Widget _buildProductNameWithNotes(OrderItem item) {
     // Check if this is a split item based on notes
     bool isSplitItem = item.notes?.contains('Split item') == true;
+    bool hasOriginalText = item.originalText != null && item.originalText!.isNotEmpty;
     
+    // Build info lines
+    List<pw.Widget> infoLines = [];
+    
+    // Always show product name first
+    infoLines.add(pw.Text(item.product.name, style: const pw.TextStyle(fontSize: 8)));
+    
+    // Show original text from WhatsApp if available
+    if (hasOriginalText) {
+      infoLines.add(
+        pw.Text(
+          'Original: ${item.originalText}',
+          style: pw.TextStyle(fontSize: 6, color: PdfColors.grey700, fontStyle: pw.FontStyle.italic),
+        ),
+      );
+    }
+    
+    // Show split item info if applicable
     if (isSplitItem) {
       String splitInfo = '';
       if (item.notes?.contains('Reserved from stock') == true) {
@@ -380,17 +398,22 @@ class PdfService {
         splitInfo = '[To Order Part]';
       }
       
-      return pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(item.product.name, style: const pw.TextStyle(fontSize: 8)),
-          if (splitInfo.isNotEmpty)
-            pw.Text(splitInfo, style: pw.TextStyle(fontSize: 6, color: PdfColors.blue700)),
-        ],
-      );
+      if (splitInfo.isNotEmpty) {
+        infoLines.add(
+          pw.Text(splitInfo, style: pw.TextStyle(fontSize: 6, color: PdfColors.blue700)),
+        );
+      }
     }
     
-    return pw.Text(item.product.name, style: const pw.TextStyle(fontSize: 8));
+    // Return single text or column based on info lines
+    if (infoLines.length == 1) {
+      return infoLines[0];
+    }
+    
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: infoLines,
+    );
   }
 
   /// Helper methods

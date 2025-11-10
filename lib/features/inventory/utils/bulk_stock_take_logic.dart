@@ -88,30 +88,15 @@ class BulkStockTakeLogic {
     return false;
   }
   
-  /// Sort products by timestamp (newest first) then alphabetically
+  /// Sort products alphabetically by name
   static List<Product> sortProducts(
     List<Product> products,
     Map<int, DateTime> addedTimestamps,
   ) {
     final sorted = List<Product>.from(products);
     
-    sorted.sort((a, b) {
-      final timestampA = addedTimestamps[a.id];
-      final timestampB = addedTimestamps[b.id];
-      
-      // If both have timestamps, sort by most recent first
-      if (timestampA != null && timestampB != null) {
-        final timeDiff = timestampB.compareTo(timestampA); // Newest first
-        if (timeDiff != 0) return timeDiff;
-      }
-      
-      // If only one has timestamp, it goes first
-      if (timestampA != null && timestampB == null) return -1;
-      if (timestampA == null && timestampB != null) return 1;
-      
-      // If neither has timestamp (or same timestamp), sort alphabetically
-      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    });
+    // Sort alphabetically by product name
+    sorted.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     
     return sorted;
   }

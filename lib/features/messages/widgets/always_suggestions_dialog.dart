@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../services/api_service.dart';
 import '../../../services/pdf_service.dart';
 import '../../../services/excel_service.dart';
@@ -290,33 +291,34 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     final customer = widget.suggestionsData['customer'] as Map<String, dynamic>? ?? {};
     final totalItems = widget.suggestionsData['total_items'] as int? ?? 0;
 
-    return Dialog(
-      child: Container(
-        width: MediaQuery.of(context).size.width * 0.9,
-        height: MediaQuery.of(context).size.height * 0.8,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Row(
-              children: [
-                const Icon(Icons.shopping_cart, color: Colors.blue),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Confirm Order Items',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+    // Check if we're in a Scaffold (mobile full-screen) or Dialog (desktop)
+    final isInScaffold = Scaffold.maybeOf(context) != null;
+
+    // Content that's shared between both modes
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header (only show if NOT in Scaffold - Scaffold has AppBar)
+        if (!isInScaffold) ...[
+          Row(
+            children: [
+              const Icon(Icons.shopping_cart, color: Colors.blue),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Confirm Order Items',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-                IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+        ],
             
             // Customer info
             if (customer.isNotEmpty) ...[
@@ -392,9 +394,26 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               ],
             ),
           ],
-        ),
-      ),
     );
+
+    // Return content wrapped in Dialog for desktop, or directly for mobile Scaffold
+    if (isInScaffold) {
+      // Mobile: return content directly (already in Scaffold with AppBar)
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: content,
+      );
+    } else {
+      // Desktop: wrap in Dialog
+      return Dialog(
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.9,
+          height: MediaQuery.of(context).size.height * 0.8,
+          padding: const EdgeInsets.all(16),
+          child: content,
+        ),
+      );
+    }
   }
 
   Widget _buildItemCard(Map<String, dynamic> item, int index) {
@@ -1119,6 +1138,31 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             }
             
             filesMessage = _buildFilesMessage(pdfPath, excelPath);
+            
+            // Share the generated files on Android
+            if (pdfPath != null || excelPath != null) {
+              try {
+                final List<XFile> filesToShare = [];
+                if (pdfPath != null) {
+                  filesToShare.add(XFile(pdfPath));
+                }
+                if (excelPath != null) {
+                  filesToShare.add(XFile(excelPath));
+                }
+                
+                if (filesToShare.isNotEmpty) {
+                  await Share.shareXFiles(
+                    filesToShare,
+                    subject: 'Order ${result['order_number'] ?? orderId} - ${widget.suggestionsData['customer']?['name'] ?? 'Customer'}',
+                    text: 'Order created successfully!',
+                  );
+                  print('[ORDER SHARE] Files shared successfully');
+                }
+              } catch (e) {
+                print('[ORDER SHARE] Error sharing files: $e');
+                // Don't fail if sharing fails - user can still manually share
+              }
+            }
           }
           
           ScaffoldMessenger.of(context).showSnackBar(

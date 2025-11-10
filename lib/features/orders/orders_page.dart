@@ -83,6 +83,12 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
           onPressed: () => context.go('/'),
         ),
         actions: [
+          // Mark All Confirmed as Delivered button
+          IconButton(
+            icon: const Icon(Icons.check_circle_outline),
+            onPressed: _markAllConfirmedAsDelivered,
+            tooltip: 'Mark All Confirmed Orders as Delivered',
+          ),
           IconButton(
             icon: const Icon(Icons.table_chart),
             onPressed: () => _generateWorkbook(context, ordersState.orders),
@@ -344,6 +350,136 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
         ref.read(ordersProvider.notifier).refreshOrders();
       }
     });
+  }
+
+  Future<void> _markAllConfirmedAsDelivered() async {
+    final ordersNotifier = ref.read(ordersProvider.notifier);
+    final confirmedOrders = ref.read(ordersProvider).orders
+        .where((order) => order.status == 'confirmed')
+        .toList();
+    
+    if (confirmedOrders.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('ℹ️ No confirmed orders to mark as delivered'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+      return;
+    }
+    
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Mark Orders as Delivered?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('You are about to mark ${confirmedOrders.length} confirmed orders as delivered.'),
+            const SizedBox(height: 16),
+            const Text(
+              'This will:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text('✓ Free up reserved stock'),
+            const Text('✓ Allow new orders to be taken'),
+            const Text('✓ Update order statuses to "delivered"'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Mark as Delivered'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed != true || !mounted) return;
+    
+    // Show loading indicator
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            ),
+            const SizedBox(width: 16),
+            Text('Marking ${confirmedOrders.length} orders as delivered...'),
+          ],
+        ),
+        duration: const Duration(seconds: 30),
+      ),
+    );
+    
+    // Mark each order as delivered
+    int successCount = 0;
+    int failCount = 0;
+    String? lastError;
+    
+    for (final order in confirmedOrders) {
+      try {
+        await ordersNotifier.updateOrderStatus(order.id, 'delivered');
+        successCount++;
+      } catch (e) {
+        lastError = e.toString();
+        print('[ORDERS] Failed to mark order ${order.orderNumber} as delivered: $e');
+        failCount++;
+      }
+    }
+    
+    // Refresh orders list
+    await ordersNotifier.refreshOrders();
+    
+    // Show result
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      
+      // Check if failed due to permissions (403 error)
+      final isPermissionError = failCount > 0 && 
+                                 lastError != null && 
+                                 lastError.contains('403');
+      
+      if (isPermissionError) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              '🔒 Permission Denied: Your account doesn\'t have permission to mark orders as delivered. Please contact an administrator.',
+            ),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 6),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              failCount == 0
+                  ? '✅ Successfully marked $successCount orders as delivered!'
+                  : '⚠️ Marked $successCount orders as delivered, $failCount failed',
+            ),
+            backgroundColor: failCount == 0 ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   Widget _buildLoadMoreItem(BuildContext context, OrdersNotifier ordersNotifier, OrdersState ordersState) {

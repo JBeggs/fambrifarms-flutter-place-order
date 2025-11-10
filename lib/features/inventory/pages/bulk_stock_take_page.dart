@@ -32,6 +32,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
   final Map<int, double> _originalStock = {};
   final Map<int, DateTime> _addedTimestamps = {}; // Track when products were added
   final TextEditingController _searchController = TextEditingController();
+  final Set<int> _expandedProducts = {}; // Track which products are expanded
   
   // Dynamic list of products in stock take (can be added/removed)
   List<Product> _stockTakeProducts = [];
@@ -73,16 +74,14 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     }
     
     for (final product in _stockTakeProducts) {
-      _controllers[product.id] = TextEditingController();
+      _controllers[product.id] = TextEditingController(); // Start empty
       _commentControllers[product.id] = TextEditingController();
       _wastageControllers[product.id] = TextEditingController();
       _wastageReasonControllers[product.id] = TextEditingController();
       _originalStock[product.id] = product.stockLevel;
       // Initial products get older timestamps (so new ones appear on top)
       _addedTimestamps[product.id] = DateTime.now().subtract(Duration(hours: 1));
-      _controllers[product.id]!.text = product.stockLevel % 1 == 0
-          ? product.stockLevel.toInt().toString()
-          : product.stockLevel.toStringAsFixed(2);
+      // Don't pre-fill with current stock - let user enter fresh count
     }
     
     
@@ -304,10 +303,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       _wastageControllers[product.id] = TextEditingController();
       _wastageReasonControllers[product.id] = TextEditingController();
       _originalStock[product.id] = product.stockLevel;
+      _expandedProducts.add(product.id); // Expand new products by default
       _addedTimestamps[product.id] = DateTime.now(); // Record when added
-      _controllers[product.id]!.text = product.stockLevel % 1 == 0
-          ? product.stockLevel.toInt().toString()
-          : product.stockLevel.toStringAsFixed(2);
+      // Don't pre-fill - let user enter fresh count
       
       // Clear search after adding product
       _searchController.clear();
@@ -1261,52 +1259,84 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                       final wastageController = _wastageControllers[product.id]!;
                       final wastageReasonController = _wastageReasonControllers[product.id]!;
                       final originalStock = _originalStock[product.id] ?? 0.0;
+                      final isExpanded = _expandedProducts.contains(product.id);
 
                       return Card(
                         margin: const EdgeInsets.only(bottom: 12),
-                        elevation: 2,
+                        elevation: isExpanded ? 2 : 1,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Product Header
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          product.name,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16,
+                        child: InkWell(
+                          onTap: () {
+                            setState(() {
+                              if (isExpanded) {
+                                _expandedProducts.remove(product.id);
+                              } else {
+                                _expandedProducts.add(product.id);
+                              }
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Product Header (Always Visible)
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            product.name,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
+                                            ),
                                           ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          '${product.sku ?? 'No SKU'} • Current: $originalStock ${product.unit}',
-                                          style: TextStyle(
-                                            color: Colors.grey[600],
-                                            fontSize: 13,
+                                          const SizedBox(height: 4),
+                                          Row(
+                                            children: [
+                                              Text(
+                                                'Current: $originalStock ${product.unit}',
+                                                style: TextStyle(
+                                                  color: Colors.grey[600],
+                                                  fontSize: 13,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 12),
+                                              // Show icons for filled fields when collapsed
+                                              if (!isExpanded) ...[
+                                                if (controller.text.isNotEmpty)
+                                                  Icon(Icons.check_circle, size: 16, color: Colors.green[600]),
+                                                if (wastageController.text.isNotEmpty)
+                                                  Icon(Icons.warning, size: 16, color: Colors.orange[600]),
+                                                if (commentController.text.isNotEmpty)
+                                                  Icon(Icons.comment, size: 16, color: Colors.blue[600]),
+                                              ],
+                                            ],
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  IconButton(
-                                    onPressed: () => _removeProductFromStockTake(product.id),
-                                    icon: const Icon(Icons.close, color: Colors.red),
-                                    tooltip: 'Remove from stock take',
-                                  ),
-                                ],
-                              ),
+                                    Icon(
+                                      isExpanded ? Icons.expand_less : Icons.expand_more,
+                                      color: Colors.grey[600],
+                                    ),
+                                    IconButton(
+                                      onPressed: () => _removeProductFromStockTake(product.id),
+                                      icon: const Icon(Icons.close, color: Colors.red, size: 20),
+                                      tooltip: 'Remove',
+                                    ),
+                                  ],
+                                ),
 
-                              const SizedBox(height: 16),
+                                // Expandable Content
+                                if (isExpanded) ...[
+                                  const SizedBox(height: 16),
 
                               // Input Row
                               Row(
@@ -1586,7 +1616,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                   ],
                                 ),
                               ),
-                            ],
+                                ], // End of isExpanded content
+                              ],
+                            ),
                           ),
                         ),
                       );
@@ -1626,7 +1658,7 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.productName);
-    _priceController = TextEditingController(text: '0.00');
+    _priceController = TextEditingController(); // Start empty
     _loadData();
   }
 

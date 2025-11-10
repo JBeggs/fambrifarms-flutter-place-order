@@ -39,9 +39,8 @@ class KarlAuthNotifier extends StateNotifier<AuthState> {
   final ApiService _apiService;
 
   KarlAuthNotifier(this._apiService) : super(const AuthState()) {
-    // Auto-login disabled - always show login screen
-    // _checkStoredAuth();
-    state = state.copyWith(isLoading: false);
+    // Auto-login enabled - check for stored credentials
+    _checkStoredAuth();
   }
 
   // Check if Karl is already logged in (stored credentials)

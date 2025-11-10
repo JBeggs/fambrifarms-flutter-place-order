@@ -234,6 +234,17 @@ class ExcelService {
         stockStatus = 'Reservation Failed';
       }
       
+      // Build notes field with original text if available
+      String notesField = '';
+      if (item.originalText != null && item.originalText!.isNotEmpty) {
+        notesField = 'Original: ${item.originalText}';
+        if (item.notes?.isNotEmpty == true) {
+          notesField += '\n${item.notes}';
+        }
+      } else if (item.notes?.isNotEmpty == true) {
+        notesField = item.notes!;
+      }
+      
       final rowData = [
         TextCellValue(productName),
         DoubleCellValue(item.quantity),
@@ -241,7 +252,7 @@ class ExcelService {
         // DoubleCellValue(item.price),
         // DoubleCellValue(itemTotal),
         TextCellValue(stockStatus),
-        TextCellValue(item.notes ?? ''),
+        TextCellValue(notesField),
       ];
       
       for (int i = 0; i < rowData.length; i++) {

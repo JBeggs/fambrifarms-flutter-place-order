@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:place_order_final/features/inventory/utils/bulk_stock_take_launcher.dart';
 import 'package:place_order_final/features/orders/mobile_orders_page.dart';
+import 'package:place_order_final/features/messages/mobile_messages_page.dart';
 import 'package:place_order_final/providers/products_provider.dart';
 
 class AndroidDashboardPage extends ConsumerWidget {
@@ -147,6 +148,18 @@ class AndroidDashboardPage extends ConsumerWidget {
                 icon: Icons.inventory,
                 color: Colors.green,
                 onTap: () => _navigateToStockTake(context, ref),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Place Orders Button (WhatsApp)
+              _buildDashboardButton(
+                context: context,
+                title: 'Place Orders',
+                subtitle: 'Process WhatsApp messages and create orders',
+                icon: Icons.add_shopping_cart,
+                color: Colors.orange,
+                onTap: () => _navigateToPlaceOrders(context),
               ),
 
               const SizedBox(height: 20),
@@ -329,6 +342,15 @@ class AndroidDashboardPage extends ConsumerWidget {
         products: productsState.products,
       );
     }
+  }
+
+  void _navigateToPlaceOrders(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const MobileMessagesPage(),
+      ),
+    );
   }
 
   void _navigateToOrders(BuildContext context) {

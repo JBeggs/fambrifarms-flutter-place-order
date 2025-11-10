@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../models/whatsapp_message.dart';
 import '../../../services/api_service.dart';
 import '../../../models/product.dart';
+import '../../../utils/messages_provider.dart';
 
 class MessageEditor extends ConsumerStatefulWidget {
   final WhatsAppMessage message;
@@ -134,6 +135,80 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
       // Immediately trigger backend update for type change
       if (widget.onTypeChange != null) {
         widget.onTypeChange!(newType);
+      }
+    }
+  }
+
+  Future<void> _onDeleteMessage() async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Message?'),
+        content: const Text(
+          'Are you sure you want to delete this message? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      // Show loading
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      try {
+        // Delete the message using the messages provider
+        await ref.read(messagesProvider.notifier).deleteMessage(widget.message.id);
+        
+        if (mounted) {
+          // Close loading dialog
+          Navigator.of(context).pop();
+          
+          // Close the message editor
+          widget.onCancel();
+          
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Message deleted successfully'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          // Close loading dialog
+          Navigator.of(context).pop();
+          
+          // Show error message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('❌ Failed to delete message: $e'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
       }
     }
   }
@@ -1330,7 +1405,9 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
           
           const SizedBox(height: 8),
           
-          Expanded(
+          // Use fixed height for mobile compatibility (works with SingleChildScrollView)
+          SizedBox(
+            height: MediaQuery.of(context).size.height * 0.4, // 40% of screen height
             child: TextField(
               controller: _controller,
               maxLines: null,
@@ -1369,6 +1446,18 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
           // Action Buttons
           Row(
             children: [
+              // Delete Button
+              TextButton.icon(
+                onPressed: _onDeleteMessage,
+                icon: const Icon(Icons.delete, size: 18),
+                label: const Text('Delete'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red,
+                ),
+              ),
+              
+              const SizedBox(width: 8),
+              
               // Character count
               Text(
                 '${_controller.text.length} characters',

@@ -1,5 +1,5 @@
 name: place_order_final
-description: Modern WhatsApp Order Processing System
+description: Fambri Manager - Professional Order & Inventory Management
 version: 1.0.0+1
 
 environment:
@@ -59,6 +59,18 @@ dev_dependencies:
   
   # Linting
   flutter_lints: ^6.0.0
+  
+  # Icon Generation
+  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
+
+# App Icon Configuration
+flutter_launcher_icons:
+  android: true
+  ios: false
+  macos: true
+  image_path: "assets/icon/app_icon.png"  # You'll need to create this
+  adaptive_icon_background: "#4CAF50"  # Green background for Fambri Farms
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"

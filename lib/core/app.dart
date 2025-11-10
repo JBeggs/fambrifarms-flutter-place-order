@@ -43,19 +43,16 @@ final routerProvider = Provider.family<GoRouter, String?>((ref, initialRoute) {
       
       // After loading is complete, redirect appropriately
       if (!isLoading) {
-        // Allow direct access to bulk stock take and Android dashboard WITHOUT authentication
-        if (state.uri.path == '/bulk-stock-take' || state.uri.path == '/android-dashboard') {
-          return null; // Allow access regardless of auth status
-        }
-        
+        // Require authentication for all routes except login
         if (!isAuthenticated && state.uri.path != '/login') {
           // print('[ROUTER] Redirecting to login');
           return '/login';
         }
         
         if (isAuthenticated && (state.uri.path == '/login' || state.uri.path == '/' || state.uri.path == '/loading')) {
-          // print('[ROUTER] Redirecting to karl-dashboard');
-          return '/karl-dashboard';
+          // Redirect authenticated users to their platform-specific dashboard
+          // print('[ROUTER] Redirecting authenticated user to dashboard');
+          return initialRoute ?? '/karl-dashboard'; // Use initial route if provided, otherwise karl-dashboard
         }
       }
       
