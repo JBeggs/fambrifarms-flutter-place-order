@@ -166,18 +166,25 @@ class OrdersNotifier extends StateNotifier<OrdersState> {
 
   Future<void> updateOrderStatus(int orderId, String status) async {
     try {
+      print('[DEBUG] OrdersProvider: Updating order $orderId status to $status');
       final updatedOrder = await _apiService.updateOrderStatus(orderId, status);
+      
+      print('[DEBUG] OrdersProvider: Got updated order: ${updatedOrder.id}, status: ${updatedOrder.status}');
       
       // Update the order in the list
       final updatedOrders = state.orders.map((order) {
         if (order.id == orderId) {
+          print('[DEBUG] OrdersProvider: Found order to update, replacing with updated version');
           return updatedOrder;
         }
         return order;
       }).toList();
       
-      state = state.copyWith(orders: updatedOrders);
+      print('[DEBUG] OrdersProvider: Updating state with ${updatedOrders.length} orders');
+      state = state.copyWith(orders: updatedOrders, error: null);
+      print('[DEBUG] OrdersProvider: Order status update completed successfully');
     } catch (e) {
+      print('[ERROR] OrdersProvider: Failed to update order status: $e');
       state = state.copyWith(error: e.toString());
     }
   }

@@ -934,11 +934,20 @@ class ApiService {
 
   Future<Order> updateOrderStatus(int orderId, String status) async {
     try {
+      print('[DEBUG] Updating order $orderId status to $status');
       final response = await _djangoDio.patch('/orders/$orderId/status/', data: {
         'status': status,
       });
+      
+      print('[DEBUG] Order status update response: ${response.data}');
+      
+      if (response.data == null) {
+        throw ApiException('Empty response from server when updating order status');
+      }
+      
       return Order.fromJson(Map<String, dynamic>.from(response.data));
     } catch (e) {
+      print('[ERROR] Failed to update order status: $e');
       throw ApiException('Failed to update order status: $e');
     }
   }

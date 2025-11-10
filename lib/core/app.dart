@@ -20,6 +20,7 @@ import '../features/pricing/pricing_dashboard_page.dart';
 import '../features/inventory/inventory_page.dart';
 import '../features/inventory/bulk_stock_take_page.dart';
 import '../features/dashboard/dashboard_page.dart';
+import '../features/dashboard/android_dashboard_page.dart';
 import 'professional_theme.dart';
 
 final routerProvider = Provider.family<GoRouter, String?>((ref, initialRoute) {
@@ -42,8 +43,8 @@ final routerProvider = Provider.family<GoRouter, String?>((ref, initialRoute) {
       
       // After loading is complete, redirect appropriately
       if (!isLoading) {
-        // Allow direct access to bulk stock take WITHOUT authentication
-        if (state.uri.path == '/bulk-stock-take') {
+        // Allow direct access to bulk stock take and Android dashboard WITHOUT authentication
+        if (state.uri.path == '/bulk-stock-take' || state.uri.path == '/android-dashboard') {
           return null; // Allow access regardless of auth status
         }
         
@@ -166,6 +167,10 @@ final routerProvider = Provider.family<GoRouter, String?>((ref, initialRoute) {
             GoRoute(
               path: '/bulk-stock-take',
               builder: (context, state) => const BulkStockTakePage(),
+            ),
+            GoRoute(
+              path: '/android-dashboard',
+              builder: (context, state) => const AndroidDashboardPage(),
             ),
           ],
         );

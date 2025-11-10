@@ -518,30 +518,21 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     return results;
   }
 
-  // Check if search query doesn't match any existing products
+  // Check if search query has no results - only show create button when no search results found
   bool get _shouldShowAddProductButton {
     if (_searchQuery.trim().isEmpty) return false;
     if (_isLoadingProducts) return false; // Don't show button while loading
     
-    final query = _searchQuery.toLowerCase().trim();
-    
-    // Check if any product name exactly matches or starts with the search query
-    // This is more restrictive than contains() to show the button more often
-    final hasMatchingProduct = _allProducts.any((product) {
-      final name = product.name.toLowerCase();
-      final sku = product.sku?.toLowerCase() ?? '';
-      return name == query || name.startsWith(query) || 
-             sku == query || sku.startsWith(query);
-    });
+    // Only show create button when search query exists but no products match the search
+    final shouldShow = _searchResultsNotInList.isEmpty;
     
     // Debug info
-    print('[BULK_STOCK_TAKE] Search query: "$query"');
-    print('[BULK_STOCK_TAKE] Total products: ${_allProducts.length}');
-    print('[BULK_STOCK_TAKE] Has matching product: $hasMatchingProduct');
+    print('[BULK_STOCK_TAKE] Search query: "${_searchQuery.trim()}"');
+    print('[BULK_STOCK_TAKE] Search results count: ${_searchResultsNotInList.length}');
     print('[BULK_STOCK_TAKE] Is loading products: $_isLoadingProducts');
-    print('[BULK_STOCK_TAKE] Should show add button: ${!hasMatchingProduct}');
+    print('[BULK_STOCK_TAKE] Should show add button: $shouldShow');
     
-    return !hasMatchingProduct;
+    return shouldShow;
   }
 
   // Create a new product and add it to the stock take list
@@ -1295,7 +1286,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         if (_searchQuery.isNotEmpty && _searchResultsNotInList.isNotEmpty) ...[
           const SizedBox(height: 8),
           Container(
-            height: 120,
+            height: 200, // Bigger like the old version
             decoration: BoxDecoration(
               border: Border.all(color: Colors.grey[300]!),
               borderRadius: BorderRadius.circular(8),
@@ -1328,25 +1319,52 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                 ),
                 Expanded(
                   child: ListView.builder(
+                    scrollDirection: Axis.horizontal, // Horizontal scrolling like old version
                     itemCount: _searchResultsNotInList.length,
                     itemBuilder: (context, index) {
                       final product = _searchResultsNotInList[index];
                       final isAlreadyAdded = _stockTakeProducts.any((p) => p.id == product.id);
                       
-                      return ListTile(
-                        dense: true,
-                        title: Text(product.name, style: const TextStyle(fontSize: 14)),
-                        subtitle: Text(
-                          'Stock: ${product.stockLevel} ${product.unit} • \$${product.price.toStringAsFixed(2)}',
-                          style: const TextStyle(fontSize: 12),
+                      return Container(
+                        width: 200, // Fixed width for horizontal cards
+                        margin: const EdgeInsets.only(right: 8),
+                        child: Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  product.name, 
+                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Stock: ${product.stockLevel} ${product.unit}',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                Text(
+                                  'R${product.price.toStringAsFixed(2)}',
+                                  style: const TextStyle(fontSize: 12, color: Colors.green),
+                                ),
+                                const Spacer(),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    isAlreadyAdded
+                                        ? Icon(Icons.check_circle, color: Colors.green[600], size: 20)
+                                        : IconButton(
+                                            icon: const Icon(Icons.add_circle_outline, size: 20),
+                                            onPressed: () => _addProductToStockTake(product),
+                                          ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                        trailing: isAlreadyAdded
-                            ? Icon(Icons.check_circle, color: Colors.green[600], size: 20)
-                            : IconButton(
-                                icon: const Icon(Icons.add_circle_outline, size: 20),
-                                onPressed: () => _addProductToStockTake(product),
-                              ),
-                        onTap: isAlreadyAdded ? null : () => _addProductToStockTake(product),
                       );
                     },
                   ),

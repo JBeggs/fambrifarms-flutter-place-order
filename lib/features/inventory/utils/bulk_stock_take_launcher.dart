@@ -33,33 +33,4 @@ class BulkStockTakeLauncher {
       );
     }
   }
-
-  /// Launch with dialog specifically (for backward compatibility)
-  static void launchDialog({
-    required BuildContext context,
-    required List<Product> products,
-  }) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => BulkStockTakeDialog(
-        products: products,
-      ),
-    );
-  }
-
-  /// Launch with full-screen page specifically
-  static void launchPage({
-    required BuildContext context,
-    required List<Product> products,
-  }) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => BulkStockTakePage(
-          products: products,
-        ),
-      ),
-    );
-  }
 }

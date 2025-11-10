@@ -1,17 +1,16 @@
 import 'dart:io';
-import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:path_provider/path_provider.dart';
-import 'package:excel/excel.dart' as excel;
+import 'package:share_plus/share_plus.dart';
 import '../../../models/product.dart';
 import '../../../providers/inventory_provider.dart';
 import '../../../providers/products_provider.dart';
 import '../../../services/api_service.dart';
+import '../utils/bulk_stock_take_logic.dart';
+import '../utils/bulk_stock_take_pdf_generator.dart';
+import '../utils/bulk_stock_take_persistence.dart';
 
 class BulkStockTakePage extends ConsumerStatefulWidget {
   final List<Product> products;
@@ -29,8 +28,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
   final Map<int, TextEditingController> _controllers = {};
   final Map<int, TextEditingController> _commentControllers = {};
   final Map<int, TextEditingController> _wastageControllers = {};
-  final Map<int, String> _wastageReasons = {};
+  final Map<int, TextEditingController> _wastageReasonControllers = {};
   final Map<int, double> _originalStock = {};
+  final Map<int, DateTime> _addedTimestamps = {}; // Track when products were added
   final TextEditingController _searchController = TextEditingController();
   
   // Dynamic list of products in stock take (can be added/removed)
@@ -45,7 +45,12 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
   
   // Auto-save functionality
   Timer? _autoSaveTimer;
-  bool _hasUnsavedChanges = false;
+  
+  // Search debouncing
+  Timer? _searchDebounceTimer;
+  
+  // Scroll controller for the stock items list
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -67,28 +72,30 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       });
     }
     
-    // Provider changes are now listened to in build method via ref.watch
-    
     for (final product in _stockTakeProducts) {
       _controllers[product.id] = TextEditingController();
       _commentControllers[product.id] = TextEditingController();
       _wastageControllers[product.id] = TextEditingController();
-      _wastageReasons[product.id] = 'Spoilage'; // Default wastage reason
+      _wastageReasonControllers[product.id] = TextEditingController();
       _originalStock[product.id] = product.stockLevel;
+      // Initial products get older timestamps (so new ones appear on top)
+      _addedTimestamps[product.id] = DateTime.now().subtract(Duration(hours: 1));
+      _controllers[product.id]!.text = product.stockLevel % 1 == 0
+          ? product.stockLevel.toInt().toString()
+          : product.stockLevel.toStringAsFixed(2);
     }
     
-    // Load saved progress
-    _loadProgress();
     
-    // Load stock history
+    // Load saved progress and stock history
+    _loadSavedProgress(autoLoad: true);
     _loadStockHistory();
   }
 
   @override
   void dispose() {
-    // Cancel auto-save timer
     _autoSaveTimer?.cancel();
-    
+    _searchDebounceTimer?.cancel();
+    _scrollController.dispose();
     _searchController.dispose();
     for (final controller in _controllers.values) {
       controller.dispose();
@@ -99,67 +106,140 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     for (final controller in _wastageControllers.values) {
       controller.dispose();
     }
+    for (final controller in _wastageReasonControllers.values) {
+      controller.dispose();
+    }
+    _addedTimestamps.clear(); // Clean up timestamps
     super.dispose();
   }
 
-  // Get products currently in the stock take list (filtered by search, sorted alphabetically)
-  List<Product> get _filteredStockTakeProducts {
-    List<Product> products;
-    
-    if (_searchQuery.isEmpty) {
-      products = List.from(_stockTakeProducts);
-    } else {
-      products = _stockTakeProducts.where((product) {
-        final name = product.name.toLowerCase();
-        final sku = product.sku?.toLowerCase() ?? '';
-        final query = _searchQuery.toLowerCase();
-        return name.contains(query) || sku.contains(query);
-      }).toList();
-    }
-    
-    // Sort alphabetically by product name
-    products.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    
-    return products;
+
+  // Save progress using utility
+  Future<void> _saveProgress({bool showSnackbar = false}) async {
+    await BulkStockTakePersistence.saveProgress(
+      stockTakeProducts: _stockTakeProducts,
+      controllers: _controllers,
+      commentControllers: _commentControllers,
+      wastageControllers: _wastageControllers,
+      wastageReasonControllers: _wastageReasonControllers,
+      addedTimestamps: _addedTimestamps,
+      showSnackbar: showSnackbar,
+      context: mounted ? context : null,
+    );
   }
   
-  // Get products from all products that match search but aren't in stock take list (sorted alphabetically)
-  List<Product> get _searchResultsNotInList {
-    if (_searchQuery.isEmpty) return [];
+  // Load saved progress using utility
+  Future<void> _loadSavedProgress({bool autoLoad = false}) async {
+    final progressData = await BulkStockTakePersistence.loadSavedProgress();
     
-    final query = _searchQuery.toLowerCase();
-    final stockTakeIds = _stockTakeProducts.map((p) => p.id).toSet();
+    if (progressData == null) {
+      if (!autoLoad && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ No saved progress found'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
     
-    final results = _allProducts.where((product) {
-      final name = product.name.toLowerCase();
-      final sku = product.sku?.toLowerCase() ?? '';
-      final matchesSearch = name.contains(query) || sku.contains(query);
-      final notInList = !stockTakeIds.contains(product.id);
-      return matchesSearch && notInList;
-    }).toList();
+    final savedProducts = progressData['products'] as List<dynamic>;
     
-    // Sort alphabetically by product name
-    results.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    
-    return results;
+    // Auto-load on init, or ask when manually triggered
+    if (autoLoad) {
+      _restoreProgressFromData(progressData);
+    } else {
+      _showRestoreDialog(progressData, savedProducts);
+    }
   }
-
-  // Check if search query doesn't match any existing products
-  bool get _shouldShowAddProductButton {
-    if (_searchQuery.trim().isEmpty) return false;
-    if (_isLoadingProducts) return false;
+  
+  Future<void> _showRestoreDialog(Map<String, dynamic> progressData, List<dynamic> savedProducts) async {
+    if (!mounted || savedProducts.isEmpty) return;
     
-    final query = _searchQuery.toLowerCase().trim();
+    final shouldRestore = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restore Saved Progress?'),
+        content: Text('Found saved progress from ${DateTime.parse(progressData['timestamp']).toString().split('.')[0]} with ${savedProducts.length} products. Restore it?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Yes, Restore'),
+          ),
+        ],
+      ),
+    );
     
-    // Check if any product name exactly matches or starts with the search query
-    final hasMatchingProduct = _allProducts.any((product) {
-      final name = product.name.toLowerCase();
-      final sku = product.sku?.toLowerCase() ?? '';
-      return name == query || name.startsWith(query) || 
-             sku == query || sku.startsWith(query);
+    if (shouldRestore == true) {
+      _restoreProgressFromData(progressData);
+    }
+  }
+  
+  // Restore progress from saved data using utility
+  void _restoreProgressFromData(Map<String, dynamic> progressData) {
+    final result = BulkStockTakePersistence.restoreProgress(progressData);
+    
+    if (!result.success) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ Error restoring progress'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+    
+    _searchController.clear();
+    
+    setState(() {
+      _searchQuery = '';
+      _stockTakeProducts.clear();
+      _controllers.clear();
+      _commentControllers.clear();
+      _wastageControllers.clear();
+      _wastageReasonControllers.clear();
+      _addedTimestamps.clear();
+      
+      for (final product in result.products) {
+        _stockTakeProducts.add(product);
+        
+        final entryData = result.entries[product.id]!;
+        _controllers[product.id] = TextEditingController(text: entryData['enteredValue']);
+        _commentControllers[product.id] = TextEditingController(text: entryData['comment']);
+        _wastageControllers[product.id] = TextEditingController(text: entryData['wastageValue']);
+        _wastageReasonControllers[product.id] = TextEditingController(text: entryData['wastageReason']);
+        _originalStock[product.id] = product.stockLevel;
+        
+        // Restore timestamp if available
+        final timestampStr = entryData['addedTimestamp'];
+        if (timestampStr != null && timestampStr.isNotEmpty) {
+          _addedTimestamps[product.id] = DateTime.fromMillisecondsSinceEpoch(int.parse(timestampStr));
+        } else {
+          _addedTimestamps[product.id] = DateTime.now().subtract(const Duration(hours: 2));
+        }
+      }
     });
     
-    return !hasMatchingProduct;
+    print('[BULK_STOCK_TAKE] Restored ${result.products.length} products from saved progress');
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ Restored ${result.products.length} products from saved progress'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   Future<void> _refreshProductsList() async {
@@ -168,7 +248,6 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       
       final productsState = ref.read(productsProvider);
       
-      // If products are already loaded and not stale, use them
       if (productsState.products.isNotEmpty && !productsState.isLoading) {
         setState(() {
           _allProducts = productsState.products;
@@ -178,7 +257,6 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         return;
       }
       
-      // Only make API call if products are empty or there's an error
       setState(() {
         _isLoadingProducts = true;
       });
@@ -199,11 +277,6 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         _isLoadingProducts = false;
       });
     }
-  }
-
-  Future<void> _loadProgress() async {
-    // Implementation for loading saved progress
-    // (keeping existing logic from dialog)
   }
 
   Future<void> _loadStockHistory() async {
@@ -229,11 +302,24 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       _controllers[product.id] = TextEditingController();
       _commentControllers[product.id] = TextEditingController();
       _wastageControllers[product.id] = TextEditingController();
-      _wastageReasons[product.id] = 'Spoilage';
+      _wastageReasonControllers[product.id] = TextEditingController();
       _originalStock[product.id] = product.stockLevel;
+      _addedTimestamps[product.id] = DateTime.now(); // Record when added
+      _controllers[product.id]!.text = product.stockLevel % 1 == 0
+          ? product.stockLevel.toInt().toString()
+          : product.stockLevel.toStringAsFixed(2);
+      
+      // Clear search after adding product
+      _searchController.clear();
+      _searchQuery = '';
     });
     
+    // Hide keyboard and focus
+    FocusScope.of(context).unfocus();
+    
     _scheduleAutoSave();
+    
+    print('[BULK_STOCK_TAKE] Added ${product.name} at ${_addedTimestamps[product.id]} - will appear at top');
   }
 
   void _removeProductFromStockTake(int productId) {
@@ -245,8 +331,10 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       _commentControllers.remove(productId);
       _wastageControllers[productId]?.dispose();
       _wastageControllers.remove(productId);
-      _wastageReasons.remove(productId);
+      _wastageReasonControllers[productId]?.dispose();
+      _wastageReasonControllers.remove(productId);
       _originalStock.remove(productId);
+      _addedTimestamps.remove(productId); // Remove timestamp
     });
     
     _scheduleAutoSave();
@@ -254,75 +342,256 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
 
   void _scheduleAutoSave() {
     _autoSaveTimer?.cancel();
-    _hasUnsavedChanges = true;
     
-    _autoSaveTimer = Timer(const Duration(seconds: 2), () {
+    _autoSaveTimer = Timer(const Duration(seconds: 5), () {
       _saveProgress();
-      _hasUnsavedChanges = false;
     });
   }
 
-  Future<void> _saveProgress() async {
-    // Implementation for saving progress
-    // (keeping existing logic from dialog)
+  // Get products currently in the stock take list (using logic utility)
+  List<Product> get _filteredStockTakeProducts {
+    final filtered = BulkStockTakeLogic.filterProducts(_stockTakeProducts, _searchQuery);
+    return BulkStockTakeLogic.sortProducts(filtered, _addedTimestamps);
+  }
+  
+  // Get products from all products that match search but aren't in stock take list
+  List<Product> get _searchResultsNotInList {
+    return BulkStockTakeLogic.getSearchResultsNotInList(
+      searchQuery: _searchQuery,
+      allProducts: _allProducts,
+      stockTakeProducts: _stockTakeProducts,
+    );
+  }
+
+  // Check if search query has no results
+  bool get _shouldShowAddProductButton {
+    return BulkStockTakeLogic.shouldShowAddProductButton(
+      searchQuery: _searchQuery,
+      isLoadingProducts: _isLoadingProducts,
+      searchResultsNotInList: _searchResultsNotInList,
+    );
+  }
+
+  Future<void> _createAndAddProduct() async {
+    print('[BULK_STOCK_TAKE] _createAndAddProduct called');
+    final productName = _searchQuery.trim();
+    if (productName.isEmpty) {
+      print('[BULK_STOCK_TAKE] Empty product name, returning');
+      return;
+    }
+
+    print('[BULK_STOCK_TAKE] Showing add product dialog for: $productName');
+    
+    // Show dialog to get additional product details
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => _AddProductDialog(productName: productName),
+    );
+
+    print('[BULK_STOCK_TAKE] Dialog result: $result');
+    if (result == null) {
+      print('[BULK_STOCK_TAKE] Dialog cancelled');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final apiService = ref.read(apiServiceProvider);
+      
+      final newProduct = await apiService.createProduct({
+        'name': result['name'],
+        'unit': result['unit'],
+        'price': result['price'],
+        'department': result['department_id'],
+        'is_active': true,
+        'minimum_stock': 5.0,
+      });
+      
+      await _refreshProductsList();
+      _addProductToStockTake(newProduct);
+      
+      _searchController.clear();
+      setState(() {
+        _searchQuery = '';
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Product "${newProduct.name}" created and added to stock take'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Failed to create product: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  // Preview Excel - View/share report WITHOUT submitting to backend
+  Future<void> _previewStockTakePdf() async {
+    setState(() => _isLoading = true);
+    
+    try {
+      // Build entries using shared logic utility
+      final entries = BulkStockTakeLogic.buildStockTakeEntries(
+        stockTakeProducts: _stockTakeProducts,
+        controllers: _controllers,
+        commentControllers: _commentControllers,
+        wastageControllers: _wastageControllers,
+        wastageReasonControllers: _wastageReasonControllers,
+        originalStock: _originalStock,
+      );
+
+      if (entries.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enter stock counts, wastage, or comments for at least one product to preview'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // Generate preview Excel using utility (without submitting to backend)
+      print('[PREVIEW] Generating preview Excel with ${entries.length} entries');
+      final excelPath = await BulkStockTakePdfGenerator.generateStockTakeExcel(
+        entries: entries,
+        stockTakeProducts: _stockTakeProducts,
+      );
+      
+      if (mounted) {
+        if (excelPath != null) {
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('📊 Preview generated! Stock NOT submitted yet.'),
+              backgroundColor: Colors.blue,
+              duration: Duration(seconds: 2),
+            ),
+          );
+          
+          // Show Excel and allow sharing
+          await Share.shareXFiles(
+            [XFile(excelPath)],
+            text: 'Stock Take Preview (NOT submitted) - ${DateTime.now().toString().split(' ')[0]}',
+            subject: 'Stock Take Preview',
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ Failed to generate preview Excel'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('[PREVIEW] Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error generating preview: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  // Show confirmation dialog before completing stock take
+  Future<void> _confirmAndSubmit() async {
+    final entries = BulkStockTakeLogic.buildStockTakeEntries(
+      stockTakeProducts: _stockTakeProducts,
+      controllers: _controllers,
+      commentControllers: _commentControllers,
+      wastageControllers: _wastageControllers,
+      wastageReasonControllers: _wastageReasonControllers,
+      originalStock: _originalStock,
+    );
+
+    if (entries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter stock counts, wastage, or comments for at least one product'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Complete Stock Take?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('You are about to complete the stock take with:'),
+            const SizedBox(height: 12),
+            Text('• ${entries.length} products', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('• ${entries.where((e) => (e['wastage_quantity'] as double? ?? 0.0) > 0).length} with wastage', 
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            const Text('This will:'),
+            const Text('✓ Update stock levels'),
+            const Text('✓ Generate PDF & Excel reports'),
+            const Text('✓ Auto-share the reports'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Complete Stock Take'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _submitBulkStockTake();
+    }
   }
 
   Future<void> _submitBulkStockTake() async {
-    // Cancel auto-save timer
     _autoSaveTimer?.cancel();
 
     try {
-      final entries = <Map<String, dynamic>>[];
-      
-      // Process ALL product IDs that have any controller data
-      final allProductIds = <int>{};
-      allProductIds.addAll(_controllers.keys);
-      allProductIds.addAll(_commentControllers.keys);
-      allProductIds.addAll(_wastageControllers.keys);
-      allProductIds.addAll(_stockTakeProducts.map((p) => p.id));
-      
-      for (final productId in allProductIds) {
-        // Get product info (use from list or create minimal info)
-        final product = _stockTakeProducts.where((p) => p.id == productId).firstOrNull;
-        
-        final controller = _controllers[productId];
-        final commentController = _commentControllers[productId];
-        final wastageController = _wastageControllers[productId];
-        
-        // Check if ANY data was entered for this product
-        final hasCountedQuantity = controller != null && controller.text.trim().isNotEmpty;
-        final hasComment = commentController != null && commentController.text.trim().isNotEmpty;
-        final hasWastage = wastageController != null && wastageController.text.trim().isNotEmpty;
-        
-        // Skip products with NO data at all
-        if (!hasCountedQuantity && !hasComment && !hasWastage) continue;
-        
-        // Parse as double to support kg and other decimal units
-        final countedQuantity = double.tryParse(controller?.text ?? '') ?? 0.0;
-        final currentStock = _originalStock[productId] ?? 0.0;
-        
-        // Get comment from comment controller
-        final comment = commentController?.text.trim() ?? '';
-        
-        // Get wastage data with explicit null checking and verification
-        final wastageText = wastageController?.text?.trim() ?? '';
-        final wastageQuantity = double.tryParse(wastageText) ?? 0.0;
-        final wastageReason = _wastageReasons[productId] ?? 'Spoilage';
-        
-        final productName = product?.name ?? 'Unknown Product';
-        
-        print('[STOCK_TAKE] Including $productName: counted=$countedQuantity, wastage=$wastageQuantity, comment="$comment"');
-        
-        // Include ALL entries with ANY data (counted quantities, wastage, or comments)
-        entries.add({
-          'product_id': productId,
-          'counted_quantity': countedQuantity,
-          'current_stock': currentStock,
-          'wastage_quantity': wastageQuantity,
-          'wastage_reason': wastageReason,
-          'comment': comment,
-        });
-      }
+      // Build entries using shared logic utility
+      final entries = BulkStockTakeLogic.buildStockTakeEntries(
+        stockTakeProducts: _stockTakeProducts,
+        controllers: _controllers,
+        commentControllers: _commentControllers,
+        wastageControllers: _wastageControllers,
+        wastageReasonControllers: _wastageReasonControllers,
+        originalStock: _originalStock,
+      );
 
       if (entries.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -341,16 +610,39 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       // Submit to inventory provider
       await ref.read(inventoryProvider.notifier).bulkStockTake(entries);
       
-      // Show success message and navigate back
+      // Generate PDF and Excel reports using utility
+      final pdfPath = await BulkStockTakePdfGenerator.generateStockTakePdf(
+        entries: entries,
+        stockTakeProducts: _stockTakeProducts,
+      );
+      final excelPath = await BulkStockTakePdfGenerator.generateStockTakeExcel(
+        entries: entries,
+        stockTakeProducts: _stockTakeProducts,
+      );
+      
       if (mounted) {
+        // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('✅ Stock take completed successfully with ${entries.length} entries'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('✅ Stock Take Complete! ${entries.length} entries processed.'),
+                if (pdfPath != null) const Text('📄 PDF generated'),
+                if (excelPath != null) const Text('📊 Excel generated'),
+              ],
+            ),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
           ),
         );
         
-        // Navigate back to previous screen
+        // Auto-share files if generated successfully
+        if (pdfPath != null || excelPath != null) {
+          await _shareFiles(pdfPath: pdfPath, excelPath: excelPath);
+        }
+        
         Navigator.pop(context, true);
       }
       
@@ -367,6 +659,122 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
+      }
+    }
+  }
+
+
+  Future<void> _clearProgress() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear Progress'),
+        content: const Text('Are you sure you want to clear all entered data?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      for (final controller in _controllers.values) {
+        controller.clear();
+      }
+      for (final controller in _commentControllers.values) {
+        controller.clear();
+      }
+      for (final controller in _wastageControllers.values) {
+        controller.clear();
+      }
+      for (final controller in _wastageReasonControllers.values) {
+        controller.clear();
+      }
+      _addedTimestamps.clear(); // Clear timestamps too
+      setState(() {});
+    }
+  }
+
+  // Share files via WhatsApp or other apps
+  Future<void> _shareFiles({String? pdfPath, String? excelPath}) async {
+    try {
+      final List<XFile> files = [];
+      
+      if (pdfPath != null && await File(pdfPath).exists()) {
+        files.add(XFile(pdfPath));
+      }
+      
+      if (excelPath != null && await File(excelPath).exists()) {
+        files.add(XFile(excelPath));
+      }
+      
+      if (files.isNotEmpty) {
+        await Share.shareXFiles(
+          files,
+          text: 'Stock Take Report - ${DateTime.now().toString().split(' ')[0]}',
+          subject: 'Bulk Stock Take Results',
+        );
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ No files available to share'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Error sharing files: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error sharing files: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // Share progress file
+  Future<void> _shareProgress() async {
+    try {
+      final directory = await BulkStockTakePersistence.getStorageDirectory();
+      final file = File('${directory.path}/bulk_stock_take_progress.json');
+      
+      if (await file.exists()) {
+        await Share.shareXFiles(
+          [XFile(file.path)],
+          text: 'Stock Take Progress - ${DateTime.now().toString().split(' ')[0]}',
+          subject: 'Bulk Stock Take Progress',
+        );
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ No saved progress to share'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Error sharing progress: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error sharing progress: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -390,6 +798,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     }
     
     return Scaffold(
+      resizeToAvoidBottomInset: true, // Important for keyboard handling
       appBar: AppBar(
         title: const Text('Bulk Stock Take'),
         backgroundColor: Theme.of(context).primaryColor,
@@ -403,6 +812,15 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
           PopupMenuButton<String>(
             onSelected: (value) {
               switch (value) {
+                case 'save':
+                  _saveProgress(showSnackbar: true);
+                  break;
+                case 'load':
+                  _loadSavedProgress();
+                  break;
+                case 'share_progress':
+                  _shareProgress();
+                  break;
                 case 'clear':
                   _clearProgress();
                   break;
@@ -414,6 +832,36 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
               }
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'save',
+                child: Row(
+                  children: [
+                    Icon(Icons.save, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('Save Progress'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'load',
+                child: Row(
+                  children: [
+                    Icon(Icons.restore, color: Colors.green),
+                    SizedBox(width: 8),
+                    Text('Load Progress'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'share_progress',
+                child: Row(
+                  children: [
+                    Icon(Icons.share, color: Colors.purple),
+                    SizedBox(width: 8),
+                    Text('Share Progress'),
+                  ],
+                ),
+              ),
               PopupMenuItem(
                 value: 'history',
                 child: Row(
@@ -438,8 +886,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
+      body: SafeArea(
+        child: Column(
+          children: [
           // WhatsApp Stock History (if shown)
           if (_showHistory) ...[
             Container(
@@ -526,29 +975,54 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                // Search Bar
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search products...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                // Search Bar - Double Height for Mobile
+                Container(
+                  height: 64,
+                  child: TextField(
+                    controller: _searchController,
+                    style: const TextStyle(fontSize: 18),
+                    textInputAction: TextInputAction.search,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(
+                      hintText: 'Search products to add...',
+                      hintStyle: TextStyle(fontSize: 16, color: Colors.grey[500]),
+                      prefixIcon: const Icon(Icons.search, size: 28),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: const BorderSide(width: 2),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide(color: Theme.of(context).primaryColor, width: 2),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, size: 28),
+                              onPressed: () {
+                                _searchController.clear();
+                                _searchDebounceTimer?.cancel(); // Cancel any pending search
+                                setState(() => _searchQuery = '');
+                                FocusScope.of(context).unfocus(); // Hide keyboard
+                              },
+                              tooltip: 'Clear search',
+                            )
+                          : null,
                     ),
-                    suffixIcon: _searchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() => _searchQuery = '');
-                            },
-                            tooltip: 'Clear search',
-                          )
-                        : null,
+                    onChanged: (value) {
+                      // Debounce search to avoid frequent rebuilds
+                      _searchDebounceTimer?.cancel();
+                      _searchDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+                        if (mounted) {
+                          setState(() => _searchQuery = value);
+                        }
+                      });
+                    },
+                    onSubmitted: (value) {
+                      // Hide keyboard when search submitted
+                      FocusScope.of(context).unfocus();
+                    },
                   ),
-                  onChanged: (value) {
-                    setState(() => _searchQuery = value);
-                  },
                 ),
 
                 const SizedBox(height: 16),
@@ -601,10 +1075,10 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                   const SizedBox(height: 16),
                 ],
 
-                // Search Results (products not in stock take list)
+                // Search Results (products not in stock take list) - IMPROVED DESCRIPTIONS
                 if (_searchQuery.isNotEmpty && _searchResultsNotInList.isNotEmpty) ...[
                   Container(
-                    height: 120,
+                    height: 250, // Much bigger search results box for mobile
                     decoration: BoxDecoration(
                       border: Border.all(color: Colors.green[300]!),
                       borderRadius: BorderRadius.circular(12),
@@ -641,14 +1115,31 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                             itemBuilder: (context, index) {
                               final product = _searchResultsNotInList[index];
                               return ListTile(
-                                dense: true,
-                                title: Text(product.name, style: const TextStyle(fontSize: 14)),
-                                subtitle: Text(
-                                  '${product.sku ?? 'No SKU'} • Stock: ${product.stockLevel}',
-                                  style: const TextStyle(fontSize: 12),
+                                dense: false,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), // More padding
+                                title: Text(
+                                  product.name, 
+                                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600), // Slightly bigger
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'SKU: ${product.sku ?? 'No SKU'} • Unit: ${product.unit}',
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                    Text(
+                                      'Stock: ${product.stockLevel} ${product.unit} • Department: ${product.department}',
+                                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                    ),
+                                    Text(
+                                      'Price: R${product.price.toStringAsFixed(2)} per ${product.unit}',
+                                      style: TextStyle(fontSize: 12, color: Colors.green[700], fontWeight: FontWeight.w500),
+                                    ),
+                                  ],
                                 ),
                                 trailing: IconButton(
-                                  icon: Icon(Icons.add_circle, color: Colors.green[600]),
+                                  icon: Icon(Icons.add_circle, color: Colors.green[600], size: 32), // Bigger add button
                                   onPressed: () => _addProductToStockTake(product),
                                 ),
                               );
@@ -692,13 +1183,83 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                     ),
                   )
                 : ListView.builder(
+                    controller: _scrollController,
                     padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: _filteredStockTakeProducts.length,
+                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.manual, // Prevent keyboard from closing on scroll
+                    physics: const ClampingScrollPhysics(), // Prevent bounce that causes rebuilds
+                    itemCount: _filteredStockTakeProducts.length + 1, // +1 for Complete Stock Take button
                     itemBuilder: (context, index) {
+                      // If this is the last item, show the action buttons
+                      if (index == _filteredStockTakeProducts.length) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
+                          child: Row(
+                            children: [
+                              // Preview Button
+                              Expanded(
+                                child: SizedBox(
+                                  height: 56,
+                                  child: ElevatedButton.icon(
+                                    onPressed: _isLoading ? null : _previewStockTakePdf,
+                                    icon: const Icon(Icons.preview, size: 20),
+                                    label: const Text(
+                                      'Preview',
+                                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.blue,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              
+                              const SizedBox(width: 12),
+                              
+                              // Complete Stock Take Button
+                              Expanded(
+                                child: SizedBox(
+                                  height: 56,
+                                  child: ElevatedButton.icon(
+                                    onPressed: _isLoading ? null : _confirmAndSubmit,
+                                    icon: _isLoading
+                                        ? const SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                            ),
+                                          )
+                                        : const Icon(Icons.check, size: 20),
+                                    label: Text(
+                                      _isLoading ? 'Submitting...' : 'Complete',
+                                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.green,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
                       final product = _filteredStockTakeProducts[index];
                       final controller = _controllers[product.id]!;
                       final commentController = _commentControllers[product.id]!;
                       final wastageController = _wastageControllers[product.id]!;
+                      final wastageReasonController = _wastageReasonControllers[product.id]!;
                       final originalStock = _originalStock[product.id] ?? 0.0;
 
                       return Card(
@@ -728,7 +1289,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          '${product.sku ?? 'No SKU'} • Current: $originalStock',
+                                          '${product.sku ?? 'No SKU'} • Current: $originalStock ${product.unit}',
                                           style: TextStyle(
                                             color: Colors.grey[600],
                                             fontSize: 13,
@@ -756,18 +1317,24 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                     child: TextField(
                                       controller: controller,
                                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                      textInputAction: TextInputAction.next, // Better keyboard navigation
+                                      enableInteractiveSelection: true, // Keep keyboard active
+                                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
                                       decoration: InputDecoration(
-                                        labelText: 'Count',
+                                        labelText: 'Count (${product.unit})',
                                         border: OutlineInputBorder(
                                           borderRadius: BorderRadius.circular(8),
                                         ),
                                         contentPadding: const EdgeInsets.symmetric(
                                           horizontal: 12,
-                                          vertical: 8,
+                                          vertical: 16, // More padding for easier touch
                                         ),
                                       ),
                                       onChanged: (value) {
                                         _scheduleAutoSave();
+                                      },
+                                      onTap: () {
+                                        // Ensure keyboard stays open
                                       },
                                     ),
                                   ),
@@ -780,19 +1347,24 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                     child: TextField(
                                       controller: wastageController,
                                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                      textInputAction: TextInputAction.next,
+                                      enableInteractiveSelection: true, // Keep keyboard active
                                       inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
                                       decoration: InputDecoration(
-                                        labelText: 'Wastage',
+                                        labelText: 'Wastage (${product.unit})',
                                         border: OutlineInputBorder(
                                           borderRadius: BorderRadius.circular(8),
                                         ),
                                         contentPadding: const EdgeInsets.symmetric(
                                           horizontal: 12,
-                                          vertical: 8,
+                                          vertical: 16, // More padding for easier touch
                                         ),
                                       ),
                                       onChanged: (value) {
                                         _scheduleAutoSave();
+                                      },
+                                      onTap: () {
+                                        // Ensure keyboard stays open
                                       },
                                     ),
                                   ),
@@ -836,22 +1408,183 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                 ],
                               ),
 
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 16),
 
-                              // Comment Input
-                              TextField(
-                                controller: commentController,
-                                maxLines: 2,
-                                decoration: InputDecoration(
-                                  labelText: 'Comment (optional)',
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
+                              // Wastage Reason Section with Enhanced UI
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: wastageReasonController.text.isNotEmpty 
+                                    ? Colors.orange[50] 
+                                    : Colors.grey[50],
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: wastageReasonController.text.isNotEmpty 
+                                      ? Colors.orange[300]! 
+                                      : Colors.grey[300]!,
+                                    width: wastageReasonController.text.isNotEmpty ? 2 : 1,
                                   ),
-                                  contentPadding: const EdgeInsets.all(12),
                                 ),
-                                onChanged: (value) {
-                                  _scheduleAutoSave();
-                                },
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.delete_outline,
+                                          size: 20,
+                                          color: wastageReasonController.text.isNotEmpty 
+                                            ? Colors.orange[700] 
+                                            : Colors.grey[600],
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Wastage Reason',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                            color: wastageReasonController.text.isNotEmpty 
+                                              ? Colors.orange[900] 
+                                              : Colors.grey[700],
+                                          ),
+                                        ),
+                                        if (wastageReasonController.text.isNotEmpty)
+                                          Container(
+                                            margin: const EdgeInsets.only(left: 8),
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.orange[700],
+                                              borderRadius: BorderRadius.circular(10),
+                                            ),
+                                            child: const Text(
+                                              'SAVED',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    TextField(
+                                      controller: wastageReasonController,
+                                      textInputAction: TextInputAction.next,
+                                      textCapitalization: TextCapitalization.words,
+                                      enableInteractiveSelection: true,
+                                      style: const TextStyle(fontSize: 16, color: Colors.black),
+                                      decoration: InputDecoration(
+                                        hintText: 'e.g., Spoilage, Damaged, Expired',
+                                        hintStyle: TextStyle(color: Colors.grey[400]),
+                                        filled: true,
+                                        fillColor: Colors.white,
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                        contentPadding: const EdgeInsets.all(14),
+                                      ),
+                                      onChanged: (value) {
+                                        setState(() {}); // Update UI when text changes
+                                        _scheduleAutoSave();
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 16),
+
+                              // Comments Section with Enhanced UI
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: commentController.text.isNotEmpty 
+                                    ? Colors.blue[50] 
+                                    : Colors.grey[50],
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: commentController.text.isNotEmpty 
+                                      ? Colors.blue[300]! 
+                                      : Colors.grey[300]!,
+                                    width: commentController.text.isNotEmpty ? 2 : 1,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.comment_outlined,
+                                          size: 20,
+                                          color: commentController.text.isNotEmpty 
+                                            ? Colors.blue[700] 
+                                            : Colors.grey[600],
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Additional Comments',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                            color: commentController.text.isNotEmpty 
+                                              ? Colors.blue[900] 
+                                              : Colors.grey[700],
+                                          ),
+                                        ),
+                                        if (commentController.text.isNotEmpty)
+                                          Container(
+                                            margin: const EdgeInsets.only(left: 8),
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.blue[700],
+                                              borderRadius: BorderRadius.circular(10),
+                                            ),
+                                            child: const Text(
+                                              'SAVED',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    TextField(
+                                      controller: commentController,
+                                      maxLines: 3,
+                                      minLines: 1,
+                                      textInputAction: TextInputAction.newline,
+                                      textCapitalization: TextCapitalization.sentences,
+                                      enableInteractiveSelection: true,
+                                      style: const TextStyle(fontSize: 16, color: Colors.black),
+                                      decoration: InputDecoration(
+                                        hintText: 'Tap to add notes about this product...',
+                                        hintStyle: TextStyle(color: Colors.grey[400]),
+                                        filled: true,
+                                        fillColor: Colors.white,
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                        contentPadding: const EdgeInsets.all(14),
+                                      ),
+                                      onChanged: (value) {
+                                        setState(() {}); // Update UI when text changes
+                                        _scheduleAutoSave();
+                                      },
+                                      onTap: () {
+                                        commentController.selection = TextSelection.fromPosition(
+                                          TextPosition(offset: commentController.text.length),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
                               ),
                             ],
                           ),
@@ -862,226 +1595,181 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
           ),
         ],
       ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withOpacity(0.3),
-              spreadRadius: 1,
-              blurRadius: 5,
-              offset: const Offset(0, -3),
-            ),
-          ],
+    ),
+  );
+}
+}
+
+// Add Product Dialog for creating new products
+class _AddProductDialog extends ConsumerStatefulWidget {
+  final String productName;
+
+  const _AddProductDialog({required this.productName});
+
+  @override
+  ConsumerState<_AddProductDialog> createState() => _AddProductDialogState();
+}
+
+class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late TextEditingController _nameController;
+  late TextEditingController _priceController;
+  String? _selectedUnit;
+  int? _selectedDepartmentId;
+  String? _selectedDepartmentName;
+  
+  List<Map<String, dynamic>> _units = [];
+  List<Map<String, dynamic>> _departments = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.productName);
+    _priceController = TextEditingController(text: '0.00');
+    _loadData();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _priceController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadData() async {
+    try {
+      final apiService = ref.read(apiServiceProvider);
+      
+      final unitsResult = await apiService.getUnitsOfMeasure();
+      final departmentsResult = await apiService.getDepartments();
+      
+      setState(() {
+        _units = unitsResult;
+        _departments = departmentsResult;
+        _isLoading = false;
+      });
+      
+      print('[ADD_PRODUCT] Loaded ${_units.length} units and ${_departments.length} departments');
+    } catch (e) {
+      print('[ADD_PRODUCT] Error loading data: $e');
+      setState(() {
+        _isLoading = false;
+      });
+      if (mounted) {
+        Navigator.pop(context); // Close dialog on error
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Failed to load units and departments: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const AlertDialog(
+        content: SizedBox(
+          height: 100,
+          child: Center(child: CircularProgressIndicator()),
         ),
-        child: SafeArea(
+      );
+    }
+
+    return AlertDialog(
+      title: const Text('Create New Product'),
+      content: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Summary Row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  Column(
-                    children: [
-                      Text(
-                        '${_stockTakeProducts.length}',
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue,
-                        ),
-                      ),
-                      const Text('Products', style: TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                  Column(
-                    children: [
-                      Text(
-                        '${_controllers.values.where((c) => c.text.isNotEmpty).length}',
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green,
-                        ),
-                      ),
-                      const Text('Counted', style: TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                  Column(
-                    children: [
-                      Text(
-                        '${_wastageControllers.values.where((c) => c.text.isNotEmpty).length}',
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange,
-                        ),
-                      ),
-                      const Text('Wastage', style: TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // Submit Button
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton.icon(
-                  onPressed: _isLoading ? null : _submitBulkStockTake,
-                  icon: _isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                      : const Icon(Icons.check_circle),
-                  label: Text(
-                    _isLoading ? 'Processing...' : 'Complete Stock Take',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Product Name *',
+                  border: OutlineInputBorder(),
                 ),
+                validator: (value) => value?.trim().isEmpty == true ? 'Name is required' : null,
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: _selectedUnit,
+                decoration: const InputDecoration(
+                  labelText: 'Unit of Measure *',
+                  border: OutlineInputBorder(),
+                ),
+                items: _units.where((unit) => unit['name'] != null).map<DropdownMenuItem<String>>((unit) {
+                  return DropdownMenuItem<String>(
+                    value: unit['name'],
+                    child: Text(unit['name']),
+                  );
+                }).toList(),
+                onChanged: (value) => setState(() => _selectedUnit = value),
+                validator: (value) => value == null ? 'Unit is required' : null,
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<int>(
+                value: _selectedDepartmentId,
+                decoration: const InputDecoration(
+                  labelText: 'Department *',
+                  border: OutlineInputBorder(),
+                ),
+                items: _departments.map<DropdownMenuItem<int>>((dept) {
+                  return DropdownMenuItem<int>(
+                    value: dept['id'],
+                    child: Text(dept['name'] ?? 'Unknown'),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedDepartmentId = value;
+                    _selectedDepartmentName = _departments.firstWhere((d) => d['id'] == value)['name'];
+                  });
+                },
+                validator: (value) => value == null ? 'Department is required' : null,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _priceController,
+                decoration: const InputDecoration(
+                  labelText: 'Price (R)',
+                  border: OutlineInputBorder(),
+                  prefixText: 'R ',
+                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                validator: (value) {
+                  final price = double.tryParse(value ?? '');
+                  return price == null || price < 0 ? 'Valid price required' : null;
+                },
               ),
             ],
           ),
         ),
       ),
-    );
-  }
-
-  Future<void> _createAndAddProduct() async {
-    final productName = _searchQuery.trim();
-    if (productName.isEmpty) return;
-
-    // For now, show a simple input dialog for creating products
-    // In the full implementation, you'd create a dedicated dialog like in the original
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Create New Product'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              initialValue: productName,
-              decoration: const InputDecoration(labelText: 'Product Name'),
-              onChanged: (value) {
-                // Store product name
-              },
-            ),
-            const SizedBox(height: 16),
-            const Text('This is a simplified version for demonstration.\nFull implementation would have unit selection, etc.'),
-          ],
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, {
-              'name': productName,
-              'unit': 'piece',
-              'price': 0.0,
-              'department_id': 1,
-            }),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
+        ElevatedButton(
+          onPressed: () {
+            if (_formKey.currentState?.validate() == true) {
+              Navigator.pop(context, {
+                'name': _nameController.text.trim(),
+                'unit': _selectedUnit!,
+                'price': double.parse(_priceController.text),
+                'department_id': _selectedDepartmentId!,
+                'department_name': _selectedDepartmentName!,
+              });
+            }
+          },
+          child: const Text('Create Product'),
+        ),
+      ],
     );
-
-    if (result == null) return;
-
-    setState(() => _isLoading = true);
-
-    try {
-      final apiService = ref.read(apiServiceProvider);
-      
-      final newProduct = await apiService.createProduct({
-        'name': result['name'],
-        'unit': result['unit'],
-        'price': result['price'],
-        'department': result['department_id'],
-        'is_active': true,
-        'minimum_stock': 5.0,
-      });
-      
-      await _refreshProductsList();
-      _addProductToStockTake(newProduct);
-      
-      _searchController.clear();
-      setState(() => _searchQuery = '');
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ Product "${newProduct.name}" created and added'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Failed to create product: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  Future<void> _clearProgress() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear Progress'),
-        content: const Text('Are you sure you want to clear all entered data?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Clear All'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      for (final controller in _controllers.values) {
-        controller.clear();
-      }
-      for (final controller in _commentControllers.values) {
-        controller.clear();
-      }
-      for (final controller in _wastageControllers.values) {
-        controller.clear();
-      }
-      setState(() {});
-    }
   }
 }

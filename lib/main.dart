@@ -40,9 +40,22 @@ void main(List<String> args) async {
   const isBulkStockTakeDefine = String.fromEnvironment('BULK_STOCK_TAKE') == 'true';
   final isBulkStockTake = isBulkStockTakeDefine || args.contains('--bulk-stock-take');
   
+  // Determine initial route based on platform and arguments
+  String? initialRoute;
+  if (Platform.isAndroid) {
+    // Android goes to dashboard for Stock/Orders selection
+    initialRoute = '/android-dashboard';
+  } else if (isBulkStockTake) {
+    // Other platforms with explicit bulk stock take flag go directly there
+    initialRoute = '/bulk-stock-take';
+  }
+  
+  print('🚀 Platform: ${Platform.operatingSystem}');
+  print('📱 Initial route: ${initialRoute ?? 'default'}');
+  
   runApp(
     ProviderScope(
-      child: PlaceOrderApp(initialRoute: isBulkStockTake ? '/bulk-stock-take' : null),
+      child: PlaceOrderApp(initialRoute: initialRoute),
     ),
   );
 }
