@@ -569,9 +569,8 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         'name': result['name'],
         'unit': result['unit'],
         'price': result['price'],
-        'department': result['department_id'], // Use department ID from dialog
+        'department': result['department_id'], // Backend expects 'department' field with ID value
         'is_active': true,
-        // Don't include stock_level - it's read-only according to serializer
         'minimum_stock': 5.0,
       });
       
@@ -1870,8 +1869,8 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
   final _nameController = TextEditingController();
   final _priceController = TextEditingController();
   
-  String _selectedUnit = 'piece';
-  String _selectedDepartment = 'Vegetables';
+  String? _selectedUnit;
+  String? _selectedDepartment;
   
   List<Map<String, dynamic>> _units = [];
   List<Map<String, dynamic>> _departments = [];
@@ -1899,7 +1898,29 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
       print('[ADD_PRODUCT] Departments loaded: ${deptsData.length}');
       _departments = deptsData;
       
-      print('[ADD_PRODUCT] Data loading complete');
+      // Set default values after loading data
+      if (_units.isNotEmpty) {
+        // Try to find 'piece' or 'kg', otherwise use first unit
+        final pieceUnit = _units.firstWhere(
+          (u) => u['name']?.toString().toLowerCase() == 'piece',
+          orElse: () => _units.firstWhere(
+            (u) => u['name']?.toString().toLowerCase() == 'kg',
+            orElse: () => _units.first,
+          ),
+        );
+        _selectedUnit = pieceUnit['name'];
+      }
+      
+      if (_departments.isNotEmpty) {
+        // Try to find 'Vegetables', otherwise use first department
+        final vegDept = _departments.firstWhere(
+          (d) => d['name']?.toString() == 'Vegetables',
+          orElse: () => _departments.first,
+        );
+        _selectedDepartment = vegDept['name'];
+      }
+      
+      print('[ADD_PRODUCT] Data loading complete - Unit: $_selectedUnit, Dept: $_selectedDepartment');
     } catch (e) {
       print('[ADD_PRODUCT] Error loading data: $e');
     } finally {
@@ -2013,7 +2034,7 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: () {
+          onPressed: _isLoadingData || _selectedUnit == null || _selectedDepartment == null ? null : () {
             if (_formKey.currentState!.validate()) {
               // Find the selected department ID
               final selectedDept = _departments.firstWhere(
@@ -2023,9 +2044,9 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
               
               Navigator.of(context).pop({
                 'name': _nameController.text.trim(),
-                'unit': _selectedUnit,
+                'unit': _selectedUnit!,
                 'price': double.parse(_priceController.text),
-                'department': _selectedDepartment,
+                'department': _selectedDepartment!,
                 'department_id': selectedDept['id'],
               });
             }

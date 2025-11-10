@@ -6,6 +6,9 @@ import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:file_picker/file_picker.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:excel/excel.dart' as excel;
+import 'package:path_provider/path_provider.dart';
 import '../../../models/order.dart';
 import '../../../services/api_service.dart';
 import '../../../providers/orders_provider.dart';
@@ -232,6 +235,15 @@ class OrderCard extends ConsumerWidget {
                       ),
                     ),
                   ),
+                  OutlinedButton.icon(
+                    onPressed: () => _exportExcel(context),
+                    icon: const Icon(Icons.table_chart, size: 18),
+                    label: const Text('Export Excel'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
                   OutlinedButton.icon(
                     onPressed: () => _printOrder(context),
                     icon: const Icon(Icons.print, size: 18),
@@ -943,6 +955,227 @@ class OrderCard extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _exportExcel(BuildContext context) async {
+    try {
+      print('[EXCEL_EXPORT] Starting Excel generation for order ${order.orderNumber}');
+      
+      // Generate filename
+      final restaurantName = order.restaurant.profile?.businessName ?? order.restaurant.name;
+      final sanitizedName = restaurantName.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
+      final now = DateTime.now();
+      final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final filename = '${sanitizedName}_${order.orderNumber}_$dateStr.xlsx';
+      
+      // Create Excel workbook
+      final workbook = excel.Excel.createExcel();
+      final sheet = workbook['Order ${order.orderNumber}'];
+      
+      // Remove default Sheet1
+      if (workbook.sheets.containsKey('Sheet1')) {
+        workbook.delete('Sheet1');
+      }
+      
+      int currentRow = 0;
+      
+      // Header - Business Name
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue(restaurantName.toUpperCase());
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+        fontSize: 18,
+      );
+      currentRow++;
+      
+      // Contact Information
+      final contactParts = <String>[];
+      if (order.restaurant.email.isNotEmpty) {
+        contactParts.add('Email: ${order.restaurant.email}');
+      }
+      if (order.restaurant.phone.isNotEmpty) {
+        contactParts.add('Tel: ${order.restaurant.phone}');
+      }
+      if (contactParts.isNotEmpty) {
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+          excel.TextCellValue(contactParts.join(' | '));
+        currentRow++;
+      }
+      
+      // Address
+      if (order.restaurant.profile?.deliveryAddress?.isNotEmpty == true) {
+        final addressParts = [order.restaurant.profile!.deliveryAddress!];
+        if (order.restaurant.profile?.city?.isNotEmpty == true) {
+          addressParts.add(order.restaurant.profile!.city!);
+        }
+        if (order.restaurant.profile?.postalCode?.isNotEmpty == true) {
+          addressParts.add(order.restaurant.profile!.postalCode!);
+        }
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+          excel.TextCellValue(addressParts.join(', '));
+        currentRow++;
+      }
+      
+      currentRow++; // Blank line
+      
+      // Order Details
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue('ORDER DETAILS');
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+        fontSize: 14,
+      );
+      currentRow++;
+      
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue('Order Number: ${order.orderNumber}');
+      currentRow++;
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue('Order Date: ${order.orderDate}');
+      currentRow++;
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue('Delivery Date: ${order.deliveryDate}');
+      currentRow++;
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue('Status: ${order.statusDisplay}');
+      currentRow++;
+      
+      currentRow++; // Blank line
+      
+      // Table Header
+      final headers = ['Product Name', 'Quantity', 'Unit', 'Stock Status', 'Notes'];
+      for (int i = 0; i < headers.length; i++) {
+        final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow));
+        cell.value = excel.TextCellValue(headers[i]);
+        cell.cellStyle = excel.CellStyle(
+          bold: true,
+          horizontalAlign: excel.HorizontalAlign.Center,
+        );
+      }
+      currentRow++;
+      
+      // Order Items
+      for (final item in order.items) {
+        String stockStatus = 'Unknown';
+        if (item.isStockReserved) {
+          stockStatus = 'Reserved';
+        } else if (item.isNoReserve) {
+          stockStatus = 'To Order';
+        } else if (item.isStockReservationFailed) {
+          stockStatus = 'Reservation Failed';
+        }
+        
+        final rowData = [
+          excel.TextCellValue(item.product.name),
+          excel.DoubleCellValue(item.quantity),
+          excel.TextCellValue(item.product.unit),
+          excel.TextCellValue(stockStatus),
+          excel.TextCellValue(item.notes ?? ''),
+        ];
+        
+        for (int i = 0; i < rowData.length; i++) {
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+        }
+        currentRow++;
+      }
+      
+      // Auto-fit columns
+      for (int i = 0; i < headers.length; i++) {
+        sheet.setColumnAutoFit(i);
+      }
+      
+      // Save Excel file
+      final excelBytes = workbook.save();
+      
+      if (excelBytes != null) {
+        print('[EXCEL_EXPORT] Excel bytes generated: ${excelBytes.length} bytes');
+        
+        // Platform-specific handling
+        if (Platform.isAndroid || Platform.isIOS) {
+          // Mobile: Save to temp directory and share
+          final tempDir = await getTemporaryDirectory();
+          final filePath = '${tempDir.path}/$filename';
+          final file = File(filePath);
+          await file.writeAsBytes(excelBytes);
+          
+          print('[EXCEL_EXPORT] Saved to temp: $filePath');
+          
+          // Share the file
+          final result = await Share.shareXFiles(
+            [XFile(filePath, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
+            subject: 'Order ${order.orderNumber} - $restaurantName',
+            text: 'Order invoice for ${order.orderNumber}',
+          );
+          
+          print('[EXCEL_EXPORT] Share result: ${result.status}');
+          
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('✅ Excel file ready to share'),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+        } else {
+          // Desktop: Save to Documents directory
+          Directory? documentsDir;
+          if (Platform.isLinux || Platform.isMacOS) {
+            final homeDir = Platform.environment['HOME'];
+            if (homeDir != null) {
+              documentsDir = Directory('$homeDir/Documents');
+              if (!documentsDir.existsSync()) {
+                documentsDir.createSync(recursive: true);
+              }
+            }
+          } else if (Platform.isWindows) {
+            final homeDir = Platform.environment['USERPROFILE'];
+            if (homeDir != null) {
+              documentsDir = Directory('$homeDir\\Documents');
+              if (!documentsDir.existsSync()) {
+                documentsDir.createSync(recursive: true);
+              }
+            }
+          }
+          
+          if (documentsDir == null) {
+            throw Exception('Could not determine Documents directory');
+          }
+          
+          final filePath = '${documentsDir.path}/$filename';
+          final file = File(filePath);
+          await file.writeAsBytes(excelBytes);
+          
+          print('[EXCEL_EXPORT] Saved to: $filePath');
+          
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('✅ Excel saved to:\n$filePath'),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 4),
+              ),
+            );
+          }
+        }
+      } else {
+        throw Exception('Failed to generate Excel bytes');
+      }
+    } catch (e, stackTrace) {
+      print('[EXCEL_EXPORT] ERROR: $e');
+      print('[EXCEL_EXPORT] Stack trace: $stackTrace');
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error exporting Excel: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
   }
 
   void _printOrder(BuildContext context) async {

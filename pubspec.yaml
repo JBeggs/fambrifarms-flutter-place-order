@@ -46,6 +46,9 @@ dependencies:
   # Excel Generation
   excel: ^4.0.3
   
+  # Sharing
+  share_plus: ^10.1.2
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter
