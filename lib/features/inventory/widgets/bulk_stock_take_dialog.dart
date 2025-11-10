@@ -1875,6 +1875,7 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
   List<Map<String, dynamic>> _units = [];
   List<Map<String, dynamic>> _departments = [];
   bool _isLoadingData = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -1888,15 +1889,34 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
       print('[ADD_PRODUCT] Loading units and departments...');
       
       // Load units
-      final unitsData = await ref.read(apiServiceProvider).getUnitsOfMeasure();
-      print('[ADD_PRODUCT] Units loaded: ${unitsData.length}');
-      print('[ADD_PRODUCT] Units data: $unitsData');
-      _units = unitsData;
+      try {
+        final unitsData = await ref.read(apiServiceProvider).getUnitsOfMeasure();
+        print('[ADD_PRODUCT] Units loaded: ${unitsData.length}');
+        print('[ADD_PRODUCT] Units data: $unitsData');
+        _units = unitsData;
+      } catch (e) {
+        print('[ADD_PRODUCT] Error loading units: $e');
+        throw Exception('Failed to load units: $e');
+      }
       
       // Load departments
-      final deptsData = await ref.read(apiServiceProvider).getDepartments();
-      print('[ADD_PRODUCT] Departments loaded: ${deptsData.length}');
-      _departments = deptsData;
+      try {
+        final deptsData = await ref.read(apiServiceProvider).getDepartments();
+        print('[ADD_PRODUCT] Departments loaded: ${deptsData.length}');
+        print('[ADD_PRODUCT] Departments data: $deptsData');
+        _departments = deptsData;
+      } catch (e) {
+        print('[ADD_PRODUCT] Error loading departments: $e');
+        throw Exception('Failed to load departments: $e');
+      }
+      
+      // Validate we got data
+      if (_units.isEmpty) {
+        throw Exception('No units available. Please check your backend configuration.');
+      }
+      if (_departments.isEmpty) {
+        throw Exception('No departments available. Please check your backend configuration.');
+      }
       
       // Set default values after loading data
       if (_units.isNotEmpty) {
@@ -1909,6 +1929,7 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
           ),
         );
         _selectedUnit = pieceUnit['name'];
+        print('[ADD_PRODUCT] Selected default unit: $_selectedUnit');
       }
       
       if (_departments.isNotEmpty) {
@@ -1918,11 +1939,18 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
           orElse: () => _departments.first,
         );
         _selectedDepartment = vegDept['name'];
+        print('[ADD_PRODUCT] Selected default department: $_selectedDepartment');
       }
       
       print('[ADD_PRODUCT] Data loading complete - Unit: $_selectedUnit, Dept: $_selectedDepartment');
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('[ADD_PRODUCT] Error loading data: $e');
+      print('[ADD_PRODUCT] Stack trace: $stackTrace');
+      if (mounted) {
+        setState(() {
+          _loadError = e.toString();
+        });
+      }
     } finally {
       if (mounted) {
         setState(() => _isLoadingData = false);
@@ -1945,7 +1973,41 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
         width: 400,
         child: _isLoadingData
             ? const Center(child: CircularProgressIndicator())
-            : Form(
+            : _loadError != null
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.error_outline, size: 48, color: Colors.red[700]),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Failed to Load Data',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red[700],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _loadError!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _isLoadingData = true;
+                            _loadError = null;
+                          });
+                          _loadData();
+                        },
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry'),
+                      ),
+                    ],
+                  )
+                : Form(
                 key: _formKey,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
