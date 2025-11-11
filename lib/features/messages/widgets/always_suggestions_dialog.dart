@@ -27,6 +27,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   final Map<String, String> _units = {};
   final Map<String, String> _stockActions = {}; // 'reserve', 'no_reserve', 'convert_to_kg'
   final Map<String, TextEditingController> _unitControllers = {};
+  final Map<String, bool> _skippedItems = {}; // Track items that should be skipped
   bool _isProcessing = false;
 
   @override
@@ -289,7 +290,16 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     final items = List<dynamic>.from(rawItems);
     
     final customer = widget.suggestionsData['customer'] as Map<String, dynamic>? ?? {};
-    final totalItems = widget.suggestionsData['total_items'] as int? ?? 0;
+    
+    // Calculate the actual number of items that will be included (non-skipped)
+    int includedItemsCount = 0;
+    for (var item in items) {
+      final originalText = item['original_text'] as String;
+      final isSkipped = _skippedItems[originalText] ?? false;
+      if (!isSkipped) {
+        includedItemsCount++;
+      }
+    }
 
     // Check if we're in a Scaffold (mobile full-screen) or Dialog (desktop)
     final isInScaffold = Scaffold.maybeOf(context) != null;
@@ -388,7 +398,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                             height: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : Text('Confirm Order ($totalItems items)'),
+                        : Text('Confirm Order ($includedItemsCount items)'),
                   ),
                 ),
               ],
@@ -421,6 +431,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     final suggestions = item['suggestions'] as List<dynamic>? ?? [];
     final isParsingFailure = item['is_parsing_failure'] as bool? ?? false;
     final isAmbiguousPackaging = item['is_ambiguous_packaging'] as bool? ?? false;
+    final isSkipped = _skippedItems[originalText] ?? false;
     
     final quantity = _quantities[originalText] ?? 1.0;
     final unit = _units[originalText] ?? 'each';
@@ -436,18 +447,35 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      color: isSkipped ? Colors.grey.withValues(alpha: 0.2) : null,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Item number and original text
+            // Item number, checkbox, and original text
             Row(
               children: [
+                // Checkbox to skip item
+                Transform.scale(
+                  scale: 0.8,
+                  child: Checkbox(
+                    value: !isSkipped, // Checked = include, unchecked = skip
+                    onChanged: (value) {
+                      setState(() {
+                        _skippedItems[originalText] = !(value ?? true);
+                      });
+                    },
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).primaryColor.withValues(alpha: 0.1),
+                    color: isSkipped 
+                        ? Colors.grey.withValues(alpha: 0.3)
+                        : Theme.of(context).primaryColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
@@ -455,7 +483,9 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
-                      color: Theme.of(context).primaryColor,
+                      color: isSkipped 
+                          ? Colors.grey 
+                          : Theme.of(context).primaryColor,
                     ),
                   ),
                 ),
@@ -463,9 +493,11 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                 Expanded(
                   child: Text(
                     originalText,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontWeight: FontWeight.w500,
                       fontSize: 14,
+                      color: isSkipped ? Colors.grey : null,
+                      decoration: isSkipped ? TextDecoration.lineThrough : null,
                     ),
                   ),
                 ),
@@ -1069,11 +1101,18 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     });
 
     try {
-      // Collect all selected items with their details
+      // Collect all selected items with their details (excluding skipped items)
       final List<Map<String, dynamic>> orderItems = [];
       
       for (var item in widget.suggestionsData['items']) {
         final originalText = item['original_text'] as String;
+        final isSkipped = _skippedItems[originalText] ?? false;
+        
+        // Skip items marked as skipped
+        if (isSkipped) {
+          continue;
+        }
+        
         final selectedSuggestion = _selectedSuggestions[originalText];
         final quantity = _quantities[originalText] ?? 1.0;
         final unit = _units[originalText] ?? 'each';
