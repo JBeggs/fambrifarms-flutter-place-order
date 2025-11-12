@@ -1685,6 +1685,12 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
       _selectedProduct = product;
       if (product != null) {
         _priceController.text = product.price.toString();
+        // Automatically set stock action to 'no_reserve' for unlimited stock products
+        if (product.unlimitedStock) {
+          _stockAction = 'no_reserve';
+        } else {
+          _stockAction = 'reserve';
+        }
       }
     });
   }
@@ -1723,8 +1729,8 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
       return;
     }
 
-    // Check stock if reserving
-    if (_stockAction == 'reserve' && quantity > _selectedProduct!.stockLevel) {
+    // Check stock if reserving (skip for unlimited stock products)
+    if (!_selectedProduct!.unlimitedStock && _stockAction == 'reserve' && quantity > _selectedProduct!.stockLevel) {
       final proceed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -1978,47 +1984,72 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                       const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey[300]!),
-                          borderRadius: BorderRadius.circular(8),
+                      
+                      // Show message for unlimited stock products
+                      if (_selectedProduct!.unlimitedStock) ...[
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.1),
+                            border: Border.all(color: Colors.green.withOpacity(0.3)),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.eco, size: 20, color: Colors.green),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  'This product is always available (garden-grown). Stock reservation is not required.',
+                                  style: TextStyle(fontSize: 13, color: Colors.green[800]),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        child: Column(
-                          children: [
-                            RadioListTile<String>(
-                              title: const Text('Reserve Stock'),
-                              subtitle: const Text('Recommended for available products'),
-                              value: 'reserve',
-                              groupValue: _stockAction,
-                              onChanged: _isLoading
-                                  ? null
-                                  : (value) {
-                                      setState(() {
-                                        _stockAction = value!;
-                                      });
-                                    },
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                            RadioListTile<String>(
-                              title: const Text('No Reservation'),
-                              subtitle: const Text('For out-of-stock or custom items'),
-                              value: 'no_reserve',
-                              groupValue: _stockAction,
-                              onChanged: _isLoading
-                                  ? null
-                                  : (value) {
-                                      setState(() {
-                                        _stockAction = value!;
-                                      });
-                                    },
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ],
+                      ] else ...[
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey[300]!),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Column(
+                            children: [
+                              RadioListTile<String>(
+                                title: const Text('Reserve Stock'),
+                                subtitle: const Text('Recommended for available products'),
+                                value: 'reserve',
+                                groupValue: _stockAction,
+                                onChanged: _isLoading
+                                    ? null
+                                    : (value) {
+                                        setState(() {
+                                          _stockAction = value!;
+                                        });
+                                      },
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              RadioListTile<String>(
+                                title: const Text('No Reservation'),
+                                subtitle: const Text('For out-of-stock or custom items'),
+                                value: 'no_reserve',
+                                groupValue: _stockAction,
+                                onChanged: _isLoading
+                                    ? null
+                                    : (value) {
+                                        setState(() {
+                                          _stockAction = value!;
+                                        });
+                                      },
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
+                      ],
 
                       if (_stockAction == 'reserve') ...[
                         const SizedBox(height: 12),

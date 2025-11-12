@@ -172,6 +172,11 @@ class BulkStockTakePersistence {
     }
   }
   
+  /// Alias for clearSavedProgress (for clarity in UI code)
+  static Future<void> deleteProgressFile() async {
+    await clearSavedProgress();
+  }
+  
   /// Check if saved progress exists
   static Future<bool> hasSavedProgress() async {
     try {

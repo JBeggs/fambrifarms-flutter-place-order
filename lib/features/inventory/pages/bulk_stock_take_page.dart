@@ -240,6 +240,113 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       );
     }
   }
+  
+  // Clear all progress (removes items from list and deletes progress file)
+  Future<void> _clearProgress() async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear All Progress?'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This will:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 8),
+            Text('• Remove all products from the stock take'),
+            Text('• Clear all entered counts and comments'),
+            Text('• Delete the saved progress file'),
+            SizedBox(height: 12),
+            Text(
+              'Note: This does NOT change actual stock levels.',
+              style: TextStyle(
+                fontStyle: FontStyle.italic,
+                color: Colors.green,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // Delete the progress file
+      await BulkStockTakePersistence.deleteProgressFile();
+      
+      // Clear search
+      _searchController.clear();
+      
+      // Clear all state
+      setState(() {
+        _searchQuery = '';
+        
+        // Dispose all controllers
+        for (final controller in _controllers.values) {
+          controller.dispose();
+        }
+        for (final controller in _commentControllers.values) {
+          controller.dispose();
+        }
+        for (final controller in _wastageControllers.values) {
+          controller.dispose();
+        }
+        for (final controller in _wastageReasonControllers.values) {
+          controller.dispose();
+        }
+        
+        // Clear all maps
+        _stockTakeProducts.clear();
+        _controllers.clear();
+        _commentControllers.clear();
+        _wastageControllers.clear();
+        _wastageReasonControllers.clear();
+        _originalStock.clear();
+        _addedTimestamps.clear();
+        _expandedProducts.clear();
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ All progress cleared successfully'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Error clearing progress: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error clearing progress: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
 
   Future<void> _refreshProductsList() async {
     try {

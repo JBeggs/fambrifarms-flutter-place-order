@@ -242,31 +242,31 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
       // Step 2: Reset ALL products to zero first (complete stock take)
       print('[INVENTORY] Resetting all products to zero for complete stock take');
       final allProducts = state.products;
-      final resetFutures = <Future>[];
       
+      // Process resets sequentially with better error handling
+      int resetCount = 0;
       for (final product in allProducts) {
         if (product.stockLevel > 0) {
-          resetFutures.add(
-            _apiService.adjustStock(product.id, {
+          try {
+            await _apiService.adjustStock(product.id, {
               'adjustment_type': 'finished_waste',
               'quantity': product.stockLevel,
               'reason': 'complete_stock_take_reset',
               'notes': 'Complete stock take: Reset to zero before applying counted quantities',
-            })
-          );
+            });
+            resetCount++;
+          } catch (e) {
+            print('[INVENTORY] ⚠️ Failed to reset product ${product.name} (ID: ${product.id}, stock: ${product.stockLevel}): $e');
+            // Continue with other products even if one fails
+          }
         }
       }
-      
-      // Wait for all resets to complete
-      if (resetFutures.isNotEmpty) {
-        await Future.wait(resetFutures);
-        print('[INVENTORY] Reset ${resetFutures.length} products to zero');
-      }
+      print('[INVENTORY] Reset $resetCount products to zero');
       
       // Step 3: Process wastage and set counted quantities
       print('[INVENTORY] Processing wastage and setting counted quantities');
-      final adjustmentFutures = <Future>[];
       
+      int adjustmentCount = 0;
       for (final entry in entries) {
         final productId = entry['product_id'] as int;
         final countedQuantity = (entry['counted_quantity'] as double);
@@ -274,36 +274,55 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
         final wastageReason = entry['wastage_reason'] as String? ?? 'Spoilage';
         final comment = entry['comment'] as String? ?? '';
         
+        // Get product name from entry first (most reliable), then fallback to state lookup
+        String productName = entry['product_name'] as String? ?? 'Unknown';
+        if (productName == 'Unknown') {
+          final product = allProducts.where((p) => p.id == productId).firstOrNull;
+          if (product != null) {
+            productName = product.name;
+          } else {
+            // Product not in current state, log the entry data for debugging
+            print('[INVENTORY] ⚠️ Product ID $productId not found in state.products (${allProducts.length} products)');
+            print('[INVENTORY] Entry data: counted=$countedQuantity, wastage=$wastageQuantity, current_stock=${entry['current_stock']}');
+          }
+        }
+        
         // Record wastage if any
         if (wastageQuantity > 0) {
-          adjustmentFutures.add(
-            _apiService.adjustStock(productId, {
+          try {
+            await _apiService.adjustStock(productId, {
               'adjustment_type': 'finished_waste',
               'quantity': wastageQuantity,
               'reason': 'stock_take_wastage',
               'notes': 'Stock take wastage: $wastageReason${comment.isNotEmpty ? '. $comment' : ''}',
-            })
-          );
+            });
+            adjustmentCount++;
+            print('[INVENTORY] ✓ Recorded wastage for $productName (ID: $productId): $wastageQuantity');
+          } catch (e) {
+            print('[INVENTORY] ⚠️ Failed wastage for $productName (ID: $productId, qty: $wastageQuantity): $e');
+            // Continue with other products
+          }
         }
         
         // Set counted quantities (only products with stock > 0)
         if (countedQuantity > 0) {
-          adjustmentFutures.add(
-            _apiService.adjustStock(productId, {
+          try {
+            await _apiService.adjustStock(productId, {
               'adjustment_type': 'finished_adjust',
               'quantity': countedQuantity,
               'reason': 'complete_stock_take_set',
               'notes': 'Complete stock take: Set counted quantity to $countedQuantity${comment.isNotEmpty ? '. $comment' : ''}',
-            })
-          );
+            });
+            adjustmentCount++;
+            print('[INVENTORY] ✓ Set stock for $productName (ID: $productId): $countedQuantity');
+          } catch (e) {
+            print('[INVENTORY] ⚠️ Failed to set stock for $productName (ID: $productId, qty: $countedQuantity): $e');
+            // Continue with other products
+          }
         }
       }
       
-      // Wait for all adjustments to complete
-      if (adjustmentFutures.isNotEmpty) {
-        await Future.wait(adjustmentFutures);
-        print('[INVENTORY] Processed ${adjustmentFutures.length} stock adjustments (wastage + counts)');
-      }
+      print('[INVENTORY] Processed $adjustmentCount stock adjustments (wastage + counts)');
 
       // Force a complete refresh after all operations are done
       await Future.delayed(const Duration(milliseconds: 1000)); // Give backend time to process

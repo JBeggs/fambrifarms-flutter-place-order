@@ -1,5 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:excel/excel.dart' as excel;
 import '../../models/product.dart';
 import '../../providers/products_provider.dart';
 import '../../services/api_service.dart';
@@ -106,12 +110,20 @@ class _MobileProductsPageState extends ConsumerState<MobileProductsPage> {
           IconButton(
             icon: const Icon(Icons.add),
             onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => const AddProductDialog(),
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const AddProductDialog(),
+                  fullscreenDialog: true,
+                ),
               );
             },
             tooltip: 'Add Product',
+          ),
+          IconButton(
+            icon: const Icon(Icons.table_chart),
+            onPressed: _exportToExcel,
+            tooltip: 'Export to Excel',
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -482,9 +494,12 @@ class _MobileProductsPageState extends ConsumerState<MobileProductsPage> {
   }
 
   void _editProduct(Product product) {
-    showDialog(
-      context: context,
-      builder: (context) => EditProductDialog(product: product),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditProductDialog(product: product),
+        fullscreenDialog: true,
+      ),
     );
   }
 
@@ -584,6 +599,198 @@ class _MobileProductsPageState extends ConsumerState<MobileProductsPage> {
         builder: (context) => MobileRecipePage(product: product),
       ),
     );
+  }
+
+  Future<void> _exportToExcel() async {
+    try {
+      print('[PRODUCTS_EXCEL] Starting Excel export...');
+      
+      // Show loading
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
+              SizedBox(width: 16),
+              Text('Generating Excel file...'),
+            ],
+          ),
+          duration: Duration(seconds: 3),
+        ),
+      );
+
+      final productsState = ref.read(productsProvider);
+      final products = productsState.products;
+      
+      // Filter to only include products with stock > 0
+      final productsInStock = products.where((p) => p.stockLevel > 0).toList();
+      
+      if (productsInStock.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No products with stock to export'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // Sort products alphabetically by name
+      final sortedProducts = List<Product>.from(productsInStock)
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+      print('[PRODUCTS_EXCEL] Exporting ${sortedProducts.length} products with stock (filtered from ${products.length} total)');
+
+      // Generate filename
+      final now = DateTime.now();
+      final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final timeStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final filename = 'FambriProducts_${dateStr}_$timeStr.xlsx';
+
+      // Get documents directory
+      final directory = await getApplicationDocumentsDirectory();
+      final filePath = '${directory.path}/$filename';
+
+      // Create Excel workbook
+      final excelFile = excel.Excel.createExcel();
+      final sheet = excelFile['Products'];
+
+      // Remove default sheet if it exists
+      if (excelFile.sheets.containsKey('Sheet1')) {
+        excelFile.delete('Sheet1');
+      }
+
+      // Add title and metadata
+      final reportDate = '${now.day}/${now.month}/${now.year}';
+      final reportTime = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      
+      sheet.appendRow([
+        excel.TextCellValue('FAMBRI FARMS - PRODUCTS REPORT'),
+      ]);
+      sheet.appendRow([
+        excel.TextCellValue('Generated: $reportDate at $reportTime'),
+      ]);
+      sheet.appendRow([
+        excel.TextCellValue(''),
+      ]);
+      
+      // Add summary (all products in export have stock > 0 by design)
+      final lowStockCount = sortedProducts.where((p) => p.stockLevel <= p.minimumStock).length;
+      final goodStockCount = sortedProducts.length - lowStockCount;
+      
+      sheet.appendRow([
+        excel.TextCellValue('Summary:'),
+        excel.TextCellValue('Products with Stock: ${sortedProducts.length}'),
+        excel.TextCellValue('Good Stock: $goodStockCount'),
+        excel.TextCellValue('Low Stock: $lowStockCount'),
+      ]);
+      sheet.appendRow([
+        excel.TextCellValue(''),
+      ]);
+
+      // Add header row
+      final headerRow = [
+        excel.TextCellValue('Product Name'),
+        excel.TextCellValue('Department'),
+        excel.TextCellValue('Price (R)'),
+        excel.TextCellValue('Current Stock'),
+        excel.TextCellValue('Unit'),
+        excel.TextCellValue('Minimum Stock'),
+        excel.TextCellValue('Status'),
+        excel.TextCellValue('SKU'),
+        excel.TextCellValue('Active'),
+      ];
+      sheet.appendRow(headerRow);
+
+      // Add data rows (all products have stock > 0)
+      for (final product in sortedProducts) {
+        final status = product.stockLevel <= product.minimumStock
+            ? 'LOW STOCK'
+            : 'OK';
+
+        final dataRow = [
+          excel.TextCellValue(product.name),
+          excel.TextCellValue(product.department),
+          excel.DoubleCellValue(product.price),
+          excel.DoubleCellValue(product.stockLevel),
+          excel.TextCellValue(product.unit),
+          excel.DoubleCellValue(product.minimumStock),
+          excel.TextCellValue(status),
+          excel.TextCellValue(product.sku ?? '-'),
+          excel.TextCellValue(product.isActive ? 'Yes' : 'No'),
+        ];
+        sheet.appendRow(dataRow);
+      }
+
+      // Auto-fit columns
+      for (int i = 0; i < headerRow.length; i++) {
+        sheet.setColumnAutoFit(i);
+      }
+
+      // Save Excel file
+      print('[PRODUCTS_EXCEL] Generating Excel bytes...');
+      final excelBytes = excelFile.save();
+
+      if (excelBytes != null) {
+        print('[PRODUCTS_EXCEL] Excel bytes generated: ${excelBytes.length} bytes');
+        
+        final file = File(filePath);
+        print('[PRODUCTS_EXCEL] Writing to file: $filePath');
+        await file.writeAsBytes(excelBytes);
+
+        // Verify file was created
+        if (file.existsSync()) {
+          final fileSize = file.lengthSync();
+          print('[PRODUCTS_EXCEL] ✅ Excel saved successfully!');
+          print('[PRODUCTS_EXCEL] File: $filePath');
+          print('[PRODUCTS_EXCEL] Size: $fileSize bytes');
+
+          // Share the file
+          await Share.shareXFiles(
+            [XFile(filePath)],
+            subject: 'Fambri Products Report - $reportDate',
+            text: 'Products report generated on $reportDate at $reportTime',
+          );
+
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Excel exported: ${sortedProducts.length} products'),
+              backgroundColor: Colors.green,
+              action: SnackBarAction(
+                label: 'Share Again',
+                textColor: Colors.white,
+                onPressed: () {
+                  Share.shareXFiles(
+                    [XFile(filePath)],
+                    subject: 'Fambri Products Report - $reportDate',
+                  );
+                },
+              ),
+            ),
+          );
+        } else {
+          throw Exception('File was not created after write operation');
+        }
+      } else {
+        throw Exception('Failed to generate Excel bytes');
+      }
+    } catch (e) {
+      print('[PRODUCTS_EXCEL] Error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error exporting Excel: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 }
 

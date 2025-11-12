@@ -267,9 +267,14 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         final productName = selectedSuggestion['product_name'] as String? ?? '';
         final unit = selectedSuggestion['unit'] as String? ?? '';
         final inStock = selectedSuggestion['in_stock'] as bool? ?? false;
+        final unlimitedStock = selectedSuggestion['unlimited_stock'] as bool? ?? false;
         
+        // Always set to 'no_reserve' for unlimited stock products (garden-grown)
+        if (unlimitedStock) {
+          _stockActions[originalText] = 'no_reserve';
+        }
         // Default to 'reserve' if item is in stock, 'no_reserve' if not in stock
-        if (inStock) {
+        else if (inStock) {
           _stockActions[originalText] = 'reserve';
         } else if (unit == 'kg' && (productName.toLowerCase().contains('bulk') || productName.toLowerCase().contains('flexible'))) {
           _stockActions[originalText] = 'no_reserve';
@@ -1329,6 +1334,35 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     final stock = selectedSuggestion?['stock'] as Map<String, dynamic>?;
     final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
     final inStock = selectedSuggestion?['in_stock'] as bool? ?? false;
+    final unlimitedStock = selectedSuggestion?['unlimited_stock'] as bool? ?? false;
+    
+    // Show special message for unlimited stock products (garden-grown)
+    if (unlimitedStock) {
+      return Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.green.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.eco, size: 16, color: Colors.green.shade600),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Always available (garden-grown) - no reservation needed',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.green.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     
     // Don't show stock actions if there's no available stock (reserved stock counts as unavailable)
     final reserved = (stock?['reserved_quantity'] as num?)?.toDouble() ?? 0.0;

@@ -11,6 +11,7 @@ class Product {
   final bool isActive;
   final double stockLevel;
   final double minimumStock;
+  final bool unlimitedStock;
   final DateTime? lastUpdated;
   final ProductPricing? pricing;
   final List<String>? aliases;
@@ -26,6 +27,7 @@ class Product {
     this.isActive = true,
     this.stockLevel = 0.0,
     this.minimumStock = 0.0,
+    this.unlimitedStock = false,
     this.lastUpdated,
     this.pricing,
     this.aliases,
@@ -75,6 +77,7 @@ class Product {
       isActive: json['is_active'] ?? true,
       stockLevel: _parseDouble(json['stock_level'] ?? 0.0),
       minimumStock: _parseDouble(json['minimum_stock'] ?? 0.0),
+      unlimitedStock: json['unlimited_stock'] ?? false,
       lastUpdated: json['last_updated'] != null 
           ? DateTime.parse(json['last_updated']) 
           : null,
@@ -99,6 +102,7 @@ class Product {
       'is_active': isActive,
       'stock_level': stockLevel,
       'minimum_stock': minimumStock,
+      'unlimited_stock': unlimitedStock,
       'last_updated': lastUpdated?.toIso8601String(),
       'pricing': pricing?.toJson(),
       'aliases': aliases,
@@ -112,21 +116,23 @@ class Product {
   String get fullPriceDisplay => '$priceDisplay per $unitDisplay';
   
   String get stockStatusDisplay {
+    if (unlimitedStock) return 'Always Available';
     if (stockLevel <= 0) return 'Out of Stock';
     if (stockLevel <= minimumStock) return 'Low Stock';
     return 'In Stock';
   }
 
   Color get stockStatusColor {
+    if (unlimitedStock) return const Color(0xFF2ECC71); // Bright Green
     if (stockLevel <= 0) return const Color(0xFFE74C3C); // Red
     if (stockLevel <= minimumStock) return const Color(0xFFF39C12); // Orange
     return const Color(0xFF27AE60); // Green
   }
 
   // Business logic helpers
-  bool get isOutOfStock => stockLevel <= 0;
-  bool get isLowStock => stockLevel > 0 && stockLevel <= minimumStock;
-  bool get isInStock => stockLevel > minimumStock;
+  bool get isOutOfStock => !unlimitedStock && stockLevel <= 0;
+  bool get isLowStock => !unlimitedStock && stockLevel > 0 && stockLevel <= minimumStock;
+  bool get isInStock => unlimitedStock || stockLevel > minimumStock;
   
   double get stockPercentage {
     if (minimumStock <= 0) return stockLevel > 0 ? 100.0 : 0.0;
@@ -187,6 +193,7 @@ class Product {
     bool? isActive,
     double? stockLevel,
     double? minimumStock,
+    bool? unlimitedStock,
     DateTime? lastUpdated,
     ProductPricing? pricing,
     List<String>? aliases,
@@ -202,6 +209,7 @@ class Product {
       isActive: isActive ?? this.isActive,
       stockLevel: stockLevel ?? this.stockLevel,
       minimumStock: minimumStock ?? this.minimumStock,
+      unlimitedStock: unlimitedStock ?? this.unlimitedStock,
       lastUpdated: lastUpdated ?? this.lastUpdated,
       pricing: pricing ?? this.pricing,
       aliases: aliases ?? this.aliases,

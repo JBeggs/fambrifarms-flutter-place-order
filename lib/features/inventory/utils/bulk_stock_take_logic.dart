@@ -50,10 +50,11 @@ class BulkStockTakeLogic {
       
       final productName = product?.name ?? 'Unknown Product';
       
-      print('[STOCK_TAKE_LOGIC] Including $productName: counted=$countedQuantity, wastage=$wastageQuantity, reason="$wastageReason", comment="$comment"');
+      print('[STOCK_TAKE_LOGIC] Including $productName (ID: $productId): counted=$countedQuantity, wastage=$wastageQuantity, reason="$wastageReason", comment="$comment"');
       
       entries.add({
         'product_id': productId,
+        'product_name': productName,  // Include product name for easier debugging
         'counted_quantity': countedQuantity,
         'current_stock': currentStock,
         'wastage_quantity': wastageQuantity,
