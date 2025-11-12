@@ -1396,8 +1396,19 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
     // Collect all items that need to be ordered from all orders
     // Only include items with failed reservations or no reserve (excluding unlimited stock products)
     List<Map<String, dynamic>> itemsToOrder = [];
+    
+    print('[WORKBOOK] Processing ${orders.length} orders for Stock to Order sheet');
+    int totalItems = 0;
+    int noReserveCount = 0;
+    int failedReserveCount = 0;
+    int unlimitedStockCount = 0;
+    
     for (final order in orders) {
+      print('[WORKBOOK] Order ${order.orderNumber}: ${order.items.length} items');
       for (final item in order.items) {
+        totalItems++;
+        print('[WORKBOOK]   - ${item.product.name}: stockAction=${item.stockAction}, isNoReserve=${item.isNoReserve}, isFailed=${item.isStockReservationFailed}');
+        
         // Find corresponding product in products list
         final product = products.firstWhere(
           (p) => p.id == item.product.id,
@@ -1414,6 +1425,8 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
         
         // Skip unlimited stock products (they're always available, no need to order)
         if (product.unlimitedStock) {
+          print('[WORKBOOK]     -> Skipping ${item.product.name} (unlimited stock)');
+          unlimitedStockCount++;
           continue;
         }
         
@@ -1423,7 +1436,11 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
         final needsOrdering = item.isStockReservationFailed || item.isNoReserve;
         
         if (needsOrdering) {
+          if (item.isNoReserve) noReserveCount++;
+          if (item.isStockReservationFailed) failedReserveCount++;
+          
           final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
+          print('[WORKBOOK]     -> Adding ${item.product.name} to Stock to Order sheet');
           itemsToOrder.add({
             'order': order,
             'item': item,
@@ -1433,6 +1450,8 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
         }
       }
     }
+    
+    print('[WORKBOOK] Stock to Order summary: Total items=$totalItems, NoReserve=$noReserveCount, Failed=$failedReserveCount, UnlimitedStock=$unlimitedStockCount, ToOrder=${itemsToOrder.length}');
     
     // Sort by product name
     itemsToOrder.sort((a, b) => a['item'].product.name.compareTo(b['item'].product.name));

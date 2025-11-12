@@ -221,8 +221,11 @@ class ExcelService {
       // final itemTotal = item.quantity * item.price;
       // totalAmount += itemTotal;
       
-      // Product name with notes
+      // Product name with source product info and notes
       String productName = item.product.name;
+      if (item.sourceProductName != null && item.sourceQuantity != null) {
+        productName += ' [Stock from: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''})]';
+      }
       if (item.notes?.isNotEmpty == true) {
         productName += ' (${item.notes})';
       }
@@ -384,14 +387,14 @@ class ExcelService {
     print('[EXCEL SERVICE] Reserved Stock sheet built successfully');
   }
 
-  /// Build the Stock to be Ordered sheet
+  /// Build the Stock to Order sheet
   static Future<void> _buildStockToOrderSheet(Excel excel, Order order, List<product_model.Product> products) async {
-    print('[EXCEL SERVICE] Building Stock to be Ordered sheet');
+    print('[EXCEL SERVICE] Building Stock to Order sheet');
     
-    final sheet = excel['Stock to be Ordered'];
+    final sheet = excel['Stock to Order'];
     
     // Sheet title
-    sheet.cell(CellIndex.indexByString('A1')).value = TextCellValue('STOCK TO BE ORDERED');
+    sheet.cell(CellIndex.indexByString('A1')).value = TextCellValue('STOCK TO ORDER');
     sheet.cell(CellIndex.indexByString('A1')).cellStyle = CellStyle(
       bold: true,
       fontSize: 16,
@@ -418,12 +421,48 @@ class ExcelService {
     }
     currentRow++;
     
-    // Add items that need to be ordered (insufficient stock or failed reservations)
-    // Sort items alphabetically first
-    final itemsToCheck = [...order.items];
-    itemsToCheck.sort((a, b) => a.product.name.toLowerCase().compareTo(b.product.name.toLowerCase()));
+    // Filter items that need to be ordered (no reserve or failed reservation)
+    // Exclude unlimited stock products (they're always available)
+    print('[EXCEL SERVICE] Filtering items for Stock to Order...');
+    final itemsToOrder = order.items.where((item) {
+      print('[EXCEL SERVICE]   - ${item.product.name}: stockAction=${item.stockAction}, isNoReserve=${item.isNoReserve}, isFailed=${item.isStockReservationFailed}');
+      
+      // Only include items that need ordering (failed reservation or no reserve)
+      if (!item.isNoReserve && !item.isStockReservationFailed) {
+        return false;
+      }
+      
+      // Find corresponding product to check unlimited stock
+      final product = products.firstWhere(
+        (p) => p.id == item.product.id,
+        orElse: () => product_model.Product(
+          id: item.product.id,
+          name: item.product.name,
+          department: 'Other',
+          price: item.product.price,
+          unit: item.product.unit,
+          stockLevel: 0,
+          minimumStock: 0,
+        ),
+      );
+      
+      // Skip unlimited stock products
+      if (product.unlimitedStock) {
+        print('[EXCEL SERVICE]     -> Skipping ${item.product.name} (unlimited stock)');
+        return false;
+      }
+      
+      print('[EXCEL SERVICE]     -> Will add ${item.product.name} to Stock to Order sheet');
+      return true;
+    }).toList();
     
-    for (final item in itemsToCheck) {
+    // Sort alphabetically
+    itemsToOrder.sort((a, b) => a.product.name.toLowerCase().compareTo(b.product.name.toLowerCase()));
+    
+    print('[EXCEL SERVICE] Found ${itemsToOrder.length} items to order');
+    
+    // Add items to sheet
+    for (final item in itemsToOrder) {
       // Find corresponding product in products list
       final product = products.firstWhere(
         (p) => p.id == item.product.id,
@@ -438,54 +477,35 @@ class ExcelService {
         ),
       );
       
-      // Check if this item needs to be ordered
       final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
-      final needsOrdering = shortage > 0 || item.isStockReservationFailed || item.isNoReserve;
       
-      if (needsOrdering) {
-        String status = '';
-        if (item.isStockReservationFailed) {
-          status = '❌ Reservation Failed';
-        } else if (item.isNoReserve) {
-          status = '🔓 No Reservation';
-        } else if (shortage > 0) {
-          status = '📦 Insufficient Stock';
-        }
-        
-        final rowData = [
-          TextCellValue(item.product.name),
-          DoubleCellValue(item.quantity),
-          TextCellValue(item.product.unit),
-          DoubleCellValue(product.stockLevel),
-          DoubleCellValue(shortage),
-          DoubleCellValue(shortage > 0 ? shortage : item.quantity),
-          TextCellValue(status),
-        ];
-        
-        for (int i = 0; i < rowData.length; i++) {
-          sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
-        }
-        currentRow++;
+      String status = '';
+      if (item.isStockReservationFailed) {
+        status = '❌ Reservation Failed';
+      } else if (item.isNoReserve) {
+        status = '🔓 No Reservation';
+      } else if (shortage > 0) {
+        status = '📦 Insufficient Stock';
       }
+      
+      final rowData = [
+        TextCellValue(item.product.name),
+        DoubleCellValue(item.quantity),
+        TextCellValue(item.product.unit),
+        DoubleCellValue(product.stockLevel),
+        DoubleCellValue(shortage),
+        DoubleCellValue(shortage > 0 ? shortage : item.quantity),
+        TextCellValue(status),
+      ];
+      
+      print('[EXCEL SERVICE] Writing row $currentRow: ${item.product.name}');
+      for (int i = 0; i < rowData.length; i++) {
+        sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+      }
+      currentRow++;
     }
     
-    // If no items need ordering, show message
-    final hasItemsToOrder = order.items.any((item) {
-      final product = products.firstWhere(
-        (p) => p.id == item.product.id,
-        orElse: () => product_model.Product(
-          id: item.product.id,
-          name: item.product.name,
-          department: 'Other',
-          price: item.product.price,
-          unit: item.product.unit,
-          stockLevel: 0,
-          minimumStock: 0,
-        ),
-      );
-      final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
-      return shortage > 0 || item.isStockReservationFailed || item.isNoReserve;
-    });
+    final hasItemsToOrder = itemsToOrder.isNotEmpty;
     
     if (!hasItemsToOrder) {
       sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('All items are available in stock');
@@ -499,6 +519,6 @@ class ExcelService {
       sheet.setColumnAutoFit(i);
     }
     
-    print('[EXCEL SERVICE] Stock to be Ordered sheet built successfully');
+    print('[EXCEL SERVICE] Stock to Order sheet built successfully');
   }
 }

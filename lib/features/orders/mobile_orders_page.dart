@@ -902,12 +902,26 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
     // Collect all items that need to be ordered (no reserve or failed reservation)
     // Exclude unlimited stock products (they're always available)
     List<Map<String, dynamic>> itemsToOrder = [];
+    
+    print('[MOBILE WORKBOOK] Processing ${orders.length} orders for Stock to Order sheet');
+    int totalItems = 0;
+    int noReserveCount = 0;
+    int failedReserveCount = 0;
+    int unlimitedStockCount = 0;
+    
     for (final order in orders) {
+      print('[MOBILE WORKBOOK] Order ${order.orderNumber}: ${order.items.length} items');
       for (final item in order.items) {
+        totalItems++;
+        print('[MOBILE WORKBOOK]   - ${item.product.name}: stockAction=${item.stockAction}, isNoReserve=${item.isNoReserve}, isFailed=${item.isStockReservationFailed}');
+        
         // Only include items that need ordering (failed reservation or no reserve)
         if (!item.isNoReserve && !item.isStockReservationFailed) {
           continue;
         }
+        
+        if (item.isNoReserve) noReserveCount++;
+        if (item.isStockReservationFailed) failedReserveCount++;
         
         // Find corresponding product to check if it's unlimited stock
         final product = products.firstWhere(
@@ -925,15 +939,20 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
         
         // Skip unlimited stock products (they're always available, no need to order)
         if (product.unlimitedStock) {
+          print('[MOBILE WORKBOOK]     -> Skipping ${item.product.name} (unlimited stock)');
+          unlimitedStockCount++;
           continue;
         }
         
+        print('[MOBILE WORKBOOK]     -> Adding ${item.product.name} to Stock to Order sheet');
         itemsToOrder.add({
           'order': order,
           'item': item,
         });
       }
     }
+    
+    print('[MOBILE WORKBOOK] Stock to Order summary: Total items=$totalItems, NoReserve=$noReserveCount, Failed=$failedReserveCount, UnlimitedStock=$unlimitedStockCount, ToOrder=${itemsToOrder.length}');
     
     // Sort by product name
     itemsToOrder.sort((a, b) => a['item'].product.name.compareTo(b['item'].product.name));
@@ -1384,9 +1403,11 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
         print('[ORDER SHARE] Error generating PDF: $e');
       }
 
-      // Generate Excel
+      // Generate Excel with products data for additional sheets
       try {
-        excelPath = await ExcelService.generateOrderExcel(order);
+        final productsState = ref.read(productsProvider);
+        final products = productsState.products;
+        excelPath = await ExcelService.generateOrderExcel(order, products: products);
         print('[ORDER SHARE] Excel generated: $excelPath');
       } catch (e) {
         print('[ORDER SHARE] Error generating Excel: $e');
@@ -1676,6 +1697,11 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
   String _stockAction = 'reserve'; // 'reserve' or 'no_reserve'
   bool _isLoading = false;
   List<product_model.Product> _filteredProducts = [];
+  
+  // Source product for stock deduction
+  bool _useSourceProduct = false;
+  product_model.Product? _selectedSourceProduct;
+  final _sourceQuantityController = TextEditingController();
 
   @override
   void initState() {
@@ -1689,6 +1715,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
     _quantityController.dispose();
     _priceController.dispose();
     _searchController.dispose();
+    _sourceQuantityController.dispose();
     super.dispose();
   }
 
@@ -1754,8 +1781,45 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
       return;
     }
 
-    // Check stock if reserving (skip for unlimited stock products)
-    if (!_selectedProduct!.unlimitedStock && _stockAction == 'reserve' && quantity > _selectedProduct!.stockLevel) {
+    // Validate source product if used
+    double? sourceQuantity;
+    if (_useSourceProduct) {
+      if (_selectedSourceProduct == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a source product'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      
+      sourceQuantity = double.tryParse(_sourceQuantityController.text);
+      if (sourceQuantity == null || sourceQuantity <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enter a valid source quantity'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      
+      // Check source product stock availability
+      if (sourceQuantity > _selectedSourceProduct!.stockLevel) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Insufficient stock in ${_selectedSourceProduct!.name}. Available: ${_selectedSourceProduct!.stockLevel} ${_selectedSourceProduct!.unit}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+    }
+    
+    // Check stock if reserving (skip for unlimited stock products and when using source product)
+    if (!_useSourceProduct && !_selectedProduct!.unlimitedStock && _stockAction == 'reserve' && quantity > _selectedProduct!.stockLevel) {
       final proceed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -1792,19 +1856,27 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
     });
 
     try {
+      // Prepare order item data
+      final itemData = {
+        'product_name': _selectedProduct!.name,
+        'quantity': quantity,
+        'unit': _selectedProduct!.unit,
+        'price': price,
+        'stock_action': _stockAction,
+      };
+      
+      // Add source product data if using source product
+      if (_useSourceProduct && _selectedSourceProduct != null && sourceQuantity != null) {
+        itemData['source_product_id'] = _selectedSourceProduct!.id;
+        itemData['source_quantity'] = sourceQuantity;
+      }
+      
       // Add item to order
       // Note: Do NOT send 'original_text' for manually added items
       // originalText should only come from WhatsApp messages and remain immutable
       await ref.read(ordersProvider.notifier).addOrderItem(
         widget.orderId,
-        {
-          'product_name': _selectedProduct!.name,
-          'quantity': quantity,
-          'unit': _selectedProduct!.unit,
-          'price': price,
-          'stock_action': _stockAction,
-          // 'original_text' intentionally NOT included - only set from WhatsApp
-        },
+        itemData,
       );
 
       if (mounted) {
@@ -2097,6 +2169,135 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                             ],
                           ),
                         ),
+                      ],
+                      
+                      // Source Product Section
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      const SizedBox(height: 16),
+                      
+                      Row(
+                        children: [
+                          Checkbox(
+                            value: _useSourceProduct,
+                            onChanged: _isLoading ? null : (value) {
+                              setState(() {
+                                _useSourceProduct = value!;
+                                if (!value) {
+                                  _selectedSourceProduct = null;
+                                  _sourceQuantityController.clear();
+                                }
+                              });
+                            },
+                          ),
+                          const Expanded(
+                            child: Text(
+                              'Use stock from another product',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      if (_useSourceProduct) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withOpacity(0.1),
+                            border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.info_outline, size: 16, color: Colors.amber),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Stock will be deducted from the source product instead of "${_selectedProduct!.name}"',
+                                  style: TextStyle(fontSize: 12, color: Colors.amber[900]),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // Source Product Selector
+                        const Text(
+                          'Source Product',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<product_model.Product>(
+                          value: _selectedSourceProduct,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            hintText: 'Select source product',
+                          ),
+                          items: widget.products
+                              .where((p) => p.id != _selectedProduct!.id) // Don't show same product
+                              .map((product) => DropdownMenuItem(
+                                    value: product,
+                                    child: Text(
+                                      '${product.name} (${product.stockLevel} ${product.unit})',
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                  ))
+                              .toList(),
+                          onChanged: _isLoading ? null : (product) {
+                            setState(() {
+                              _selectedSourceProduct = product;
+                            });
+                          },
+                          isExpanded: true,
+                          isDense: true,
+                        ),
+                        
+                        if (_selectedSourceProduct != null) ...[
+                          const SizedBox(height: 16),
+                          
+                          // Source Quantity
+                          const Text(
+                            'Quantity to Deduct',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _sourceQuantityController,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              suffixText: _selectedSourceProduct?.unit ?? '',
+                              hintText: 'e.g., 5',
+                            ),
+                            enabled: !_isLoading,
+                          ),
+                          
+                          const SizedBox(height: 12),
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.inventory, size: 16, color: Colors.blue),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Available in ${_selectedSourceProduct!.name}: ${_selectedSourceProduct!.stockLevel} ${_selectedSourceProduct!.unit}',
+                                    style: const TextStyle(fontSize: 12, color: Colors.blue),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
                     ],
                   ),

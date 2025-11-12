@@ -170,6 +170,13 @@ class OrderItem {
   final PricingBreakdown? pricingBreakdown;
   final String? stockAction;
   final Map<String, dynamic>? stockResult;
+  
+  // Source product for stock deduction (optional)
+  final int? sourceProductId;
+  final String? sourceProductName;
+  final double? sourceQuantity;
+  final String? sourceProductUnit;
+  final double? sourceProductStockLevel;
 
   const OrderItem({
     required this.id,
@@ -186,6 +193,11 @@ class OrderItem {
     this.pricingBreakdown,
     this.stockAction,
     this.stockResult,
+    this.sourceProductId,
+    this.sourceProductName,
+    this.sourceQuantity,
+    this.sourceProductUnit,
+    this.sourceProductStockLevel,
   });
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
@@ -243,6 +255,11 @@ class OrderItem {
         pricingBreakdown: pricingBreakdown,
         stockAction: json['stock_action'] as String?,
         stockResult: json['stock_result'] as Map<String, dynamic>?,
+        sourceProductId: json['source_product'] as int?,
+        sourceProductName: json['source_product_name'] as String?,
+        sourceQuantity: _parseDouble(json['source_quantity']),
+        sourceProductUnit: json['source_product_unit'] as String?,
+        sourceProductStockLevel: _parseDouble(json['source_product_stock_level']),
       );
     } catch (e) {
       print('[ERROR] OrderItem.fromJson - Failed: $e');
@@ -267,6 +284,11 @@ class OrderItem {
       'pricing_breakdown': pricingBreakdown?.toJson(),
       'stock_action': stockAction,
       'stock_result': stockResult,
+      'source_product': sourceProductId,
+      'source_product_name': sourceProductName,
+      'source_quantity': sourceQuantity,
+      'source_product_unit': sourceProductUnit,
+      'source_product_stock_level': sourceProductStockLevel,
     };
   }
 

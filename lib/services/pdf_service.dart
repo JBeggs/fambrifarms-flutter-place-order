@@ -385,6 +385,16 @@ class PdfService {
     // Always show product name first
     infoLines.add(pw.Text(item.product.name, style: const pw.TextStyle(fontSize: 8)));
     
+    // Show source product info if applicable
+    if (item.sourceProductName != null && item.sourceQuantity != null) {
+      infoLines.add(
+        pw.Text(
+          'Stock from: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''})',
+          style: pw.TextStyle(fontSize: 6, color: PdfColors.orange700, fontStyle: pw.FontStyle.italic),
+        ),
+      );
+    }
+    
     // Show original text from WhatsApp if available
     if (hasOriginalText) {
       infoLines.add(
