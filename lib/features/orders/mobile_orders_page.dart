@@ -5,6 +5,7 @@ import 'package:excel/excel.dart' as excel;
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import '../../models/order.dart';
+import '../../models/customer.dart';
 import '../../models/product.dart' as product_model;
 import '../../providers/orders_provider.dart';
 import '../../providers/inventory_provider.dart';
@@ -662,8 +663,11 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
         }
         currentRow++;
         
-        // Add order items
-        for (final item in order.items) {
+        // Add order items (sorted alphabetically)
+        final sortedItems = [...order.items];
+        sortedItems.sort((a, b) => a.product.name.toLowerCase().compareTo(b.product.name.toLowerCase()));
+        
+        for (final item in sortedItems) {
           // Product name with notes
           String productName = item.product.name;
           if (item.notes?.isNotEmpty == true) {
@@ -1097,7 +1101,7 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
                     ),
                   ),
                   Text(
-                    order.restaurant.displayName,
+                    _getCustomerDisplayName(order.restaurant),
                     style: TextStyle(
                       fontSize: 16,
                       color: Colors.grey[600],
@@ -1136,7 +1140,12 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
         ),
         const SizedBox(height: 12),
         
-        ...order.items.asMap().entries.map((entry) {
+        // Sort items alphabetically by product name
+        ...(() {
+          final sortedItems = [...order.items];
+          sortedItems.sort((a, b) => a.product.name.toLowerCase().compareTo(b.product.name.toLowerCase()));
+          return sortedItems;
+        })().asMap().entries.map((entry) {
           final item = entry.value;
           return Container(
             margin: const EdgeInsets.only(bottom: 8),
@@ -1599,6 +1608,22 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
       default:
         return Colors.grey;
     }
+  }
+
+  /// Get appropriate customer display name based on customer type
+  String _getCustomerDisplayName(Customer customer) {
+    // For restaurants: use business name if available
+    if (customer.isRestaurant) {
+      return customer.profile?.businessName ?? customer.name;
+    }
+    
+    // For private customers: use first name only
+    if (customer.isPrivate && customer.firstName.isNotEmpty) {
+      return customer.firstName;
+    }
+    
+    // Fallback to default display name
+    return customer.displayName;
   }
 }
 

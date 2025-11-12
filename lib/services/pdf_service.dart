@@ -95,7 +95,10 @@ class PdfService {
     print('[PDF SERVICE] Order has ${order.items.length} items');
     
     // Capture data BEFORE the build context
-    final items = order.items;
+    // Sort items alphabetically by product name
+    final items = [...order.items];
+    items.sort((a, b) => a.product.name.toLowerCase().compareTo(b.product.name.toLowerCase()));
+    
     final restaurantName = order.restaurant.name;
     final businessName = order.restaurant.profile?.businessName ?? '';
     final deliveryAddress = order.restaurant.profile?.deliveryAddress ?? '';

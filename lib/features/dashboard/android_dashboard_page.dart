@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:place_order_final/features/inventory/utils/bulk_stock_take_launcher.dart';
 import 'package:place_order_final/features/orders/mobile_orders_page.dart';
 import 'package:place_order_final/features/messages/mobile_messages_page.dart';
+import 'package:place_order_final/features/products/mobile_products_page.dart';
 import 'package:place_order_final/providers/products_provider.dart';
 
 class AndroidDashboardPage extends ConsumerWidget {
@@ -172,6 +173,18 @@ class AndroidDashboardPage extends ConsumerWidget {
                 icon: Icons.shopping_cart,
                 color: Colors.blue,
                 onTap: () => _navigateToOrders(context),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Products Management Button
+              _buildDashboardButton(
+                context: context,
+                title: 'Products Management',
+                subtitle: 'Manage products, stock, and recipes',
+                icon: Icons.inventory_2,
+                color: Colors.purple,
+                onTap: () => _navigateToProducts(context),
               ),
 
               const SizedBox(height: 40),
@@ -358,6 +371,15 @@ class AndroidDashboardPage extends ConsumerWidget {
       context,
       MaterialPageRoute(
         builder: (context) => const MobileOrdersPage(),
+      ),
+    );
+  }
+
+  void _navigateToProducts(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const MobileProductsPage(),
       ),
     );
   }

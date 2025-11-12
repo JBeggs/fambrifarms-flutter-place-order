@@ -212,9 +212,12 @@ class ExcelService {
     }
     currentRow++;
     
-    // Add order items
+    // Add order items (sorted alphabetically)
     // double totalAmount = 0.0;
-    for (final item in order.items) {
+    final sortedItems = [...order.items];
+    sortedItems.sort((a, b) => a.product.name.toLowerCase().compareTo(b.product.name.toLowerCase()));
+    
+    for (final item in sortedItems) {
       // final itemTotal = item.quantity * item.price;
       // totalAmount += itemTotal;
       
@@ -318,8 +321,11 @@ class ExcelService {
     }
     currentRow++;
     
-    // Add reserved stock items
-    for (final item in order.items.where((item) => item.isStockReserved)) {
+    // Add reserved stock items (sorted alphabetically)
+    final reservedItems = order.items.where((item) => item.isStockReserved).toList();
+    reservedItems.sort((a, b) => a.product.name.toLowerCase().compareTo(b.product.name.toLowerCase()));
+    
+    for (final item in reservedItems) {
       // Find corresponding product in products list
       final product = products.firstWhere(
         (p) => p.id == item.product.id,
@@ -400,7 +406,11 @@ class ExcelService {
     currentRow++;
     
     // Add items that need to be ordered (insufficient stock or failed reservations)
-    for (final item in order.items) {
+    // Sort items alphabetically first
+    final itemsToCheck = [...order.items];
+    itemsToCheck.sort((a, b) => a.product.name.toLowerCase().compareTo(b.product.name.toLowerCase()));
+    
+    for (final item in itemsToCheck) {
       // Find corresponding product in products list
       final product = products.firstWhere(
         (p) => p.id == item.product.id,

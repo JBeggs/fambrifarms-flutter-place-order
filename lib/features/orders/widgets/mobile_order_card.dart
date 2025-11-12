@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../models/order.dart';
+import '../../../models/customer.dart';
 import '../../../providers/inventory_provider.dart';
 import '../../../providers/orders_provider.dart';
 
@@ -67,7 +68,7 @@ class MobileOrderCard extends ConsumerWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          order.restaurant.displayName,
+                          _getCustomerDisplayName(order.restaurant),
                           style: TextStyle(
                             fontSize: 16,
                             color: Colors.grey[600],
@@ -304,5 +305,21 @@ class MobileOrderCard extends ConsumerWidget {
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
     return '$displayHour:$minute $period';
+  }
+
+  /// Get appropriate customer display name based on customer type
+  String _getCustomerDisplayName(Customer customer) {
+    // For restaurants: use business name if available
+    if (customer.isRestaurant) {
+      return customer.profile?.businessName ?? customer.name;
+    }
+    
+    // For private customers: use first name only
+    if (customer.isPrivate && customer.firstName.isNotEmpty) {
+      return customer.firstName;
+    }
+    
+    // Fallback to default display name
+    return customer.displayName;
   }
 }

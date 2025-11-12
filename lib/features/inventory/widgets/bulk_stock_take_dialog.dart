@@ -393,7 +393,8 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     }
     
     setState(() {
-      _stockTakeProducts.add(product);
+      // Insert at the beginning (index 0) so new products appear at the top
+      _stockTakeProducts.insert(0, product);
       _controllers[product.id] = TextEditingController();
       _commentControllers[product.id] = TextEditingController(); // Initialize comment controller for new products
       _wastageControllers[product.id] = TextEditingController(); // Initialize wastage controller for new products
@@ -464,7 +465,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     super.dispose();
   }
 
-  // Get products currently in the stock take list (filtered by search, sorted alphabetically)
+  // Get products currently in the stock take list (filtered by search, keeping insertion order)
   List<Product> get _filteredStockTakeProducts {
     List<Product> products;
     
@@ -479,13 +480,13 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       }).toList();
     }
     
-    // Sort alphabetically by product name
-    products.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    // Keep products in the order they were added (newest first)
+    // No sorting - this preserves the insertion order
     
     return products;
   }
   
-  // Get products from all products that match search but aren't in stock take list (sorted alphabetically)
+  // Get products from all products that match search but aren't in stock take list (sorted by relevance)
   List<Product> get _searchResultsNotInList {
     if (_searchQuery.isEmpty) return [];
     
@@ -500,8 +501,36 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       return matchesSearch && notInList;
     }).toList();
     
-    // Sort alphabetically by product name
-    results.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    // Sort by relevance: products starting with query first, then by alphabetical
+    results.sort((a, b) {
+      final aName = a.name.toLowerCase();
+      final bName = b.name.toLowerCase();
+      
+      // Check if product name starts with the search query
+      final aStartsWith = aName.startsWith(query);
+      final bStartsWith = bName.startsWith(query);
+      
+      // Check if first word matches the search query
+      final aFirstWord = aName.split(' ').first;
+      final bFirstWord = bName.split(' ').first;
+      final aFirstWordMatches = aFirstWord == query || aFirstWord.startsWith(query);
+      final bFirstWordMatches = bFirstWord == query || bFirstWord.startsWith(query);
+      
+      // Priority 1: Exact match on first word
+      if (aFirstWord == query && bFirstWord != query) return -1;
+      if (bFirstWord == query && aFirstWord != query) return 1;
+      
+      // Priority 2: First word starts with query
+      if (aFirstWordMatches && !bFirstWordMatches) return -1;
+      if (bFirstWordMatches && !aFirstWordMatches) return 1;
+      
+      // Priority 3: Product name starts with query
+      if (aStartsWith && !bStartsWith) return -1;
+      if (bStartsWith && !aStartsWith) return 1;
+      
+      // Priority 4: Alphabetical order
+      return aName.compareTo(bName);
+    });
     
     // Debug search results
     print('[BULK_STOCK_TAKE] Search query: "$query"');

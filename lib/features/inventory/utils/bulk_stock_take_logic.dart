@@ -135,8 +135,36 @@ class BulkStockTakeLogic {
       return matchesSearch && notInList;
     }).toList();
     
-    // Sort alphabetically
-    results.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    // Sort by relevance: products starting with query first, then by alphabetical
+    results.sort((a, b) {
+      final aName = a.name.toLowerCase();
+      final bName = b.name.toLowerCase();
+      
+      // Check if product name starts with the search query
+      final aStartsWith = aName.startsWith(query);
+      final bStartsWith = bName.startsWith(query);
+      
+      // Check if first word matches the search query
+      final aFirstWord = aName.split(' ').first;
+      final bFirstWord = bName.split(' ').first;
+      final aFirstWordMatches = aFirstWord == query || aFirstWord.startsWith(query);
+      final bFirstWordMatches = bFirstWord == query || bFirstWord.startsWith(query);
+      
+      // Priority 1: Exact match on first word
+      if (aFirstWord == query && bFirstWord != query) return -1;
+      if (bFirstWord == query && aFirstWord != query) return 1;
+      
+      // Priority 2: First word starts with query
+      if (aFirstWordMatches && !bFirstWordMatches) return -1;
+      if (bFirstWordMatches && !aFirstWordMatches) return 1;
+      
+      // Priority 3: Product name starts with query
+      if (aStartsWith && !bStartsWith) return -1;
+      if (bStartsWith && !aStartsWith) return 1;
+      
+      // Priority 4: Alphabetical order
+      return aName.compareTo(bName);
+    });
     
     return results;
   }
