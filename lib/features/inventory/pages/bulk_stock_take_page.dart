@@ -641,50 +641,22 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       return;
     }
 
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
+    // Show confirmation dialog with stock adjustment mode choice
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Complete Stock Take?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('You are about to complete the stock take with:'),
-            const SizedBox(height: 12),
-            Text('• ${entries.length} products', style: const TextStyle(fontWeight: FontWeight.bold)),
-            Text('• ${entries.where((e) => (e['wastage_quantity'] as double? ?? 0.0) > 0).length} with wastage', 
-              style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            const Text('This will:'),
-            const Text('✓ Update stock levels'),
-            const Text('✓ Generate PDF & Excel reports'),
-            const Text('✓ Auto-share the reports'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Complete Stock Take'),
-          ),
-        ],
+      builder: (context) => _StockTakeConfirmationDialog(
+        entryCount: entries.length,
+        wastageCount: entries.where((e) => (e['wastage_quantity'] as double? ?? 0.0) > 0).length,
       ),
     );
 
-    if (confirmed == true) {
-      await _submitBulkStockTake();
+    if (result?['confirmed'] == true) {
+      final adjustmentMode = result!['mode'] as String;
+      await _submitBulkStockTake(adjustmentMode: adjustmentMode);
     }
   }
 
-  Future<void> _submitBulkStockTake() async {
+  Future<void> _submitBulkStockTake({String adjustmentMode = 'set'}) async {
     _autoSaveTimer?.cancel();
 
     try {
@@ -710,10 +682,10 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
 
       setState(() => _isLoading = true);
       
-      print('[BULK_STOCK_TAKE] Submitting ${entries.length} entries');
+      print('[BULK_STOCK_TAKE] Submitting ${entries.length} entries (mode: $adjustmentMode)');
       
-      // Submit to inventory provider
-      await ref.read(inventoryProvider.notifier).bulkStockTake(entries);
+      // Submit to inventory provider with adjustment mode
+      await ref.read(inventoryProvider.notifier).bulkStockTake(entries, adjustmentMode: adjustmentMode);
       
       // Generate PDF and Excel reports using utility
       final pdfPath = await BulkStockTakePdfGenerator.generateStockTakePdf(
@@ -1868,6 +1840,121 @@ class _AddProductDialogState extends ConsumerState<_AddProductDialog> {
             }
           },
           child: const Text('Create Product'),
+        ),
+      ],
+    );
+  }
+}
+
+// Stock Take Confirmation Dialog with Mode Selection
+class _StockTakeConfirmationDialog extends StatefulWidget {
+  final int entryCount;
+  final int wastageCount;
+
+  const _StockTakeConfirmationDialog({
+    required this.entryCount,
+    required this.wastageCount,
+  });
+
+  @override
+  State<_StockTakeConfirmationDialog> createState() => _StockTakeConfirmationDialogState();
+}
+
+class _StockTakeConfirmationDialogState extends State<_StockTakeConfirmationDialog> {
+  String _selectedMode = 'set'; // Default to "set" mode
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Complete Stock Take?'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('You are about to complete the stock take with:'),
+            const SizedBox(height: 12),
+            Text('• ${widget.entryCount} products', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('• ${widget.wastageCount} with wastage', style: const TextStyle(fontWeight: FontWeight.bold)),
+            
+            const SizedBox(height: 20),
+            const Divider(),
+            const SizedBox(height: 12),
+            
+            // Stock Adjustment Mode Selection
+            const Text(
+              'Stock Adjustment Mode:',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+            ),
+            const SizedBox(height: 12),
+            
+            // Set Stock (Replace) - DEFAULT
+            RadioListTile<String>(
+              title: const Text(
+                'Set Stock (Replace)',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: const Text(
+                'Replace current stock with counted values\n✓ Recommended for most stock takes',
+                style: TextStyle(fontSize: 12),
+              ),
+              value: 'set',
+              groupValue: _selectedMode,
+              onChanged: (value) {
+                setState(() {
+                  _selectedMode = value!;
+                });
+              },
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+            
+            // Add to Stock
+            RadioListTile<String>(
+              title: const Text('Add to Stock'),
+              subtitle: const Text(
+                'Add counted values to current stock\n⚠️ Use only for receiving new stock',
+                style: TextStyle(fontSize: 12),
+              ),
+              value: 'add',
+              groupValue: _selectedMode,
+              onChanged: (value) {
+                setState(() {
+                  _selectedMode = value!;
+                });
+              },
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+            
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 12),
+            
+            const Text('This will:'),
+            const Text('✓ Update stock levels'),
+            const Text('✓ Generate PDF & Excel reports'),
+            const Text('✓ Auto-share the reports'),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, {'confirmed': false}),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(context, {
+              'confirmed': true,
+              'mode': _selectedMode,
+            });
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.green,
+            foregroundColor: Colors.white,
+          ),
+          child: Text(_selectedMode == 'set' ? 'Set Stock' : 'Add to Stock'),
         ),
       ],
     );
