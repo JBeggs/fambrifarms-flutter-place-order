@@ -358,12 +358,15 @@ class PdfService {
 
   /// Helper methods from original order_card.dart
   static String _getStockStatusText(OrderItem item) {
+    // Note: We can't easily check unlimited_stock here since we don't have product details
+    // The stock action will be 'no_reserve' for unlimited stock products
     if (item.isStockReserved) {
       return 'Reserved';
     } else if (item.isConvertedToBulkKg) {
       return 'Converted to Kg';
     } else if (item.isNoReserve) {
-      return 'To Order';
+      // Could be either unlimited stock or intentional no-reserve
+      return 'To Order / Always Available';
     } else if (item.isStockReservationFailed) {
       return 'Need to Order';
     } else {

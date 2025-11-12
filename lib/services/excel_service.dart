@@ -227,9 +227,22 @@ class ExcelService {
         productName += ' (${item.notes})';
       }
       
-      // Stock status
+      // Stock status - check if product is always available
       String stockStatus = 'Unknown';
-      if (item.isStockReserved) {
+      final product = products?.firstWhere(
+        (p) => p.id == item.product.id,
+        orElse: () => product_model.Product(
+          id: item.product.id,
+          name: item.product.name,
+          department: 'Other',
+          price: item.product.price,
+          unit: item.product.unit,
+        ),
+      );
+      
+      if (product?.unlimitedStock == true) {
+        stockStatus = '🌱 Always Available';
+      } else if (item.isStockReserved) {
         stockStatus = 'Reserved';
       } else if (item.isNoReserve) {
         stockStatus = 'No Reserve';

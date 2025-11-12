@@ -768,45 +768,6 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     }
   }
 
-
-  Future<void> _clearProgress() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear Progress'),
-        content: const Text('Are you sure you want to clear all entered data?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Clear All'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      for (final controller in _controllers.values) {
-        controller.clear();
-      }
-      for (final controller in _commentControllers.values) {
-        controller.clear();
-      }
-      for (final controller in _wastageControllers.values) {
-        controller.clear();
-      }
-      for (final controller in _wastageReasonControllers.values) {
-        controller.clear();
-      }
-      _addedTimestamps.clear(); // Clear timestamps too
-      setState(() {});
-    }
-  }
-
   // Share files via WhatsApp or other apps
   Future<void> _shareFiles({String? pdfPath, String? excelPath}) async {
     try {

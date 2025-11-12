@@ -185,6 +185,11 @@ class BulkStockTakePdfGenerator {
       final wastageReason = entry['wastage_reason'] as String? ?? '';
       final comment = entry['comment'] as String? ?? '';
       
+      // Add indicator for unlimited stock products
+      final productName = product.unlimitedStock 
+          ? '🌱 ${product.name}'
+          : product.name;
+      
       final isKg = product.unit.toLowerCase() == 'kg';
       
       // For NON-kg products (boxes, bags, etc): comment goes in "Stock Counted (kg)" column, count goes in "Packaged"
@@ -210,7 +215,7 @@ class BulkStockTakePdfGenerator {
             pw.Expanded(
               flex: 3,
               child: pw.Text(
-                product.name, 
+                productName, 
                 style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
               ),
             ),
@@ -328,6 +333,11 @@ class BulkStockTakePdfGenerator {
     final wastageReason = entry['wastage_reason'] as String? ?? '';
     final comment = entry['comment'] as String? ?? '';
     
+    // Add indicator for unlimited stock products
+    final productName = product.unlimitedStock 
+        ? '🌱 ${product.name}'
+        : product.name;
+    
     final isKg = product.unit.toLowerCase() == 'kg';
     
     // For NON-kg products (boxes, bags, etc): comment goes in "Stock Counted (kg)" column, count goes in "Packaged"
@@ -347,7 +357,7 @@ class BulkStockTakePdfGenerator {
         : excel.TextCellValue('-');
     
     final dataRow = [
-      excel.TextCellValue(product.name),
+      excel.TextCellValue(productName),
       stockCountedValue,
       packagedValue,
       excel.TextCellValue(product.unit),

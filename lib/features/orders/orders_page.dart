@@ -1044,6 +1044,10 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
       // Create Excel workbook
       final workbook = excel.Excel.createExcel();
       
+      // Get products data for checking unlimited stock
+      final productsState = ref.read(productsProvider);
+      final products = productsState.products;
+      
       // Create a sheet for each order
       for (final order in receivedOrders) {
         // Use business name from profile, fallback to restaurant name
@@ -1172,9 +1176,13 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
             productName += ' (${item.notes})';
           }
           
-          // Stock status
+          // Stock status - check if product is always available
           String stockStatus = 'Unknown';
-          if (item.isStockReserved) {
+          final product = products.where((p) => p.id == item.product.id).firstOrNull;
+          
+          if (product?.unlimitedStock == true) {
+            stockStatus = '🌱 Always Available';
+          } else if (item.isStockReserved) {
             stockStatus = 'Reserved';
           } else if (item.isNoReserve) {
             stockStatus = 'No Reserve';
@@ -1201,10 +1209,6 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
           sheet.setColumnAutoFit(i);
         }
       }
-      
-      // Get products data for additional sheets
-      final productsState = ref.read(productsProvider);
-      final products = productsState.products;
       
       // Add Reserved Stock sheet
       _addReservedStockSheet(workbook, receivedOrders, products);
