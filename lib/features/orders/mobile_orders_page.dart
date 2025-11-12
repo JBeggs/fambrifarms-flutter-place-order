@@ -900,9 +900,34 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
     currentRow++;
     
     // Collect all items that need to be ordered (no reserve or failed reservation)
+    // Exclude unlimited stock products (they're always available)
     List<Map<String, dynamic>> itemsToOrder = [];
     for (final order in orders) {
-      for (final item in order.items.where((item) => item.isNoReserve || item.isStockReservationFailed)) {
+      for (final item in order.items) {
+        // Only include items that need ordering (failed reservation or no reserve)
+        if (!item.isNoReserve && !item.isStockReservationFailed) {
+          continue;
+        }
+        
+        // Find corresponding product to check if it's unlimited stock
+        final product = products.firstWhere(
+          (p) => p.id == item.product.id,
+          orElse: () => product_model.Product(
+            id: item.product.id,
+            name: item.product.name,
+            department: 'Other',
+            price: item.product.price,
+            unit: item.product.unit,
+            stockLevel: 0,
+            minimumStock: 0,
+          ),
+        );
+        
+        // Skip unlimited stock products (they're always available, no need to order)
+        if (product.unlimitedStock) {
+          continue;
+        }
+        
         itemsToOrder.add({
           'order': order,
           'item': item,

@@ -231,7 +231,9 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
     }
   }
 
-  Future<void> bulkStockTake(List<Map<String, dynamic>> entries) async {
+  Future<void> bulkStockTake(List<Map<String, dynamic>> entries, {String adjustmentMode = 'set'}) async {
+    print('[INVENTORY] Starting bulk stock take with ${entries.length} entries (mode: $adjustmentMode)');
+    
     try {
       print('[INVENTORY] Starting complete stock take with ${entries.length} entries');
       
@@ -240,10 +242,10 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
       print('[INVENTORY] Products being counted: ${countedProductIds.length}');
       
       // Step 2: Reset ALL products to zero first (only for 'set' mode)
+      final allProducts = state.products;
       int resetCount = 0;
       if (adjustmentMode == 'set') {
         print('[INVENTORY] Resetting all products to zero for complete stock take (SET mode)');
-        final allProducts = state.products;
         
         // Process resets sequentially with better error handling
         for (final product in allProducts) {
@@ -310,10 +312,10 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
         
         // Set or add counted quantities (only products with stock > 0)
         if (countedQuantity > 0) {
+          final adjustmentType = adjustmentMode == 'set' ? 'finished_set' : 'finished_adjust';
+          final actionText = adjustmentMode == 'set' ? 'Set' : 'Added';
+          
           try {
-            final adjustmentType = adjustmentMode == 'set' ? 'finished_set' : 'finished_adjust';
-            final actionText = adjustmentMode == 'set' ? 'Set' : 'Added';
-            
             await _apiService.adjustStock(productId, {
               'adjustment_type': adjustmentType,
               'quantity': countedQuantity,

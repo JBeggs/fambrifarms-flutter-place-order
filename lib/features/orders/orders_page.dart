@@ -1367,9 +1367,9 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
 
   /// Add Stock to be Ordered sheet to workbook
   void _addStockToOrderSheet(excel.Excel workbook, List<Order> orders, List<product_model.Product> products) {
-    print('[WORKBOOK] Creating Stock to be Ordered sheet');
+    print('[WORKBOOK] Creating Stock to Order sheet');
     
-    final sheet = workbook['Stock to be Ordered'];
+    final sheet = workbook['Stock to Order'];
     
     // Sheet title
     sheet.cell(excel.CellIndex.indexByString('A1')).value = excel.TextCellValue('STOCK TO BE ORDERED - ALL ORDERS');
@@ -1394,6 +1394,7 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
     currentRow++;
     
     // Collect all items that need to be ordered from all orders
+    // Only include items with failed reservations or no reserve (excluding unlimited stock products)
     List<Map<String, dynamic>> itemsToOrder = [];
     for (final order in orders) {
       for (final item in order.items) {
@@ -1411,11 +1412,18 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
           ),
         );
         
-        // Check if this item needs to be ordered
-        final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
-        final needsOrdering = shortage > 0 || item.isStockReservationFailed || item.isNoReserve;
+        // Skip unlimited stock products (they're always available, no need to order)
+        if (product.unlimitedStock) {
+          continue;
+        }
+        
+        // Check if this item needs to be ordered:
+        // 1. Stock reservation failed (out of stock)
+        // 2. No reservation was made (intentional no-reserve for bulk items)
+        final needsOrdering = item.isStockReservationFailed || item.isNoReserve;
         
         if (needsOrdering) {
+          final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
           itemsToOrder.add({
             'order': order,
             'item': item,
@@ -1477,6 +1485,6 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
       sheet.setColumnAutoFit(i);
     }
     
-    print('[WORKBOOK] Stock to be Ordered sheet created successfully');
+    print('[WORKBOOK] Stock to Order sheet created successfully');
   }
 }
