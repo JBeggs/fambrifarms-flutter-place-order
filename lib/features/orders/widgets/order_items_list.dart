@@ -6,12 +6,14 @@ class OrderItemsList extends StatelessWidget {
   final List<OrderItem> items;
   final Function(OrderItem) onRemoveItem;
   final Function(OrderItem, double) onUpdateQuantity;
+  final Function(OrderItem)? onEditItem;
 
   const OrderItemsList({
     super.key,
     required this.items,
     required this.onRemoveItem,
     required this.onUpdateQuantity,
+    this.onEditItem,
   });
 
   @override
@@ -132,8 +134,39 @@ class OrderItemsList extends StatelessWidget {
                     ),
                   ),
                 ],
+                // Source product info if available
+                if (item.sourceProductName != null && item.sourceQuantity != null) ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.orange[50],
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.orange[200]!),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.link,
+                          size: 12,
+                          color: Colors.orange[700],
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Stock Reserved from: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''})',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.orange[700],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 // Stock reservation status
-                if (item.hasStockReservation) ...[
+                if (item.hasStockReservation && item.sourceProductName == null) ...[
                   const SizedBox(height: 4),
                   Text(
                     item.stockStatusDisplay,
@@ -226,6 +259,18 @@ class OrderItemsList extends StatelessWidget {
           ),
           
           const SizedBox(width: 8),
+          
+          // Edit Button (if callback provided)
+          if (onEditItem != null)
+            IconButton(
+              onPressed: () => onEditItem!(item),
+              icon: Icon(
+                Icons.edit,
+                color: AppColors.primaryGreen,
+                size: 20,
+              ),
+              tooltip: 'Edit item',
+            ),
           
           // Remove Button
           IconButton(

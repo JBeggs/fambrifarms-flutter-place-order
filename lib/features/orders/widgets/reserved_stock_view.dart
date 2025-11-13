@@ -29,29 +29,70 @@ class _ReservedStockViewState extends ConsumerState<ReservedStockView> {
       // Count all orders that aren't delivered or cancelled as having reserved stock
       if (order.status != 'delivered' && order.status != 'cancelled') {
         for (final item in order.items) {
-          final productName = item.product.name;
-          
-          if (!reservedStock.containsKey(productName)) {
-            // Find the product details
-            final productDetails = products.where((p) => p.name == productName).firstOrNull;
-            final inventoryItem = inventory.where((p) => p.name == productName).firstOrNull;
+          // Handle directly reserved items
+          if (item.isStockReserved) {
+            final productName = item.product.name;
             
-            reservedStock[productName] = {
-              'product': productDetails ?? item.product,
-              'reservedQuantity': 0.0,
-              'currentStock': inventoryItem?.stockLevel ?? 0.0,
-              'unit': item.product.unit,
-              'orders': <Map<String, dynamic>>[],
-            };
+            if (!reservedStock.containsKey(productName)) {
+              // Find the product details
+              final productDetails = products.where((p) => p.name == productName).firstOrNull;
+              final inventoryItem = inventory.where((p) => p.name == productName).firstOrNull;
+              
+              reservedStock[productName] = {
+                'product': productDetails ?? item.product,
+                'reservedQuantity': 0.0,
+                'currentStock': inventoryItem?.stockLevel ?? 0.0,
+                'unit': item.product.unit,
+                'orders': <Map<String, dynamic>>[],
+                'isSourceProduct': false,
+              };
+            }
+            
+            reservedStock[productName]!['reservedQuantity'] += item.quantity;
+            reservedStock[productName]!['orders'].add({
+              'orderNumber': order.orderNumber,
+              'restaurant': order.restaurant.displayName,
+              'quantity': item.quantity,
+              'status': order.status,
+            });
           }
           
-          reservedStock[productName]!['reservedQuantity'] += item.quantity;
-          reservedStock[productName]!['orders'].add({
-            'orderNumber': order.orderNumber,
-            'restaurant': order.restaurant.displayName,
-            'quantity': item.quantity,
-            'status': order.status,
-          });
+          // Handle source products (stock reserved from another product)
+          if (item.sourceProductId != null && item.sourceProductName != null && item.sourceQuantity != null) {
+            final sourceProductName = '${item.sourceProductName} (Source)';
+            
+            if (!reservedStock.containsKey(sourceProductName)) {
+              // Find the source product details
+              final sourceProductDetails = products.where((p) => p.id == item.sourceProductId).firstOrNull;
+              final sourceInventoryItem = inventory.where((p) => p.id == item.sourceProductId).firstOrNull;
+              
+              reservedStock[sourceProductName] = {
+                'product': sourceProductDetails ?? product_model.Product(
+                  id: item.sourceProductId!,
+                  name: item.sourceProductName!,
+                  department: 'Other',
+                  price: 0,
+                  unit: item.sourceProductUnit ?? 'kg',
+                  stockLevel: item.sourceProductStockLevel?.toDouble() ?? 0,
+                ),
+                'reservedQuantity': 0.0,
+                'currentStock': sourceInventoryItem?.stockLevel ?? item.sourceProductStockLevel?.toDouble() ?? 0.0,
+                'unit': item.sourceProductUnit ?? 'kg',
+                'orders': <Map<String, dynamic>>[],
+                'isSourceProduct': true,
+                'forProduct': item.product.name,
+              };
+            }
+            
+            reservedStock[sourceProductName]!['reservedQuantity'] += item.sourceQuantity!;
+            reservedStock[sourceProductName]!['orders'].add({
+              'orderNumber': order.orderNumber,
+              'restaurant': order.restaurant.displayName,
+              'quantity': item.sourceQuantity!,
+              'status': order.status,
+              'forProduct': item.product.name,
+            });
+          }
         }
       }
     }
@@ -320,14 +361,61 @@ class _ReservedStockViewState extends ConsumerState<ReservedStockView> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          productName,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                productName,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ),
+                            if (data['isSourceProduct'] == true)
+                              Container(
+                                margin: const EdgeInsets.only(left: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange[50],
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.orange[200]!),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.link,
+                                      color: Colors.orange[700],
+                                      size: 14,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Source',
+                                      style: TextStyle(
+                                        color: Colors.orange[700],
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
                         ),
+                        if (data['isSourceProduct'] == true && data['forProduct'] != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              'Stock reserved for: ${data['forProduct']}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.orange[700],
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ),
                         Text(
                           product.department ?? 'Unknown Department',
                           style: TextStyle(
@@ -565,6 +653,18 @@ class _ReservedStockViewState extends ConsumerState<ReservedStockView> {
                                       fontSize: 14,
                                     ),
                                   ),
+                                  if (order['forProduct'] != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(
+                                        'For: ${order['forProduct']}',
+                                        style: TextStyle(
+                                          color: Colors.orange[700],
+                                          fontSize: 12,
+                                          fontStyle: FontStyle.italic,
+                                        ),
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),
@@ -647,13 +747,21 @@ class _ReservedStockViewState extends ConsumerState<ReservedStockView> {
         final orders = data['orders'] as List<Map<String, dynamic>>;
         
         report.writeln('$productName:');
+        if (data['isSourceProduct'] == true && data['forProduct'] != null) {
+          report.writeln('  Type: Source Product (reserved for ${data['forProduct']})');
+        }
         report.writeln('  Current Stock: ${currentStock.toStringAsFixed(1)} $unit');
         report.writeln('  Reserved: ${reservedQuantity.toStringAsFixed(1)} $unit');
         report.writeln('  Available: ${(currentStock - reservedQuantity).toStringAsFixed(1)} $unit');
         report.writeln('  Orders: ${orders.length}');
         
         for (final order in orders) {
-          report.writeln('    - ${order['orderNumber']}: ${order['quantity']} $unit (${order['restaurant']})');
+          final orderLine = '    - ${order['orderNumber']}: ${order['quantity']} $unit (${order['restaurant']})';
+          if (order['forProduct'] != null) {
+            report.writeln('$orderLine [for ${order['forProduct']}]');
+          } else {
+            report.writeln(orderLine);
+          }
         }
         
         report.writeln('');

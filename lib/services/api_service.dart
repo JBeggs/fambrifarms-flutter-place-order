@@ -687,6 +687,18 @@ class ApiService {
     }
   }
 
+  /// Get product suggestions for a search term (used for editing search in confirm order items)
+  Future<Map<String, dynamic>> getProductSuggestions(String productName) async {
+    try {
+      final response = await _djangoDio.post('/whatsapp/products/get-suggestions/', data: {
+        'product_name': productName,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to get product suggestions: $e');
+    }
+  }
+
   /// Create an order from confirmed suggestions
   Future<Map<String, dynamic>> createOrderFromSuggestions({
     required String messageId,
@@ -1078,14 +1090,23 @@ class ApiService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getStockMovements({int? productId, int? limit}) async {
+  Future<List<Map<String, dynamic>>> getStockMovements({int? productId, int? limit, String? movementType}) async {
     try {
       final queryParams = <String, dynamic>{};
-      if (productId != null) queryParams['product_id'] = productId;
+      if (productId != null) queryParams['product'] = productId;
       if (limit != null) queryParams['limit'] = limit;
+      if (movementType != null) queryParams['movement_type'] = movementType;
       
       final response = await _djangoDio.get('/inventory/stock-movements/', queryParameters: queryParams);
-      return List<Map<String, dynamic>>.from(response.data);
+      
+      // Handle both paginated and non-paginated responses
+      if (response.data is Map && response.data.containsKey('results')) {
+        // Paginated response
+        return List<Map<String, dynamic>>.from(response.data['results']);
+      } else {
+        // Direct list response
+        return List<Map<String, dynamic>>.from(response.data);
+      }
     } catch (e) {
       throw ApiException('Failed to get stock movements: $e');
     }
@@ -1465,6 +1486,19 @@ class ApiService {
       final response = await _djangoDio.post('/products/products/', data: productData);
       print('[API] Product creation response: ${response.data}');
       return product_model.Product.fromJson(Map<String, dynamic>.from(response.data));
+    } on DioException catch (e) {
+      print('[API] Product creation error: $e');
+      if (e.response != null && e.response!.data != null) {
+        final errorData = e.response!.data;
+        final errorMessage = errorData['error'] ?? 'Failed to create product';
+        final details = errorData['details'];
+        if (details != null) {
+          print('[API] Validation errors: $details');
+          throw ApiException('$errorMessage: $details');
+        }
+        throw ApiException(errorMessage.toString());
+      }
+      throw ApiException('Failed to create product: ${e.message}');
     } catch (e) {
       print('[API] Product creation error: $e');
       throw ApiException('Failed to create product: $e');

@@ -424,6 +424,35 @@ class OrderCard extends ConsumerWidget {
                                   ),
                                 ],
                                 
+                                // Source product info if available
+                                if (item.sourceProductName != null && item.sourceQuantity != null) ...[
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange[50],
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.orange[200]!),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.inventory_2, size: 14, color: Colors.orange[700]),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            'Stock Reserved from: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''})',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.orange[700],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                                
                                 // Original text if available
                                 if (item.originalText != null && item.originalText!.isNotEmpty) ...[
                                   const SizedBox(height: 8),

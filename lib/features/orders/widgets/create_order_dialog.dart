@@ -98,6 +98,7 @@ class _CreateOrderDialogState extends ConsumerState<CreateOrderDialog> {
     });
   }
 
+
   @override
   void dispose() {
     _notesController.dispose();

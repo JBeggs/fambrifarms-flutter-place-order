@@ -272,12 +272,16 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
       // Step 3: Process wastage and set counted quantities
       print('[INVENTORY] Processing wastage and setting counted quantities');
       
+      // Generate reference_number in same format as management command: STOCK-TAKE-YYYYMMDD
+      final now = DateTime.now();
+      final referenceNumber = 'STOCK-TAKE-${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      
       int adjustmentCount = 0;
       for (final entry in entries) {
         final productId = entry['product_id'] as int;
         final countedQuantity = (entry['counted_quantity'] as double);
         final wastageQuantity = (entry['wastage_quantity'] as double? ?? 0.0);
-        final wastageReason = entry['wastage_reason'] as String? ?? 'Spoilage';
+        final wastageReason = entry['wastage_reason'] as String? ?? '';
         final comment = entry['comment'] as String? ?? '';
         
         // Get product name from entry first (most reliable), then fallback to state lookup
@@ -293,14 +297,15 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
           }
         }
         
-        // Record wastage if any
+        // Record wastage if any - store just the reason value (no prefix)
         if (wastageQuantity > 0) {
           try {
             await _apiService.adjustStock(productId, {
               'adjustment_type': 'finished_waste',
               'quantity': wastageQuantity,
               'reason': 'stock_take_wastage',
-              'notes': 'Stock take wastage: $wastageReason${comment.isNotEmpty ? '. $comment' : ''}',
+              'notes': wastageReason, // Just the reason value, no prefix
+              'reference_number': referenceNumber,
             });
             adjustmentCount++;
             print('[INVENTORY] ✓ Recorded wastage for $productName (ID: $productId): $wastageQuantity');
@@ -321,6 +326,7 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
               'quantity': countedQuantity,
               'reason': adjustmentMode == 'set' ? 'complete_stock_take_set' : 'complete_stock_take_add',
               'notes': 'Complete stock take: $actionText counted quantity to $countedQuantity${comment.isNotEmpty ? '. $comment' : ''}',
+              'reference_number': referenceNumber,
             });
             adjustmentCount++;
             print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): $countedQuantity');

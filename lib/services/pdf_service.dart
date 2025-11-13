@@ -358,6 +358,11 @@ class PdfService {
 
   /// Helper methods from original order_card.dart
   static String _getStockStatusText(OrderItem item) {
+    // If using source product, show that source product stock is reserved
+    if (item.sourceProductId != null && item.sourceProductName != null && item.sourceQuantity != null) {
+      return 'Stock Reserved from Source';
+    }
+    
     // Note: We can't easily check unlimited_stock here since we don't have product details
     // The stock action will be 'no_reserve' for unlimited stock products
     if (item.isStockReserved) {
@@ -389,8 +394,8 @@ class PdfService {
     if (item.sourceProductName != null && item.sourceQuantity != null) {
       infoLines.add(
         pw.Text(
-          'Stock from: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''})',
-          style: pw.TextStyle(fontSize: 6, color: PdfColors.orange700, fontStyle: pw.FontStyle.italic),
+          'Stock from: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''}) - ✅ RESERVED',
+          style: pw.TextStyle(fontSize: 6, color: PdfColors.orange700, fontStyle: pw.FontStyle.italic, fontWeight: pw.FontWeight.bold),
         ),
       );
     }

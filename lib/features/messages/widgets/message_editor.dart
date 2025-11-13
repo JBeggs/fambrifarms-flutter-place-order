@@ -1190,11 +1190,12 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+    return SingleChildScrollView(
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
           // Header
           Row(
             children: [
@@ -1337,18 +1338,13 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
           const SizedBox(height: 8),
           
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 6,
+            runSpacing: 6,
             children: [
               _QuickFixButton(
                 label: 'Remove Greetings',
                 icon: Icons.waving_hand,
                 onPressed: () => _applyQuickFix('remove_greetings'),
-              ),
-              _QuickFixButton(
-                label: 'Remove Emojis',
-                icon: Icons.sentiment_satisfied,
-                onPressed: () => _applyQuickFix('remove_emojis'),
               ),
               _QuickFixButton(
                 label: 'Remove Sender Info',
@@ -1381,11 +1377,6 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
                 onPressed: () => _applyQuickFix('remove_stray_x'),
               ),
               _QuickFixButton(
-                label: 'Remove Numbering',
-                icon: Icons.clear_all,
-                onPressed: () => _applyQuickFix('remove_numbering'),
-              ),
-              _QuickFixButton(
                 label: 'Improve Items',
                 icon: Icons.lightbulb_outline,
                 onPressed: () => _showSimpleItemImprovements(),
@@ -1393,7 +1384,7 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
             ],
           ),
           
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           
           // Text Editor
           Text(
@@ -1407,7 +1398,7 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
           
           // Use fixed height for mobile compatibility (works with SingleChildScrollView)
           SizedBox(
-            height: MediaQuery.of(context).size.height * 0.4, // 40% of screen height
+            height: MediaQuery.of(context).size.height * 0.3, // 30% of screen height (reduced from 40%)
             child: TextField(
               controller: _controller,
               maxLines: null,
@@ -1460,7 +1451,7 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
               
               // Character count
               Text(
-                '${_controller.text.length} characters',
+                '${_controller.text.length} chars',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.outline,
                 ),
@@ -1481,11 +1472,15 @@ class _MessageEditorState extends ConsumerState<MessageEditor> {
                 onPressed: _hasChanges
                     ? () => widget.onSave(_controller.text, _processed != widget.message.processed ? _processed : null)
                     : null,
-                child: const Text('Save Changes'),
+                child: const Text('Save'),
               ),
             ],
           ),
+          
+          // Add bottom padding for safe scrolling
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
         ],
+      ),
       ),
     );
   }
@@ -1802,11 +1797,16 @@ class _QuickFixButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return OutlinedButton.icon(
       onPressed: onPressed,
-      icon: Icon(icon, size: 16),
-      label: Text(label),
+      icon: Icon(icon, size: 14),
+      label: Text(
+        label,
+        style: const TextStyle(fontSize: 12),
+      ),
       style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         visualDensity: VisualDensity.compact,
+        minimumSize: const Size(0, 32),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
   }

@@ -805,54 +805,118 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
     currentRow++;
     
     // Collect all reserved stock items from all orders
+    // Include both directly reserved items AND source products that are reserved
     List<Map<String, dynamic>> reservedItems = [];
+    final addedProductIds = <int>{};
+    
     for (final order in orders) {
+      // Add directly reserved items
       for (final item in order.items.where((item) => item.isStockReserved)) {
         reservedItems.add({
           'order': order,
           'item': item,
+          'isSource': false,
         });
+        addedProductIds.add(item.product.id);
+      }
+      
+      // Add source products that are reserved
+      for (final item in order.items.where((item) => 
+        item.sourceProductId != null && 
+        item.sourceProductName != null && 
+        item.sourceQuantity != null
+      )) {
+        // Skip if we already added this source product
+        if (!addedProductIds.contains(item.sourceProductId)) {
+          reservedItems.add({
+            'order': order,
+            'item': item,
+            'isSource': true,
+          });
+          addedProductIds.add(item.sourceProductId!);
+        }
       }
     }
     
     // Sort by product name
-    reservedItems.sort((a, b) => a['item'].product.name.compareTo(b['item'].product.name));
+    reservedItems.sort((a, b) {
+      final aName = a['isSource'] == true 
+        ? '${a['item'].sourceProductName} (Source)'
+        : a['item'].product.name;
+      final bName = b['isSource'] == true 
+        ? '${b['item'].sourceProductName} (Source)'
+        : b['item'].product.name;
+      return aName.compareTo(bName);
+    });
     
     // Add reserved stock items to sheet
     bool hasReservedItems = reservedItems.isNotEmpty;
     for (final reservedData in reservedItems) {
       final order = reservedData['order'] as Order;
       final item = reservedData['item'] as OrderItem;
+      final isSource = reservedData['isSource'] as bool;
       
-      // Find corresponding product in products list
-      final product = products.firstWhere(
-        (p) => p.id == item.product.id,
-        orElse: () => product_model.Product(
-          id: item.product.id,
-          name: item.product.name,
-          department: 'Other',
-          price: item.product.price,
-          unit: item.product.unit,
-          stockLevel: 0,
-          minimumStock: 0,
-        ),
-      );
-      
-      final rowData = [
-        excel.TextCellValue(order.orderNumber),
-        excel.TextCellValue(order.restaurant.profile?.businessName ?? order.restaurant.name),
-        excel.TextCellValue(item.product.name),
-        excel.DoubleCellValue(item.quantity),
-        excel.TextCellValue(item.product.unit),
-        excel.DoubleCellValue(item.quantity), // Assuming full quantity is reserved
-        excel.DoubleCellValue(product.stockLevel),
-        excel.TextCellValue('✅ Reserved'),
-      ];
-      
-      for (int i = 0; i < rowData.length; i++) {
-        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+      if (isSource) {
+        // Handle source product
+        final sourceProduct = products.firstWhere(
+          (p) => p.id == item.sourceProductId,
+          orElse: () => product_model.Product(
+            id: item.sourceProductId!,
+            name: item.sourceProductName ?? 'Unknown',
+            department: 'Other',
+            price: 0,
+            unit: item.sourceProductUnit ?? 'kg',
+            stockLevel: item.sourceProductStockLevel?.toDouble() ?? 0,
+            minimumStock: 0,
+          ),
+        );
+        
+        final rowData = [
+          excel.TextCellValue(order.orderNumber),
+          excel.TextCellValue(order.restaurant.profile?.businessName ?? order.restaurant.name),
+          excel.TextCellValue('${item.sourceProductName} (Source)'),
+          excel.DoubleCellValue(item.sourceQuantity ?? 0),
+          excel.TextCellValue(item.sourceProductUnit ?? 'kg'),
+          excel.DoubleCellValue(item.sourceQuantity ?? 0), // Reserved quantity from source
+          excel.DoubleCellValue(sourceProduct.stockLevel),
+          excel.TextCellValue('✅ Reserved (for ${item.product.name})'),
+        ];
+        
+        for (int i = 0; i < rowData.length; i++) {
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+        }
+        currentRow++;
+      } else {
+        // Handle directly reserved item
+        final product = products.firstWhere(
+          (p) => p.id == item.product.id,
+          orElse: () => product_model.Product(
+            id: item.product.id,
+            name: item.product.name,
+            department: 'Other',
+            price: item.product.price,
+            unit: item.product.unit,
+            stockLevel: 0,
+            minimumStock: 0,
+          ),
+        );
+        
+        final rowData = [
+          excel.TextCellValue(order.orderNumber),
+          excel.TextCellValue(order.restaurant.profile?.businessName ?? order.restaurant.name),
+          excel.TextCellValue(item.product.name),
+          excel.DoubleCellValue(item.quantity),
+          excel.TextCellValue(item.product.unit),
+          excel.DoubleCellValue(item.quantity), // Assuming full quantity is reserved
+          excel.DoubleCellValue(product.stockLevel),
+          excel.TextCellValue('✅ Reserved'),
+        ];
+        
+        for (int i = 0; i < rowData.length; i++) {
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+        }
+        currentRow++;
       }
-      currentRow++;
     }
     
     // If no reserved items, show message
@@ -1217,6 +1281,33 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
                           fontSize: 14,
                         ),
                       ),
+                      // Show source product info if available
+                      if (item.sourceProductName != null && item.sourceQuantity != null) ...[
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.inventory_2, size: 12, color: Colors.amber),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Stock from: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''})',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.amber[900],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       if (item.stockAction != null) ...[
                         const SizedBox(height: 4),
                         Row(
@@ -1241,10 +1332,20 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
                   ),
                 ),
                 if (order.status != 'delivered' && order.status != 'cancelled')
-                  IconButton(
-                    onPressed: () => _deleteOrderItem(order, item),
-                    icon: const Icon(Icons.delete, color: Colors.red, size: 20),
-                    tooltip: 'Delete item',
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        onPressed: () => _editOrderItem(order, item),
+                        icon: const Icon(Icons.edit, color: Colors.blue, size: 20),
+                        tooltip: 'Edit item',
+                      ),
+                      IconButton(
+                        onPressed: () => _deleteOrderItem(order, item),
+                        icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                        tooltip: 'Delete item',
+                      ),
+                    ],
                   ),
               ],
             ),
@@ -1366,7 +1467,176 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
             ),
           ),
         ),
+        
+        // Delete Order Button (only if not delivered/cancelled)
+        if (order.status != 'delivered' && order.status != 'cancelled') ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => _deleteOrder(order),
+              icon: const Icon(Icons.delete, size: 20),
+              label: const Text('Delete Order'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                foregroundColor: Colors.red,
+                side: const BorderSide(color: Colors.red, width: 2),
+              ),
+            ),
+          ),
+        ],
       ],
+    );
+  }
+
+  Future<void> _deleteOrder(Order order) async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+            const SizedBox(width: 12),
+            const Expanded(child: Text('Delete Order?')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to delete order ${order.orderNumber}?',
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Customer: ${_getCustomerDisplayName(order.restaurant)}',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+            Text(
+              'Items: ${order.items.length}',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                border: Border.all(color: Colors.red.withOpacity(0.3)),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline, size: 16, color: Colors.red),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Reserved stock will be released. This action cannot be undone.',
+                      style: TextStyle(fontSize: 12, color: Colors.red[800]),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Delete Order'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        // Show loading
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(
+            child: CircularProgressIndicator(),
+          ),
+        );
+
+        // Delete order via API
+        await ref.read(ordersProvider.notifier).deleteOrder(order.id);
+
+        if (mounted) {
+          // Close loading dialog
+          Navigator.of(context).pop();
+          
+          // Close order details modal
+          Navigator.of(context).pop();
+
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ Order ${order.orderNumber} deleted successfully'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+
+          // Refresh orders and inventory
+          await ref.read(ordersProvider.notifier).refreshOrders();
+          await ref.read(inventoryProvider.notifier).loadStockLevels();
+        }
+      } catch (e) {
+        if (mounted) {
+          // Close loading dialog
+          Navigator.of(context).pop();
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('❌ Failed to delete order: $e'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _editOrderItem(Order order, OrderItem item) async {
+    // Get products list
+    final productsState = ref.read(productsProvider);
+    final products = productsState.products;
+
+    if (products.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No products available'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Show edit dialog
+    await showDialog(
+      context: context,
+      builder: (context) => _EditItemDialog(
+        orderId: order.id,
+        orderItem: item,
+        products: products,
+        onItemUpdated: () {
+          // Refresh orders and inventory
+          ref.read(ordersProvider.notifier).refreshOrders();
+          ref.read(inventoryProvider.notifier).loadStockLevels();
+        },
+      ),
     );
   }
 
@@ -1697,11 +1967,6 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
   String _stockAction = 'reserve'; // 'reserve' or 'no_reserve'
   bool _isLoading = false;
   List<product_model.Product> _filteredProducts = [];
-  
-  // Source product for stock deduction
-  bool _useSourceProduct = false;
-  product_model.Product? _selectedSourceProduct;
-  final _sourceQuantityController = TextEditingController();
 
   @override
   void initState() {
@@ -1715,7 +1980,6 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
     _quantityController.dispose();
     _priceController.dispose();
     _searchController.dispose();
-    _sourceQuantityController.dispose();
     super.dispose();
   }
 
@@ -1732,7 +1996,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
     });
   }
 
-  void _onProductSelected(product_model.Product? product) {
+  void _onProductSelected(product_model.Product? product) async {
     setState(() {
       _selectedProduct = product;
       if (product != null) {
@@ -1781,45 +2045,8 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
       return;
     }
 
-    // Validate source product if used
-    double? sourceQuantity;
-    if (_useSourceProduct) {
-      if (_selectedSourceProduct == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please select a source product'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        return;
-      }
-      
-      sourceQuantity = double.tryParse(_sourceQuantityController.text);
-      if (sourceQuantity == null || sourceQuantity <= 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please enter a valid source quantity'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        return;
-      }
-      
-      // Check source product stock availability
-      if (sourceQuantity > _selectedSourceProduct!.stockLevel) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Insufficient stock in ${_selectedSourceProduct!.name}. Available: ${_selectedSourceProduct!.stockLevel} ${_selectedSourceProduct!.unit}'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-        return;
-      }
-    }
-    
-    // Check stock if reserving (skip for unlimited stock products and when using source product)
-    if (!_useSourceProduct && !_selectedProduct!.unlimitedStock && _stockAction == 'reserve' && quantity > _selectedProduct!.stockLevel) {
+    // Check stock if reserving (skip for unlimited stock products)
+    if (!_selectedProduct!.unlimitedStock && _stockAction == 'reserve' && quantity > _selectedProduct!.stockLevel) {
       final proceed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -1864,12 +2091,6 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
         'price': price,
         'stock_action': _stockAction,
       };
-      
-      // Add source product data if using source product
-      if (_useSourceProduct && _selectedSourceProduct != null && sourceQuantity != null) {
-        itemData['source_product_id'] = _selectedSourceProduct!.id;
-        itemData['source_quantity'] = sourceQuantity;
-      }
       
       // Add item to order
       // Note: Do NOT send 'original_text' for manually added items
@@ -2074,231 +2295,6 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                       ),
 
                       const SizedBox(height: 16),
-
-                      // Stock Action
-                      const Text(
-                        'Stock Reservation',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                      ),
-                      const SizedBox(height: 8),
-                      
-                      // Show message for unlimited stock products
-                      if (_selectedProduct!.unlimitedStock) ...[
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withOpacity(0.1),
-                            border: Border.all(color: Colors.green.withOpacity(0.3)),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.eco, size: 20, color: Colors.green),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  'This product is always available (garden-grown). Stock reservation is not required.',
-                                  style: TextStyle(fontSize: 13, color: Colors.green[800]),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ] else ...[
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey[300]!),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Column(
-                            children: [
-                              RadioListTile<String>(
-                                title: const Text('Reserve Stock'),
-                                subtitle: const Text('Recommended for available products'),
-                                value: 'reserve',
-                                groupValue: _stockAction,
-                                onChanged: _isLoading
-                                    ? null
-                                    : (value) {
-                                        setState(() {
-                                          _stockAction = value!;
-                                        });
-                                      },
-                                dense: true,
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                              RadioListTile<String>(
-                                title: const Text('No Reservation'),
-                                subtitle: const Text('For out-of-stock or custom items'),
-                                value: 'no_reserve',
-                                groupValue: _stockAction,
-                                onChanged: _isLoading
-                                    ? null
-                                    : (value) {
-                                        setState(() {
-                                          _stockAction = value!;
-                                        });
-                                      },
-                                dense: true,
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-
-                      if (_stockAction == 'reserve') ...[
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.info_outline, size: 16, color: Colors.blue),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Available: ${_selectedProduct!.stockLevel} ${_selectedProduct!.unit}',
-                                  style: const TextStyle(fontSize: 12, color: Colors.blue),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                      
-                      // Source Product Section
-                      const SizedBox(height: 24),
-                      const Divider(),
-                      const SizedBox(height: 16),
-                      
-                      Row(
-                        children: [
-                          Checkbox(
-                            value: _useSourceProduct,
-                            onChanged: _isLoading ? null : (value) {
-                              setState(() {
-                                _useSourceProduct = value!;
-                                if (!value) {
-                                  _selectedSourceProduct = null;
-                                  _sourceQuantityController.clear();
-                                }
-                              });
-                            },
-                          ),
-                          const Expanded(
-                            child: Text(
-                              'Use stock from another product',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                            ),
-                          ),
-                        ],
-                      ),
-                      
-                      if (_useSourceProduct) ...[
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.amber.withOpacity(0.1),
-                            border: Border.all(color: Colors.amber.withOpacity(0.3)),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.info_outline, size: 16, color: Colors.amber),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  'Stock will be deducted from the source product instead of "${_selectedProduct!.name}"',
-                                  style: TextStyle(fontSize: 12, color: Colors.amber[900]),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        
-                        const SizedBox(height: 16),
-                        
-                        // Source Product Selector
-                        const Text(
-                          'Source Product',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                        ),
-                        const SizedBox(height: 8),
-                        DropdownButtonFormField<product_model.Product>(
-                          value: _selectedSourceProduct,
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            hintText: 'Select source product',
-                          ),
-                          items: widget.products
-                              .where((p) => p.id != _selectedProduct!.id) // Don't show same product
-                              .map((product) => DropdownMenuItem(
-                                    value: product,
-                                    child: Text(
-                                      '${product.name} (${product.stockLevel} ${product.unit})',
-                                      style: const TextStyle(fontSize: 13),
-                                    ),
-                                  ))
-                              .toList(),
-                          onChanged: _isLoading ? null : (product) {
-                            setState(() {
-                              _selectedSourceProduct = product;
-                            });
-                          },
-                          isExpanded: true,
-                          isDense: true,
-                        ),
-                        
-                        if (_selectedSourceProduct != null) ...[
-                          const SizedBox(height: 16),
-                          
-                          // Source Quantity
-                          const Text(
-                            'Quantity to Deduct',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _sourceQuantityController,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              suffixText: _selectedSourceProduct?.unit ?? '',
-                              hintText: 'e.g., 5',
-                            ),
-                            enabled: !_isLoading,
-                          ),
-                          
-                          const SizedBox(height: 12),
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.inventory, size: 16, color: Colors.blue),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'Available in ${_selectedSourceProduct!.name}: ${_selectedSourceProduct!.stockLevel} ${_selectedSourceProduct!.unit}',
-                                    style: const TextStyle(fontSize: 12, color: Colors.blue),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ],
                     ],
                   ),
                 ),
@@ -2325,6 +2321,263 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                 )
               : const Text('Add Item'),
+        ),
+      ],
+    );
+  }
+}
+
+// Edit Item Dialog
+class _EditItemDialog extends ConsumerStatefulWidget {
+  final int orderId;
+  final OrderItem orderItem;
+  final List<product_model.Product> products;
+  final VoidCallback onItemUpdated;
+
+  const _EditItemDialog({
+    required this.orderId,
+    required this.orderItem,
+    required this.products,
+    required this.onItemUpdated,
+  });
+
+  @override
+  ConsumerState<_EditItemDialog> createState() => _EditItemDialogState();
+}
+
+class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
+  final _quantityController = TextEditingController();
+  final _priceController = TextEditingController();
+  String _stockAction = 'reserve';
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-fill with existing item data
+    _quantityController.text = widget.orderItem.quantity.toString();
+    _priceController.text = widget.orderItem.price.toString();
+    _stockAction = widget.orderItem.stockAction ?? 'reserve';
+  }
+
+  @override
+  void dispose() {
+    _quantityController.dispose();
+    _priceController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _updateItem() async {
+    final quantity = double.tryParse(_quantityController.text);
+    final price = double.tryParse(_priceController.text);
+
+    if (quantity == null || quantity <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid quantity'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (price == null || price < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid price'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Prepare update data
+      final updateData = {
+        'quantity': quantity,
+        'price': price,
+        'unit': widget.orderItem.unit ?? widget.orderItem.product.unit,
+      };
+      
+      // Update order item via orders provider
+      await ref.read(ordersProvider.notifier).updateOrderItem(
+        widget.orderId,
+        widget.orderItem.id,
+        updateData,
+      );
+
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Item updated successfully'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        widget.onItemUpdated();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Failed to update item: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit Order Item'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Product info (read-only)
+              Card(
+                color: Colors.blue.withOpacity(0.1),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.orderItem.product.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Ordered: ${widget.orderItem.quantity} ${widget.orderItem.unit ?? widget.orderItem.product.unit}',
+                        style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // Quantity
+              const Text(
+                'Quantity',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _quantityController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  border: const OutlineInputBorder(),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  suffixText: widget.orderItem.unit ?? widget.orderItem.product.unit,
+                ),
+                enabled: !_isLoading,
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // Price
+              const Text(
+                'Price per Unit',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _priceController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  prefixText: 'R',
+                ),
+                enabled: !_isLoading,
+              ),
+              
+              const SizedBox(height: 16),
+              
+              // Stock Action
+              const Text(
+                'Stock Reservation',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  children: [
+                    RadioListTile<String>(
+                      title: const Text('Reserve Stock'),
+                      subtitle: const Text('Recommended for available products'),
+                      value: 'reserve',
+                      groupValue: _stockAction,
+                      onChanged: _isLoading ? null : (value) {
+                        setState(() {
+                          _stockAction = value!;
+                        });
+                      },
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                    RadioListTile<String>(
+                      title: const Text('No Reservation'),
+                      subtitle: const Text('For out-of-stock or custom items'),
+                      value: 'no_reserve',
+                      groupValue: _stockAction,
+                      onChanged: _isLoading ? null : (value) {
+                        setState(() {
+                          _stockAction = value!;
+                        });
+                      },
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _isLoading ? null : _updateItem,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue,
+            foregroundColor: Colors.white,
+          ),
+          child: _isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Update Item'),
         ),
       ],
     );

@@ -56,15 +56,17 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
   @override
   void initState() {
     super.initState();
-    // Initialize with products that have stock (passed from parent)
-    _stockTakeProducts = List.from(widget.products);
+    // Start with EMPTY list - products should only be added manually or from saved progress
+    // DO NOT initialize from widget.products - that would add all products
+    _stockTakeProducts = [];
     
     // Try to use already loaded products first (for performance)
     final productsState = ref.read(productsProvider);
     _allProducts = productsState.products;
     _isLoadingProducts = productsState.isLoading;
     
-    print('[BULK_STOCK_TAKE] Initial products from provider: ${_allProducts.length}, loading: $_isLoadingProducts');
+    print('[BULK_STOCK_TAKE] Starting with EMPTY stock take list (products must be added manually)');
+    print('[BULK_STOCK_TAKE] Products available for search: ${_allProducts.length}, loading: $_isLoadingProducts');
     
     // Always ensure products are loaded for search functionality
     if (_allProducts.isEmpty) {
@@ -73,27 +75,30 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       });
     }
     
-    for (final product in _stockTakeProducts) {
-      _controllers[product.id] = TextEditingController(); // Start empty
-      _commentControllers[product.id] = TextEditingController();
-      _wastageControllers[product.id] = TextEditingController();
-      _wastageReasonControllers[product.id] = TextEditingController();
-      _originalStock[product.id] = product.stockLevel;
-      // Initial products get older timestamps (so new ones appear on top)
-      _addedTimestamps[product.id] = DateTime.now().subtract(Duration(hours: 1));
-      // Don't pre-fill with current stock - let user enter fresh count
-    }
+    print('[BULK_STOCK_TAKE] Initialized with ${_stockTakeProducts.length} products in stock take list');
     
-    
-    // Load saved progress and stock history
-    _loadSavedProgress(autoLoad: true);
+    // Load stock history and auto-load saved progress if available
     _loadStockHistory();
+    
+    // Auto-load saved progress when returning to the page
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSavedProgress(autoLoad: true);
+    });
   }
 
   @override
   void dispose() {
     _autoSaveTimer?.cancel();
     _searchDebounceTimer?.cancel();
+    
+    // Save progress before disposing (if there are products in the list)
+    if (_stockTakeProducts.isNotEmpty) {
+      print('[BULK_STOCK_TAKE] Saving progress on dispose: ${_stockTakeProducts.length} products');
+      _saveProgress();
+    } else {
+      print('[BULK_STOCK_TAKE] No products to save on dispose');
+    }
+    
     _scrollController.dispose();
     _searchController.dispose();
     for (final controller in _controllers.values) {
@@ -129,9 +134,11 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
   
   // Load saved progress using utility
   Future<void> _loadSavedProgress({bool autoLoad = false}) async {
+    print('[BULK_STOCK_TAKE] Loading saved progress (autoLoad: $autoLoad, current list size: ${_stockTakeProducts.length})');
     final progressData = await BulkStockTakePersistence.loadSavedProgress();
     
     if (progressData == null) {
+      print('[BULK_STOCK_TAKE] No saved progress file found');
       if (!autoLoad && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -145,9 +152,17 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     }
     
     final savedProducts = progressData['products'] as List<dynamic>;
+    print('[BULK_STOCK_TAKE] Found saved progress with ${savedProducts.length} products');
+    
+    // Don't restore if saved progress is empty - keep initial products
+    if (savedProducts.isEmpty) {
+      print('[BULK_STOCK_TAKE] Saved progress has 0 products - skipping restore, keeping current products (${_stockTakeProducts.length})');
+      return;
+    }
     
     // Auto-load on init, or ask when manually triggered
     if (autoLoad) {
+      print('[BULK_STOCK_TAKE] Auto-restoring ${savedProducts.length} products');
       _restoreProgressFromData(progressData);
     } else {
       _showRestoreDialog(progressData, savedProducts);
@@ -194,6 +209,12 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
           ),
         );
       }
+      return;
+    }
+    
+    // Don't restore if result.products is empty - keep existing products
+    if (result.products.isEmpty) {
+      print('[BULK_STOCK_TAKE] Restore result has 0 products - keeping existing products');
       return;
     }
     
@@ -400,9 +421,329 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     }
   }
 
-  void _addProductToStockTake(Product product) {
-    if (_stockTakeProducts.any((p) => p.id == product.id)) return;
+  // Fetch current stock levels from database and REPLACE stock take list with products that have stock > 0
+  Future<void> _fetchCurrentStockFromDatabase() async {
+    if (_isLoading) return;
     
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      print('[BULK_STOCK_TAKE] Starting fetch - will clear list and load products with stock > 0');
+      
+      // Show loading message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                ),
+                SizedBox(width: 12),
+                Text('Fetching stock and wastage from database...'),
+              ],
+            ),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+
+      // Refresh both providers to get comprehensive product data
+      await Future.wait([
+        ref.read(inventoryProvider.notifier).loadStockLevels(),
+        ref.read(productsProvider.notifier).loadProducts(),
+      ]);
+      
+      final inventoryState = ref.read(inventoryProvider);
+      final productsWithStock = inventoryState.products;
+      final updatedProductsState = ref.read(productsProvider);
+      final allProducts = updatedProductsState.products;
+
+      print('[BULK_STOCK_TAKE] Fetched ${productsWithStock.length} products with stock from inventory');
+      print('[BULK_STOCK_TAKE] Fetched ${allProducts.length} total products from products API');
+
+      // Create a map of product ID to updated product for quick lookup
+      // Prioritize inventory data (has accurate stock levels from FinishedInventory), fallback to products data
+      final Map<int, Product> updatedProductsMap = {};
+      
+      // First, add products from inventory (has accurate stock levels from FinishedInventory)
+      // These have the correct unit from the database
+      for (var product in productsWithStock) {
+        updatedProductsMap[product.id] = product;
+        // Debug: log unit for grapefruit
+        if (product.name.toLowerCase().contains('grapefruit')) {
+          print('[BULK_STOCK_TAKE] Grapefruit unit from inventory: ${product.unit}');
+        }
+      }
+      
+      // Then, add products from products API that don't have inventory records
+      // Only add if they don't already exist (inventory takes priority)
+      for (var product in allProducts) {
+        if (!updatedProductsMap.containsKey(product.id)) {
+          updatedProductsMap[product.id] = product;
+        } else {
+          // Debug: if product exists in both, make sure we're using inventory version
+          final existingProduct = updatedProductsMap[product.id]!;
+          if (product.name.toLowerCase().contains('grapefruit')) {
+            print('[BULK_STOCK_TAKE] Grapefruit already in map with unit: ${existingProduct.unit}, products API has: ${product.unit}');
+          }
+        }
+      }
+      
+      // Determine which products to fetch wastage for
+      // If list is empty, fetch wastage for ALL products (we'll populate list after)
+      // Otherwise, fetch for products already in the list
+      final productsToCheckWastage = _stockTakeProducts.isEmpty
+          ? updatedProductsMap.values.toList() // Check ALL products when list is empty
+          : _stockTakeProducts;
+      
+      // Fetch wastage data for products (regardless of stock count)
+      final apiService = ref.read(apiServiceProvider);
+      final Map<int, Map<String, dynamic>> wastageDataMap = {};
+      
+      // Check wastage for products
+      print('[BULK_STOCK_TAKE] Fetching wastage for ${productsToCheckWastage.length} products...');
+      
+      for (final product in productsToCheckWastage) {
+        try {
+          print('[BULK_STOCK_TAKE] Checking wastage for product ${product.id} (${product.name}), stock: ${product.stockLevel}');
+          final wastageMovements = await apiService.getStockMovements(
+            productId: product.id,
+            movementType: 'finished_waste',
+            limit: 20, // Get multiple movements to find actual wastage (skip resets)
+          );
+          
+          print('[BULK_STOCK_TAKE] API returned ${wastageMovements.length} wastage movements for product ${product.id}');
+          
+          if (wastageMovements.isNotEmpty) {
+            // Log all movements for debugging
+            print('[BULK_STOCK_TAKE] All movements for product ${product.id} (${product.name}):');
+            for (int i = 0; i < wastageMovements.length; i++) {
+              final m = wastageMovements[i];
+              print('[BULK_STOCK_TAKE]   Movement $i: quantity=${m['quantity']}, notes="${m['notes']}", ref="${m['reference_number']}", product_id=${m['product_id'] ?? m['product']}');
+            }
+            
+            // Find the most recent ACTUAL wastage from stock take
+            // Both management command and Android app store wastage with reference_number="STOCK-TAKE-YYYYMMDD"
+            // Notes field contains just the reason value (no prefix)
+            Map<String, dynamic>? actualWastage;
+            int skippedCount = 0;
+            for (final movement in wastageMovements) {
+              final notes = movement['notes']?.toString() ?? '';
+              final notesLower = notes.toLowerCase();
+              final referenceNumber = movement['reference_number']?.toString() ?? '';
+              
+              print('[BULK_STOCK_TAKE] Checking movement for product ${product.id}: ref="$referenceNumber", notes="$notes"');
+              
+              // Skip reset movements - these are not actual wastage
+              if (notesLower.contains('reset') || notesLower.contains('complete_stock_take_reset')) {
+                skippedCount++;
+                print('[BULK_STOCK_TAKE] Skipping reset movement for product ${product.id}: notes="$notes"');
+                continue;
+              }
+              
+              // Only accept wastage from stock take: reference_number starts with "STOCK-TAKE-"
+              if (referenceNumber.startsWith('STOCK-TAKE-')) {
+                actualWastage = movement;
+                print('[BULK_STOCK_TAKE] ✅ Found stock take wastage for product ${product.id}: quantity=${movement['quantity']}, notes="${movement['notes']}", ref="$referenceNumber"');
+                break;
+              } else {
+                skippedCount++;
+                print('[BULK_STOCK_TAKE] ⚠️ Skipping non-stock-take wastage for product ${product.id}: notes="$notes", ref="$referenceNumber"');
+              }
+            }
+            
+            if (actualWastage == null) {
+              print('[BULK_STOCK_TAKE] No actual wastage found for product ${product.id} (${product.name}) - checked ${wastageMovements.length} movements, skipped $skippedCount reset movements');
+              continue;
+            }
+            
+            // Verify the wastage belongs to the correct product
+            final wastageProductId = actualWastage['product_id'] ?? actualWastage['product'];
+            if (wastageProductId != null && wastageProductId != product.id) {
+              print('[BULK_STOCK_TAKE] WARNING: Wastage product ID mismatch! Expected ${product.id} (${product.name}), got $wastageProductId');
+              continue; // Skip this wastage - wrong product
+            }
+            
+            final wastageQuantityRaw = actualWastage['quantity'];
+            print('[BULK_STOCK_TAKE] Product ${product.id} wastage quantity raw: $wastageQuantityRaw (type: ${wastageQuantityRaw.runtimeType})');
+            
+            // Parse quantity - handle both String and num types
+            num? wastageQuantity;
+            if (wastageQuantityRaw is num) {
+              wastageQuantity = wastageQuantityRaw;
+            } else if (wastageQuantityRaw is String) {
+              wastageQuantity = double.tryParse(wastageQuantityRaw);
+            }
+            
+            print('[BULK_STOCK_TAKE] Product ${product.id} parsed wastage quantity: $wastageQuantity');
+            
+            // Add wastage if quantity > 0 (regardless of stock count)
+            if (wastageQuantity != null && wastageQuantity > 0) {
+              // Use notes exactly as they come from API, no modifications
+              final notes = actualWastage['notes']?.toString() ?? '';
+              wastageDataMap[product.id] = {
+                'quantity': wastageQuantity,
+                'notes': notes,
+              };
+              print('[BULK_STOCK_TAKE] ✅ ADDED wastage for product ${product.id} (${product.name}): $wastageQuantity ${product.unit}, notes: $notes');
+            } else {
+              print('[BULK_STOCK_TAKE] Skipping wastage for product ${product.id} - quantity is 0 or invalid (parsed: $wastageQuantity)');
+            }
+          } else {
+            print('[BULK_STOCK_TAKE] No wastage found for product ${product.id} (${product.name})');
+          }
+        } catch (e) {
+          print('[BULK_STOCK_TAKE] ❌ Error fetching wastage for product ${product.id} (${product.name}): $e');
+          // Continue with other products even if one fails
+        }
+      }
+      
+      print('[BULK_STOCK_TAKE] Found wastage for ${wastageDataMap.length} products');
+      
+      // If list is empty, populate with products that have stock > 0 OR have wastage
+      // Otherwise, update stock levels for products already in the list
+      final productsWithStockList = _stockTakeProducts.isEmpty
+          ? updatedProductsMap.values.where((p) => p.stockLevel > 0 || wastageDataMap.containsKey(p.id)).toList()
+          : _stockTakeProducts.map((p) {
+              // Get updated product data from database if available
+              final updatedProduct = updatedProductsMap[p.id];
+              if (updatedProduct != null) {
+                return updatedProduct;
+              }
+              return p;
+            }).toList();
+      
+      print('[BULK_STOCK_TAKE] ${_stockTakeProducts.isEmpty ? "Populating" : "Updating"} ${productsWithStockList.length} products in stock take list');
+
+      // UPDATE existing products in the list (don't replace the entire list)
+      setState(() {
+        // Update the products list with fresh data from database
+        _stockTakeProducts = productsWithStockList;
+        
+        // Create controllers and populate values for each product
+        for (final product in _stockTakeProducts) {
+          final productId = product.id;
+          
+          // Format stock value for controller
+          final dbStock = product.stockLevel;
+          final stockText = dbStock % 1 == 0
+              ? dbStock.toInt().toString()
+              : dbStock.toStringAsFixed(2);
+          
+          print('[BULK_STOCK_TAKE] Processing product ${productId} (${product.name}): stock=$dbStock, stockText="$stockText"');
+          
+          // Get wastage data - use the correct variable from wastageDataMap
+          // IMPORTANT: Use productId to match wastage to the correct product
+          final wastageData = wastageDataMap[productId];
+          String wastageText = '';
+          String wastageReasonText = '';
+          
+          print('[BULK_STOCK_TAKE] Processing wastage for product ${productId} (${product.name}): wastageData = ${wastageData != null ? "found" : "null"}');
+          
+          // Only set wastage values if there's actual wastage (quantity > 0)
+          if (wastageData != null) {
+            final quantity = wastageData['quantity'];
+            print('[BULK_STOCK_TAKE] Product ${productId} wastage quantity from map: $quantity (type: ${quantity.runtimeType})');
+            if (quantity != null && quantity is num && (quantity as num) > 0) {
+              final wastageQuantity = quantity as num;
+              wastageText = wastageQuantity % 1 == 0
+                  ? wastageQuantity.toInt().toString()
+                  : wastageQuantity.toStringAsFixed(2);
+              
+              // Only set wastage reason if there's actual wastage quantity - use exactly as stored, no modifications
+              if (wastageData['notes'] != null && wastageData['notes'].toString().isNotEmpty) {
+                wastageReasonText = wastageData['notes'].toString();
+              }
+              
+              print('[BULK_STOCK_TAKE] ✅ Assigning wastage to product ${productId} (${product.name}): $wastageText ${product.unit}, reason: "$wastageReasonText"');
+            } else {
+              print('[BULK_STOCK_TAKE] Skipping wastage assignment for product ${productId} - quantity is 0 or invalid');
+            }
+          } else {
+            print('[BULK_STOCK_TAKE] No wastage data found in map for product ${productId}');
+          }
+          
+          // Update or create controllers WITH text values
+          if (_controllers.containsKey(productId)) {
+            _controllers[productId]!.text = stockText;
+            print('[BULK_STOCK_TAKE] ✅ Updated stock controller for product ${productId}: "$stockText"');
+          } else {
+            _controllers[productId] = TextEditingController(text: stockText);
+            print('[BULK_STOCK_TAKE] ✅ Created stock controller for product ${productId}: "$stockText"');
+          }
+          
+          if (!_commentControllers.containsKey(productId)) {
+            _commentControllers[productId] = TextEditingController();
+          }
+          
+          if (_wastageControllers.containsKey(productId)) {
+            _wastageControllers[productId]!.text = wastageText;
+          } else {
+            _wastageControllers[productId] = TextEditingController(text: wastageText);
+          }
+          
+          if (_wastageReasonControllers.containsKey(productId)) {
+            _wastageReasonControllers[productId]!.text = wastageReasonText;
+          } else {
+            _wastageReasonControllers[productId] = TextEditingController(text: wastageReasonText);
+          }
+          
+          _originalStock[productId] = product.stockLevel;
+          if (!_addedTimestamps.containsKey(productId)) {
+            _addedTimestamps[productId] = DateTime.now();
+          }
+        }
+        
+        // Also update _allProducts for search
+        _allProducts = allProducts;
+        _isLoading = false;
+      });
+
+      if (mounted) {
+        final wastageCount = wastageDataMap.length;
+        final message = '✅ Loaded ${_stockTakeProducts.length} products with stock${wastageCount > 0 ? ' and wastage for $wastageCount products' : ''}';
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      print('[BULK_STOCK_TAKE] Error fetching stock: $e');
+      print('[BULK_STOCK_TAKE] Stack trace: ${StackTrace.current}');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Failed to fetch stock: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  void _addProductToStockTake(Product product) {
+    print('[BULK_STOCK_TAKE] _addProductToStockTake called for product ${product.id} (${product.name})');
+    
+    if (_stockTakeProducts.any((p) => p.id == product.id)) {
+      print('[BULK_STOCK_TAKE] Product ${product.id} already in list, skipping');
+      return;
+    }
+    
+    print('[BULK_STOCK_TAKE] Adding product ${product.id} to stock take list');
     setState(() {
       _stockTakeProducts.add(product);
       _controllers[product.id] = TextEditingController();
@@ -856,6 +1197,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                 case 'load':
                   _loadSavedProgress();
                   break;
+                case 'fetch':
+                  _fetchCurrentStockFromDatabase();
+                  break;
                 case 'share_progress':
                   _shareProgress();
                   break;
@@ -887,6 +1231,16 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                     Icon(Icons.restore, color: Colors.green),
                     SizedBox(width: 8),
                     Text('Load Progress'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'fetch',
+                child: Row(
+                  children: [
+                    Icon(Icons.cloud_download, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('Fetch'),
                   ],
                 ),
               ),

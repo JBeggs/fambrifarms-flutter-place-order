@@ -253,6 +253,11 @@ class ExcelService {
         stockStatus = 'Reservation Failed';
       }
       
+      // If using source product, show that source product stock is reserved
+      if (item.sourceProductId != null && item.sourceProductName != null && item.sourceQuantity != null) {
+        stockStatus = 'Stock Reserved from Source';
+      }
+      
       // Build notes field with original text if available
       String notesField = '';
       if (item.originalText != null && item.originalText!.isNotEmpty) {
@@ -262,6 +267,14 @@ class ExcelService {
         }
       } else if (item.notes?.isNotEmpty == true) {
         notesField = item.notes!;
+      }
+      
+      // Add source product reservation info to notes
+      if (item.sourceProductName != null && item.sourceQuantity != null) {
+        if (notesField.isNotEmpty) {
+          notesField += '\n';
+        }
+        notesField += 'Source Product Reserved: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''})';
       }
       
       final rowData = [
@@ -338,8 +351,12 @@ class ExcelService {
     currentRow++;
     
     // Add reserved stock items (sorted alphabetically)
+    // Include both directly reserved items AND source products that are reserved
     final reservedItems = order.items.where((item) => item.isStockReserved).toList();
     reservedItems.sort((a, b) => a.product.name.toLowerCase().compareTo(b.product.name.toLowerCase()));
+    
+    // Track which products we've already added to avoid duplicates
+    final addedProductIds = <int>{};
     
     for (final item in reservedItems) {
       // Find corresponding product in products list
@@ -369,10 +386,54 @@ class ExcelService {
         sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
       }
       currentRow++;
+      addedProductIds.add(item.product.id);
+    }
+    
+    // Add source products that are reserved (for items using stock from another product)
+    final sourceProductItems = order.items.where((item) => 
+      item.sourceProductId != null && 
+      item.sourceProductName != null && 
+      item.sourceQuantity != null
+    ).toList();
+    
+    for (final item in sourceProductItems) {
+      // Skip if we already added this source product
+      if (addedProductIds.contains(item.sourceProductId)) {
+        continue;
+      }
+      
+      // Find source product in products list
+      final sourceProduct = products.firstWhere(
+        (p) => p.id == item.sourceProductId,
+        orElse: () => product_model.Product(
+          id: item.sourceProductId!,
+          name: item.sourceProductName ?? 'Unknown',
+          department: 'Other',
+          price: 0,
+          unit: item.sourceProductUnit ?? 'kg',
+          stockLevel: item.sourceProductStockLevel?.toDouble() ?? 0,
+          minimumStock: 0,
+        ),
+      );
+      
+      final rowData = [
+        TextCellValue('${item.sourceProductName} (Source)'),
+        DoubleCellValue(item.sourceQuantity ?? 0),
+        TextCellValue(item.sourceProductUnit ?? 'kg'),
+        DoubleCellValue(item.sourceQuantity ?? 0), // Reserved quantity from source
+        DoubleCellValue(sourceProduct.stockLevel),
+        TextCellValue('✅ Reserved (for ${item.product.name})'),
+      ];
+      
+      for (int i = 0; i < rowData.length; i++) {
+        sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+      }
+      currentRow++;
+      addedProductIds.add(item.sourceProductId!);
     }
     
     // If no reserved items, show message
-    if (!order.items.any((item) => item.isStockReserved)) {
+    if (reservedItems.isEmpty && sourceProductItems.isEmpty) {
       sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('No items have reserved stock');
       sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = CellStyle(
         italic: true,

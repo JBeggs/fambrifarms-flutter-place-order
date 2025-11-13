@@ -187,6 +187,7 @@ class _EditOrderPageState extends ConsumerState<EditOrderPage> {
                       itemBuilder: (context, index) {
                         final item = _currentOrder.items[index];
                         return _EditableOrderItem(
+                          orderId: _currentOrder.id,
                           item: item,
                           onItemUpdated: (updatedItem) async {
                             try {
@@ -689,11 +690,13 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
 }
 
 class _EditableOrderItem extends StatefulWidget {
+  final int orderId;
   final OrderItem item;
   final Future<void> Function(OrderItem) onItemUpdated;
   final Future<void> Function() onItemDeleted;
 
   const _EditableOrderItem({
+    required this.orderId,
     required this.item,
     required this.onItemUpdated,
     required this.onItemDeleted,
@@ -1067,6 +1070,36 @@ class _EditableOrderItemState extends State<_EditableOrderItem> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('${widget.item.quantity} ${widget.item.unit} × R${widget.item.price.toStringAsFixed(2)}'),
+            if (widget.item.sourceProductName != null && widget.item.sourceQuantity != null) ...[
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.orange[200]!),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.inventory_2,
+                      size: 12,
+                      color: Colors.orange[700],
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Stock Reserved from: ${widget.item.sourceProductName} (${widget.item.sourceQuantity}${widget.item.sourceProductUnit ?? ''})',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.orange[700],
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (widget.item.originalText != null && widget.item.originalText!.isNotEmpty) ...[
               const SizedBox(height: 4),
               Text(
@@ -1334,4 +1367,5 @@ class _EditableOrderItemState extends State<_EditableOrderItem> {
       );
     }
   }
+
 }

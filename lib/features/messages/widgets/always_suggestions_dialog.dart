@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:excel/excel.dart' hide Border;
+import 'dart:io';
 import '../../../services/api_service.dart';
 import '../../../services/pdf_service.dart';
 import '../../../services/excel_service.dart';
 import '../../../utils/messages_provider.dart';
 import '../../../providers/products_provider.dart';
+import '../../../models/product.dart' as product_model;
 
 class AlwaysSuggestionsDialog extends ConsumerStatefulWidget {
   final String messageId;
@@ -28,12 +32,47 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   final Map<String, String> _stockActions = {}; // 'reserve', 'no_reserve', 'convert_to_kg'
   final Map<String, TextEditingController> _unitControllers = {};
   final Map<String, bool> _skippedItems = {}; // Track items that should be skipped
+  // Source product for stock deduction
+  final Map<String, bool> _useSourceProduct = {}; // Track if source product is used per item
+  final Map<String, Map<String, dynamic>> _selectedSourceProducts = {}; // Source product per item
+  final Map<String, double> _sourceQuantities = {}; // Source quantity per item
+  final Map<String, TextEditingController> _sourceQuantityControllers = {};
+  // Track edited original text and loading state for search
+  final Map<String, String> _editedOriginalText = {}; // Store edited search terms
+  final Map<String, bool> _isEditingSearch = {}; // Track if user is currently editing search term
+  final Map<String, bool> _isSearching = {}; // Track if search is in progress per item
+  final Map<String, List<dynamic>> _updatedSuggestions = {}; // Store updated suggestions per item
   bool _isProcessing = false;
 
   @override
   void initState() {
     super.initState();
     _initializeSelections();
+    _initializeEditedText();
+  }
+
+  // Initialize edited original text map with original values
+  void _initializeEditedText() {
+    for (var item in widget.suggestionsData['items']) {
+      final originalText = item['original_text'] as String;
+      _editedOriginalText[originalText] = originalText;
+      // Initialize search controllers
+      if (!_unitControllers.containsKey('${originalText}_search')) {
+        _unitControllers['${originalText}_search'] = TextEditingController(text: originalText);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    // Dispose all controllers
+    for (var controller in _unitControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _sourceQuantityControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
   }
 
   String _formatProductDisplay(Map<String, dynamic> suggestion) {
@@ -158,6 +197,9 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       
       // Initialize TextEditingController for unit editing
       _unitControllers[originalText] = TextEditingController(text: _units[originalText]);
+      
+      // Initialize source product controllers
+      _sourceQuantityControllers[originalText] = TextEditingController();
       
       // Auto-select the best suggestion based on stock availability and matching
       if (suggestions.isNotEmpty) {
@@ -298,13 +340,22 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     
     // Calculate the actual number of items that will be included (non-skipped)
     int includedItemsCount = 0;
+    int completedItemsCount = 0;
     for (var item in items) {
       final originalText = item['original_text'] as String;
       final isSkipped = _skippedItems[originalText] ?? false;
       if (!isSkipped) {
         includedItemsCount++;
+        // Check if item is completed (has selected suggestion)
+        if (_selectedSuggestions.containsKey(originalText) && 
+            _selectedSuggestions[originalText] != null) {
+          completedItemsCount++;
+        }
       }
     }
+    
+    // Check if all items are completed
+    final allItemsCompleted = includedItemsCount > 0 && completedItemsCount == includedItemsCount;
 
     // Check if we're in a Scaffold (mobile full-screen) or Dialog (desktop)
     final isInScaffold = Scaffold.maybeOf(context) != null;
@@ -359,55 +410,155 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             
             const SizedBox(height: 16),
             
-            // Items list
+            // Items list with confirm button at the end
             Expanded(
               child: ListView.builder(
-                itemCount: items.length,
+                itemCount: items.length + (allItemsCompleted ? 1 : 0), // Add 1 for button if all completed
                 itemBuilder: (context, index) {
+                  // If this is the last item and all items are completed, show confirm button
+                  if (allItemsCompleted && index == items.length) {
+                    return Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: SafeArea(
+                        top: false,
+                        child: Column(
+                          children: [
+                            // Progress indicator showing completion
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.check_circle, color: Colors.green.shade700, size: 18),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'All items completed ($completedItemsCount/$includedItemsCount)',
+                                    style: TextStyle(
+                                      color: Colors.green.shade700,
+                                      fontWeight: FontWeight.w500,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            // Preview button - shows Excel preview
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: OutlinedButton.icon(
+                                onPressed: _isProcessing ? null : _previewOrderExcel,
+                                icon: const Icon(Icons.preview, size: 20),
+                                label: const Text(
+                                  'Preview Excel',
+                                  style: TextStyle(fontSize: 16),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: Theme.of(context).primaryColor),
+                                  foregroundColor: Theme.of(context).primaryColor,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            // Confirm Order button - bigger and prominent
+                            SizedBox(
+                              width: double.infinity,
+                              height: 56, // Bigger button
+                              child: ElevatedButton(
+                                onPressed: _isProcessing ? null : _confirmOrder,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Theme.of(context).primaryColor,
+                                  foregroundColor: Colors.white,
+                                  elevation: 4,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: _isProcessing 
+                                    ? const SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 3,
+                                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                        ),
+                                      )
+                                    : Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const Icon(Icons.check_circle, size: 24),
+                                          const SizedBox(width: 12),
+                                          Text(
+                                            'Confirm Order ($includedItemsCount items)',
+                                            style: const TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            // Cancel button - smaller, less prominent
+                            TextButton(
+                              onPressed: _isProcessing ? null : () => Navigator.of(context).pop(),
+                              child: const Text(
+                                'Cancel',
+                                style: TextStyle(fontSize: 14),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+                  
+                  // Regular item card
                   final item = items[index];
                   return _buildItemCard(item, index);
                 },
               ),
             ),
             
-            const SizedBox(height: 16),
-            
-            // Action buttons
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _isProcessing ? null : () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _isProcessing ? null : _saveChangesAndReprocess,
-                    icon: const Icon(Icons.save, size: 16),
-                    label: const Text('Save Changes'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange,
-                      foregroundColor: Colors.white,
+            // Show progress indicator at bottom when not all items completed (non-scrollable footer)
+            if (!allItemsCompleted)
+              SafeArea(
+                top: false,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withValues(alpha: 0.1),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _isProcessing ? null : _confirmOrder,
-                    child: _isProcessing 
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Text('Confirm Order ($includedItemsCount items)'),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.info_outline, color: Colors.orange.shade700, size: 18),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'Complete all items to confirm order ($completedItemsCount/$includedItemsCount)',
+                          style: TextStyle(
+                            color: Colors.orange.shade700,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 12,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
+              ),
           ],
     );
 
@@ -431,9 +582,24 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     }
   }
 
+  // Get suggestions for an item (either updated or original)
+  List<dynamic> _getSuggestionsForItem(String originalText) {
+    // If we have updated suggestions for this item, use those
+    if (_updatedSuggestions.containsKey(originalText)) {
+      return _updatedSuggestions[originalText]!;
+    }
+    // Otherwise, find the original item and return its suggestions
+    for (var item in widget.suggestionsData['items']) {
+      if (item['original_text'] == originalText) {
+        return item['suggestions'] as List<dynamic>? ?? [];
+      }
+    }
+    return [];
+  }
+
   Widget _buildItemCard(Map<String, dynamic> item, int index) {
     final originalText = item['original_text'] as String;
-    final suggestions = item['suggestions'] as List<dynamic>? ?? [];
+    final suggestions = _getSuggestionsForItem(originalText);
     final isParsingFailure = item['is_parsing_failure'] as bool? ?? false;
     final isAmbiguousPackaging = item['is_ambiguous_packaging'] as bool? ?? false;
     final isSkipped = _skippedItems[originalText] ?? false;
@@ -496,15 +662,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    originalText,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w500,
-                      fontSize: 14,
-                      color: isSkipped ? Colors.grey : null,
-                      decoration: isSkipped ? TextDecoration.lineThrough : null,
-                    ),
-                  ),
+                  child: _buildEditableSearchTerm(originalText, item),
                 ),
                 if (isParsingFailure)
                   Container(
@@ -652,6 +810,11 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             
             const SizedBox(height: 8),
             
+            // Source Product Selection
+            _buildSourceProductSelector(originalText, selectedSuggestion),
+            
+            const SizedBox(height: 8),
+            
             // Suggestions
             Text(
               'Select Product:',
@@ -661,10 +824,25 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             const SizedBox(height: 6),
             
             if (suggestions.isEmpty)
-              const Text(
-                'No suggestions available',
-                style: TextStyle(color: Colors.grey, fontSize: 10),
-              )
+              (_isSearching[originalText] == true)
+                  ? const Row(
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'Searching...',
+                          style: TextStyle(color: Colors.grey, fontSize: 10),
+                        ),
+                      ],
+                    )
+                  : const Text(
+                      'No suggestions available',
+                      style: TextStyle(color: Colors.grey, fontSize: 10),
+                    )
             else
               _buildSuggestionsList(suggestions, originalText),
           ],
@@ -708,15 +886,37 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
 
   Widget _buildProminentSuggestion(Map<String, dynamic> suggestion, String originalText, int index) {
     final isSelected = _selectedSuggestions[originalText]?['product_id'] == suggestion['product_id'];
+    final useSource = _useSourceProduct[originalText] ?? false;
+    final suggestionProductId = suggestion['product_id'] as int?;
+    final selectedSourceProduct = _selectedSourceProducts[originalText];
+    final isSourceSelected = useSource && selectedSourceProduct != null && selectedSourceProduct['id'] == suggestionProductId;
+    
+    // Check if product has stock
+    final stock = suggestion['stock'] as Map<String, dynamic>?;
+    final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+    final hasStock = availableQuantity > 0;
     
     return GestureDetector(
       onTap: () {
         setState(() {
-          _selectedSuggestions[originalText] = suggestion;
-          // Update unit to match the selected suggestion
-          _units[originalText] = suggestion['unit'] as String? ?? 'each';
-          // Update the unit controller to reflect the change
-          _unitControllers[originalText]?.text = suggestion['unit'] as String? ?? 'each';
+          if (useSource) {
+            // Source product selection mode - only allow products with stock
+            if (hasStock && suggestionProductId != _selectedSuggestions[originalText]?['product_id']) {
+              _selectedSourceProducts[originalText] = {
+                'id': suggestionProductId,
+                'name': suggestion['product_name'] ?? '',
+                'unit': suggestion['unit'] ?? '',
+                'stockLevel': availableQuantity,
+              };
+            }
+          } else {
+            // Normal product selection
+            _selectedSuggestions[originalText] = suggestion;
+            // Update unit to match the selected suggestion
+            _units[originalText] = suggestion['unit'] as String? ?? 'each';
+            // Update the unit controller to reflect the change
+            _unitControllers[originalText]?.text = suggestion['unit'] as String? ?? 'each';
+          }
         });
       },
       child: Container(
@@ -726,19 +926,29 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         ),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isSelected 
-              ? Colors.green.withValues(alpha: 0.25)
-              : Colors.blue.withValues(alpha: 0.1),
+          color: useSource && isSourceSelected
+              ? Colors.amber.withValues(alpha: 0.3)
+              : useSource && !hasStock
+                  ? Colors.grey.withValues(alpha: 0.1)
+                  : isSelected 
+                      ? Colors.green.withValues(alpha: 0.25)
+                      : Colors.blue.withValues(alpha: 0.1),
           border: Border.all(
-            color: isSelected 
-                ? Colors.green.shade600
-                : Colors.blue.withValues(alpha: 0.3),
-            width: isSelected ? 3 : 1,
+            color: useSource && isSourceSelected
+                ? Colors.amber.shade700
+                : useSource && !hasStock
+                    ? Colors.grey.withValues(alpha: 0.3)
+                    : isSelected 
+                        ? Colors.green.shade600
+                        : Colors.blue.withValues(alpha: 0.3),
+            width: (useSource && isSourceSelected) || isSelected ? 3 : 1,
           ),
           borderRadius: BorderRadius.circular(8),
-          boxShadow: isSelected ? [
+          boxShadow: (useSource && isSourceSelected) || isSelected ? [
             BoxShadow(
-              color: Colors.green.withValues(alpha: 0.4),
+              color: useSource && isSourceSelected
+                  ? Colors.amber.withValues(alpha: 0.4)
+                  : Colors.green.withValues(alpha: 0.4),
               blurRadius: 6,
               spreadRadius: 2,
             ),
@@ -752,11 +962,23 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: isSelected ? Colors.green : Colors.blue,
+                    color: useSource && isSourceSelected
+                        ? Colors.amber
+                        : useSource && !hasStock
+                            ? Colors.grey
+                            : isSelected 
+                                ? Colors.green 
+                                : Colors.blue,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
-                    isSelected ? 'SELECTED' : 'RECOMMENDED',
+                    useSource && isSourceSelected
+                        ? 'SOURCE'
+                        : useSource && !hasStock
+                            ? 'NO STOCK'
+                            : isSelected 
+                                ? 'SELECTED' 
+                                : 'RECOMMENDED',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 9,
@@ -818,7 +1040,21 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                     ),
                   ],
                 ),
-                if (isSelected) ...[
+                if (useSource && isSourceSelected) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: const BoxDecoration(
+                      color: Colors.amber,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.inventory_2,
+                      color: Colors.white,
+                      size: 14,
+                    ),
+                  ),
+                ] else if (isSelected) ...[
                   const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.all(3),
@@ -846,15 +1082,37 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
 
   Widget _buildCompactSuggestion(Map<String, dynamic> suggestion, String originalText) {
     final isSelected = _selectedSuggestions[originalText]?['product_id'] == suggestion['product_id'];
+    final useSource = _useSourceProduct[originalText] ?? false;
+    final suggestionProductId = suggestion['product_id'] as int?;
+    final selectedSourceProduct = _selectedSourceProducts[originalText];
+    final isSourceSelected = useSource && selectedSourceProduct != null && selectedSourceProduct['id'] == suggestionProductId;
+    
+    // Check if product has stock
+    final stock = suggestion['stock'] as Map<String, dynamic>?;
+    final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+    final hasStock = availableQuantity > 0;
     
     return GestureDetector(
       onTap: () {
         setState(() {
-          _selectedSuggestions[originalText] = suggestion;
-          // Update unit to match the selected suggestion
-          _units[originalText] = suggestion['unit'] as String? ?? 'each';
-          // Update the unit controller to reflect the change
-          _unitControllers[originalText]?.text = suggestion['unit'] as String? ?? 'each';
+          if (useSource) {
+            // Source product selection mode - only allow products with stock
+            if (hasStock && suggestionProductId != _selectedSuggestions[originalText]?['product_id']) {
+              _selectedSourceProducts[originalText] = {
+                'id': suggestionProductId,
+                'name': suggestion['product_name'] ?? '',
+                'unit': suggestion['unit'] ?? '',
+                'stockLevel': availableQuantity,
+              };
+            }
+          } else {
+            // Normal product selection
+            _selectedSuggestions[originalText] = suggestion;
+            // Update unit to match the selected suggestion
+            _units[originalText] = suggestion['unit'] as String? ?? 'each';
+            // Update the unit controller to reflect the change
+            _unitControllers[originalText]?.text = suggestion['unit'] as String? ?? 'each';
+          }
         });
       },
       child: Container(
@@ -864,19 +1122,29 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         ),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: isSelected 
-              ? Colors.green.shade600
-              : Colors.grey.withValues(alpha: 0.1),
+          color: useSource && isSourceSelected
+              ? Colors.amber.shade600
+              : useSource && !hasStock
+                  ? Colors.grey.withValues(alpha: 0.1)
+                  : isSelected 
+                      ? Colors.green.shade600
+                      : Colors.grey.withValues(alpha: 0.1),
           border: Border.all(
-            color: isSelected 
-                ? Colors.green.shade300
-                : Colors.grey.withValues(alpha: 0.3),
-            width: isSelected ? 3 : 1,
+            color: useSource && isSourceSelected
+                ? Colors.amber.shade300
+                : useSource && !hasStock
+                    ? Colors.grey.withValues(alpha: 0.3)
+                    : isSelected 
+                        ? Colors.green.shade300
+                        : Colors.grey.withValues(alpha: 0.3),
+            width: (useSource && isSourceSelected) || isSelected ? 3 : 1,
           ),
           borderRadius: BorderRadius.circular(8),
-          boxShadow: isSelected ? [
+          boxShadow: (useSource && isSourceSelected) || isSelected ? [
             BoxShadow(
-              color: Colors.green.withValues(alpha: 0.6),
+              color: useSource && isSourceSelected
+                  ? Colors.amber.withValues(alpha: 0.6)
+                  : Colors.green.withValues(alpha: 0.6),
               blurRadius: 6,
               spreadRadius: 2,
             ),
@@ -951,149 +1219,207 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     );
   }
 
-  Future<void> _saveChangesAndReprocess() async {
-    if (_isProcessing) return;
-    
-    setState(() {
-      _isProcessing = true;
-    });
-
+  Future<void> _previewOrderExcel() async {
     try {
-      // Build the updated message content from user's corrections
-      final updatedLines = <String>[];
-      
-      for (final item in widget.suggestionsData['items']) {
-        final originalText = item['original_text'] as String;
-        final selectedSuggestion = _selectedSuggestions[originalText];
-        
-        print('💾 SAVE DEBUG: Processing "$originalText"');
-        print('💾 Selected: ${selectedSuggestion?['product_name']}');
-        
-        if (selectedSuggestion != null) {
-          // Build corrected line: "ProductName Quantity Unit" with size info preserved
-          final rawProductName = selectedSuggestion['product_name'] as String;
-          
-          // Use user-edited quantity or fallback to parsed quantity
-          var quantity = _quantities[originalText] ?? item['parsed']['quantity'];
-          
-          print('💾 USER QUANTITY: "$originalText" - using quantity: $quantity (from _quantities: ${_quantities[originalText]}, parsed: ${item['parsed']['quantity']})');
-          final unit = _units[originalText] ?? selectedSuggestion['unit'] as String; // Use custom unit from UI
-          print('💾 USER UNIT: "$originalText" - using unit: "$unit" (from _units: ${_units[originalText]}, suggested: ${selectedSuggestion['unit']}).');
-          
-          // Extract size info from product name (e.g., "5kg", "200g", "2kg")
-          final sizeMatch = RegExp(r'\(([^)]*)\)').firstMatch(rawProductName);
-          String sizeInfo = '';
-          String baseProductName = rawProductName;
-          
-          if (sizeMatch != null) {
-            sizeInfo = sizeMatch.group(1)!; // e.g., "5kg", "200g punnet", "2kg box"
-            baseProductName = rawProductName.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim();
-          }
-          
-          // Create corrected line in CORRECT FORMAT: "Quantity Product Size Unit"
-          // GOLD STANDARD: "5 Potatoes 2kg bag", "3 Tomatoes 500g punnet", "2 Carrots 1kg bag"
-          String correctedLine;
-          
-          // Format quantity - ALWAYS include quantity (never omit)
-          final formattedQuantity = quantity == quantity.toInt() 
-              ? quantity.toInt().toString()
-              : quantity.toString();
-          
-          if (sizeInfo.isNotEmpty) {
-            // Has size info from product name: "5kg", "200g punnet", "2kg box"
-            // CORRECT FORMAT: "Quantity Product Size" → "10 White Onions 10kg"
-            if (sizeInfo.toLowerCase().contains(unit.toLowerCase())) {
-              correctedLine = '$formattedQuantity $baseProductName $sizeInfo';
-            } else {
-              correctedLine = '$formattedQuantity $baseProductName $sizeInfo $unit';
-            }
-          } else {
-            // No size info in brackets, but check if product name has size
-            // e.g., "Potatoes (15kg)" → extract "15kg" and combine with unit "bag"
-            final productSizeMatch = RegExp(r'\(([^)]*)\)').firstMatch(rawProductName);
-            if (productSizeMatch != null) {
-              final extractedSize = productSizeMatch.group(1)!; // e.g., "15kg"
-              // CORRECT FORMAT: "Quantity Product Size Unit" → "2 Potatoes 15kg bag"
-              correctedLine = '$formattedQuantity $baseProductName $extractedSize $unit';
-            } else {
-              // No size anywhere, use unit only
-              // CORRECT FORMAT: "Quantity Product Unit" → "5 Potatoes bag"
-              correctedLine = '$formattedQuantity $baseProductName $unit';
-            }
-          }
-          
-          print('💾 RAW PRODUCT NAME: "$rawProductName"');
-          print('💾 EXTRACTED SIZE INFO: "$sizeInfo"');
-          print('💾 SAVE FORMAT: Product="$baseProductName", Qty=$quantity, Unit="$unit", SizeInfo="$sizeInfo"');
-          
-          // Remove any remaining brackets from final output
-          correctedLine = correctedLine.replaceAll(RegExp(r'[()]'), '');
-          
-          print('💾 SAVE RESULT: "$originalText" → "$correctedLine"');
-          updatedLines.add(correctedLine);
-        } else {
-          // Keep original line if no selection made
-          updatedLines.add(originalText);
-        }
-      }
-      
-      final updatedContent = updatedLines.join('\n');
-      
-      print('💾 FINAL UPDATED CONTENT: "$updatedContent"');
-      
-      // Find the message database ID from the WhatsApp message ID
-      final messagesState = ref.read(messagesProvider);
-      print('💾 Looking for messageId: ${widget.messageId}');
-      print('💾 Available messages count: ${messagesState.messages.length}');
-      
-      final message = messagesState.messages.firstWhere(
-        (msg) => msg.messageId == widget.messageId,
-        orElse: () => throw Exception('Message not found')
-      );
-      
-      print('💾 Found message DB ID: ${message.id}');
-      print('💾 Current content: "${message.content}"');
-      
-      // Update the message content via messages provider (handles ID conversion)
-      print('💾 Calling editMessage...');
-      await ref.read(messagesProvider.notifier).editMessage(message.id, updatedContent);
-      print('💾 Edit message completed');
-      
-      if (mounted) {
-        // Force refresh messages to show the updated content
-        print('💾 Calling loadMessages to refresh...');
-        await ref.read(messagesProvider.notifier).loadMessages();
-        print('💾 LoadMessages completed');
-        
-        // Give UI time to rebuild before closing dialog
-        await Future.delayed(const Duration(milliseconds: 300));
-        
-        if (mounted) {
-          Navigator.of(context).pop();
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Message updated! Content refreshed.'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      print('💾 ERROR SAVING: $e');
+      // Show loading
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('❌ Failed to save changes: $e'),
-            backgroundColor: Colors.red,
+          const SnackBar(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                ),
+                SizedBox(width: 12),
+                Text('Generating Excel preview...'),
+              ],
+            ),
+            duration: Duration(seconds: 30),
           ),
         );
       }
-    } finally {
+
+      // Collect all selected items (excluding skipped items)
+      final List<Map<String, dynamic>> orderItems = [];
+      
+      for (var item in widget.suggestionsData['items']) {
+        final originalText = item['original_text'] as String;
+        final isSkipped = _skippedItems[originalText] ?? false;
+        
+        // Skip items marked as skipped
+        if (isSkipped) {
+          continue;
+        }
+        
+        final selectedSuggestion = _selectedSuggestions[originalText];
+        final quantity = _quantities[originalText] ?? 1.0;
+        final unit = _units[originalText] ?? 'each';
+        
+        if (selectedSuggestion != null) {
+          final stockAction = _stockActions[originalText] ?? 'reserve';
+          final itemData = {
+            'product_name': selectedSuggestion['product_name'] ?? 'Unknown',
+            'quantity': quantity,
+            'unit': unit,
+            'price': selectedSuggestion['price'] ?? 0.0,
+            'original_text': originalText,
+            'stock_action': stockAction,
+            'in_stock': selectedSuggestion['in_stock'] ?? false,
+            'unlimited_stock': selectedSuggestion['unlimited_stock'] ?? false,
+          };
+          
+          // Add source product info if using source product
+          if (_useSourceProduct[originalText] == true) {
+            final sourceProduct = _selectedSourceProducts[originalText];
+            final sourceQuantity = _sourceQuantities[originalText];
+            if (sourceProduct != null) {
+              itemData['source_product_name'] = sourceProduct['name'] ?? 'Unknown';
+              itemData['source_quantity'] = sourceQuantity ?? 0.0;
+            }
+          }
+          
+          orderItems.add(itemData);
+        }
+      }
+      
+      if (orderItems.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No items to preview. Please select at least one item.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Generate Excel file
+      final excel = Excel.createExcel();
+      final sheet = excel['Order Preview'];
+      
+      // Remove default sheet
+      if (excel.sheets.containsKey('Sheet1')) {
+        excel.delete('Sheet1');
+      }
+      
+      int currentRow = 0;
+      
+      // Header
+      final customer = widget.suggestionsData['customer'];
+      final customerName = customer != null ? (customer['name'] ?? 'Unknown') : 'Unknown';
+      final timestamp = DateTime.now().toString().split('.')[0];
+      
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('Order Preview');
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = CellStyle(
+        bold: true,
+        fontSize: 16,
+      );
+      currentRow++;
+      
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('Customer: $customerName');
+      currentRow++;
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('Generated: $timestamp');
+      currentRow += 2;
+      
+      // Column headers
+      final headers = ['Product Name', 'Quantity', 'Unit', 'Price', 'Stock Status', 'Original Text', 'Notes'];
+      for (int i = 0; i < headers.length; i++) {
+        final cell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow));
+        cell.value = TextCellValue(headers[i]);
+        cell.cellStyle = CellStyle(
+          bold: true,
+          horizontalAlign: HorizontalAlign.Center,
+        );
+      }
+      currentRow++;
+      
+      // Order Items
+      for (final item in orderItems) {
+        String stockStatus = 'Unknown';
+        if (item['unlimited_stock'] == true) {
+          stockStatus = '🌱 Always Available';
+        } else if (item['stock_action'] == 'reserve') {
+          stockStatus = item['in_stock'] == true ? '✅ Reserved' : '⚠️ Out of Stock';
+        } else if (item['stock_action'] == 'no_reserve') {
+          stockStatus = 'To Order';
+        }
+        
+        String notes = '';
+        if (item['source_product_name'] != null) {
+          notes = 'Stock from: ${item['source_product_name']} (${item['source_quantity']})';
+        }
+        
+        final rowData = [
+          TextCellValue(item['product_name']),
+          DoubleCellValue(item['quantity']),
+          TextCellValue(item['unit']),
+          DoubleCellValue(item['price']),
+          TextCellValue(stockStatus),
+          TextCellValue(item['original_text']),
+          TextCellValue(notes),
+        ];
+        
+        for (int i = 0; i < rowData.length; i++) {
+          sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = rowData[i];
+        }
+        currentRow++;
+      }
+      
+      // Auto-fit columns
+      for (int i = 0; i < headers.length; i++) {
+        sheet.setColumnAutoFit(i);
+      }
+      
+      // Save Excel file
+      final excelBytes = excel.save();
+      
+      if (excelBytes != null) {
+        // Get temp directory
+        final tempDir = await getTemporaryDirectory();
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final filename = 'order_preview_$timestamp.xlsx';
+        final filePath = '${tempDir.path}/$filename';
+        final file = File(filePath);
+        await file.writeAsBytes(excelBytes);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        }
+        
+        // Share the file
+        await Share.shareXFiles(
+          [XFile(filePath, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')],
+          subject: 'Order Preview - $customerName',
+          text: 'Preview of order items before confirmation',
+        );
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Excel preview ready to share'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } else {
+        throw Exception('Failed to generate Excel bytes');
+      }
+    } catch (e) {
+      print('[PREVIEW_EXCEL] Error: $e');
       if (mounted) {
-        setState(() {
-          _isProcessing = false;
-        });
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error generating preview: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
       }
     }
   }
@@ -1124,7 +1450,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         
         if (selectedSuggestion != null) {
           final stockAction = _stockActions[originalText] ?? 'reserve';
-          orderItems.add({
+          final itemData = {
             'product_id': selectedSuggestion['product_id'],
             'product_name': selectedSuggestion['product_name'],
             'quantity': quantity,
@@ -1132,7 +1458,51 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             'price': selectedSuggestion['price'],
             'original_text': originalText,
             'stock_action': stockAction,
-          });
+          };
+          
+          // Add source product data if using source product
+          if (_useSourceProduct[originalText] == true) {
+            final sourceProduct = _selectedSourceProducts[originalText];
+            final sourceQuantity = _sourceQuantities[originalText];
+            
+            // STRICT VALIDATION: Source product and quantity are REQUIRED
+            if (sourceProduct == null) {
+              if (mounted) {
+                setState(() {
+                  _isProcessing = false;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Please select a source product for "${selectedSuggestion['product_name']}"'),
+                    backgroundColor: Colors.red,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
+              return;
+            }
+            
+            if (sourceQuantity == null || sourceQuantity <= 0) {
+              if (mounted) {
+                setState(() {
+                  _isProcessing = false;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Please enter quantity to deduct for source product "${sourceProduct['name']}"'),
+                    backgroundColor: Colors.red,
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
+              return;
+            }
+            
+            itemData['source_product_id'] = sourceProduct['id'];
+            itemData['source_quantity'] = sourceQuantity;
+          }
+          
+          orderItems.add(itemData);
         }
       }
       
@@ -1497,6 +1867,107 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     );
   }
 
+  Widget _buildSourceProductSelector(String originalText, Map<String, dynamic>? selectedSuggestion) {
+    if (selectedSuggestion == null) return const SizedBox.shrink();
+    
+    final productId = selectedSuggestion['product_id'] as int?;
+    final useSource = _useSourceProduct[originalText] ?? false;
+    final selectedSourceProduct = _selectedSourceProducts[originalText];
+    
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.amber.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Checkbox(
+                value: useSource,
+                onChanged: (value) {
+                  setState(() {
+                    _useSourceProduct[originalText] = value ?? false;
+                    if (!value!) {
+                      _selectedSourceProducts.remove(originalText);
+                      _sourceQuantities.remove(originalText);
+                      _sourceQuantityControllers[originalText]?.clear();
+                    }
+                  });
+                },
+              ),
+              Expanded(
+                child: Text(
+                  'Use stock from another product',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          
+          if (useSource) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.blue.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 14, color: Colors.blue.shade700),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      selectedSourceProduct != null
+                        ? 'Source: ${selectedSourceProduct['name']} (${selectedSourceProduct['stockLevel']} ${selectedSourceProduct['unit']})'
+                        : 'Click on any product below with stock to use as source',
+                      style: TextStyle(fontSize: 10, color: Colors.blue.shade700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Always show quantity field when source is enabled
+            const SizedBox(height: 8),
+            TextField(
+              controller: _sourceQuantityControllers[originalText],
+              keyboardType: TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                isDense: true,
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                labelText: selectedSourceProduct != null
+                    ? 'Quantity to Deduct (${selectedSourceProduct['unit'] ?? ''}) *'
+                    : 'Quantity to Deduct *',
+                labelStyle: TextStyle(fontSize: 11),
+                suffixText: selectedSourceProduct?['unit'] as String? ?? '',
+                hintText: selectedSourceProduct != null ? 'e.g., 5' : 'Select source product first',
+                helperText: selectedSourceProduct != null
+                    ? 'Required: Enter amount to deduct from ${selectedSourceProduct['name']}'
+                    : 'Select a source product above first, then enter quantity',
+                helperMaxLines: 2,
+              ),
+              style: TextStyle(fontSize: 11),
+              onChanged: (value) {
+                final quantity = double.tryParse(value);
+                if (quantity != null && quantity > 0) {
+                  _sourceQuantities[originalText] = quantity;
+                } else {
+                  _sourceQuantities.remove(originalText);
+                }
+              },
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildStockActionChip(
     String originalText,
     String action,
@@ -1619,5 +2090,240 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     // Default: assume current quantity represents kg if no specific conversion found
     print('🔄 DEFAULT CONVERSION: ${currentQuantity} ${originalUnit} → ${currentQuantity}kg (no specific conversion found)');
     return currentQuantity;
+  }
+
+  // Build editable search term widget with edit button and search functionality
+  Widget _buildEditableSearchTerm(String originalText, Map<String, dynamic> item) {
+    final isSkipped = _skippedItems[originalText] ?? false;
+    final isEditing = _isEditingSearch[originalText] ?? false;
+    final currentSearchTerm = _editedOriginalText[originalText] ?? originalText;
+    final isSearching = _isSearching[originalText] ?? false;
+    
+    // Get TextEditingController (should already be initialized in _initializeEditedText)
+    final searchController = _unitControllers['${originalText}_search'];
+    
+    // If controller doesn't exist, return simple text widget (should not happen)
+    if (searchController == null) {
+      return Text(
+        currentSearchTerm,
+        style: TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 14,
+          color: isSkipped ? Colors.grey : null,
+          decoration: isSkipped ? TextDecoration.lineThrough : null,
+        ),
+      );
+    }
+    
+    // Use ValueKey to ensure TextField rebuilds when search term changes
+    // This prevents controller text sync issues during build
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: isEditing
+                  ? TextField(
+                      key: ValueKey('${originalText}_search_$currentSearchTerm'),
+                      controller: searchController,
+                      enabled: !isSearching,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                        color: isSkipped ? Colors.grey : null,
+                      ),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        border: const OutlineInputBorder(),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                        suffixIcon: isSearching
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: Padding(
+                                  padding: EdgeInsets.all(8.0),
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              )
+                            : IconButton(
+                                icon: const Icon(Icons.search, size: 18),
+                                onPressed: () => _rerunSearch(originalText, searchController.text),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                      ),
+                    )
+                  : InkWell(
+                      onTap: () {
+                        // Update controller text before entering edit mode
+                        if (searchController.text != currentSearchTerm) {
+                          searchController.text = currentSearchTerm;
+                        }
+                        setState(() {
+                          _isEditingSearch[originalText] = true;
+                          _editedOriginalText[originalText] = currentSearchTerm;
+                        });
+                      },
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              currentSearchTerm,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                                fontSize: 14,
+                                color: isSkipped ? Colors.grey : null,
+                                decoration: isSkipped ? TextDecoration.lineThrough : null,
+                              ),
+                            ),
+                          ),
+                          if (!isSkipped)
+                            IconButton(
+                              icon: const Icon(Icons.edit, size: 16),
+                              onPressed: () {
+                                // Update controller text before entering edit mode
+                                if (searchController.text != currentSearchTerm) {
+                                  searchController.text = currentSearchTerm;
+                                }
+                                setState(() {
+                                  _isEditingSearch[originalText] = true;
+                                  _editedOriginalText[originalText] = currentSearchTerm;
+                                });
+                              },
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              tooltip: 'Edit search term',
+                            ),
+                        ],
+                      ),
+                    ),
+            ),
+          ],
+        ),
+        // Show indicator if search term was changed
+        if (_editedOriginalText.containsKey(originalText) && _editedOriginalText[originalText] != originalText)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, size: 12, color: Colors.blue),
+                const SizedBox(width: 4),
+                Text(
+                  'Search updated: "$originalText" → "${_editedOriginalText[originalText]}"',
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.blue,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  // Rerun search for a specific item
+  Future<void> _rerunSearch(String originalText, String newSearchTerm) async {
+    if (newSearchTerm.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a search term'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Update controller text before setState
+    final searchController = _unitControllers['${originalText}_search'];
+    if (searchController != null && searchController.text != newSearchTerm.trim()) {
+      searchController.text = newSearchTerm.trim();
+    }
+    
+    setState(() {
+      _isSearching[originalText] = true;
+      _isEditingSearch[originalText] = false; // Exit edit mode
+      _editedOriginalText[originalText] = newSearchTerm.trim();
+    });
+
+    try {
+      final apiService = ref.read(apiServiceProvider);
+      final result = await apiService.getProductSuggestions(newSearchTerm.trim());
+
+      if (result['status'] == 'success' && mounted) {
+        final suggestions = result['suggestions'] as List<dynamic>? ?? [];
+        
+        setState(() {
+          _updatedSuggestions[originalText] = suggestions;
+          _isSearching[originalText] = false;
+          
+          // Reset selected suggestion since search changed
+          _selectedSuggestions.remove(originalText);
+          
+          // Auto-select best suggestion if available
+          if (suggestions.isNotEmpty) {
+            // Sort suggestions by confidence and stock availability
+            final sortedSuggestions = List<Map<String, dynamic>>.from(suggestions);
+            sortedSuggestions.sort((a, b) {
+              // Handle confidence_score which might be int or double from backend
+              final aScore = (a['confidence_score'] as num?)?.toDouble() ?? 0.0;
+              final bScore = (b['confidence_score'] as num?)?.toDouble() ?? 0.0;
+              final aInStock = a['in_stock'] as bool? ?? false;
+              final bInStock = b['in_stock'] as bool? ?? false;
+              
+              if (aInStock != bInStock) {
+                return bInStock ? 1 : -1;
+              }
+              return bScore.compareTo(aScore);
+            });
+            
+            _selectedSuggestions[originalText] = sortedSuggestions.first;
+            
+            // Update unit to match selected product
+            final selectedSuggestion = _selectedSuggestions[originalText];
+            if (selectedSuggestion != null) {
+              final productUnit = selectedSuggestion['unit'] as String? ?? 'each';
+              _units[originalText] = productUnit;
+              _unitControllers[originalText]?.text = productUnit;
+              
+              // Set stock action based on product
+              final unlimitedStock = selectedSuggestion['unlimited_stock'] as bool? ?? false;
+              if (unlimitedStock) {
+                _stockActions[originalText] = 'no_reserve';
+              } else {
+                final inStock = selectedSuggestion['in_stock'] as bool? ?? false;
+                _stockActions[originalText] = inStock ? 'reserve' : 'no_reserve';
+              }
+            }
+          }
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Found ${suggestions.length} suggestions for "$newSearchTerm"'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      } else {
+        throw Exception('Failed to get suggestions');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSearching[originalText] = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to search: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

@@ -848,6 +848,41 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
                                 _buildDetailRow(context, 'Quantity', '${item.quantity} ${item.unit}'),
                                 _buildDetailRow(context, 'Line Total', 'R${item.totalPrice.toStringAsFixed(2)}'),
                                 
+                                // Source product info if available
+                                if (item.sourceProductName != null && item.sourceQuantity != null) ...[
+                                  const Divider(),
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange[50],
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.orange[200]!),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(Icons.inventory_2, size: 16, color: Colors.orange[700]),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              'Source Product Reservation',
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.orange[700],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        _buildDetailRow(context, 'Source Product', item.sourceProductName!),
+                                        _buildDetailRow(context, 'Reserved Quantity', '${item.sourceQuantity}${item.sourceProductUnit ?? ''}'),
+                                        _buildDetailRow(context, 'Status', '✅ Reserved'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                                
                                 if (item.notes != null && item.notes!.isNotEmpty) ...[
                                   const Divider(),
                                   _buildDetailRow(context, 'Notes', item.notes!),
