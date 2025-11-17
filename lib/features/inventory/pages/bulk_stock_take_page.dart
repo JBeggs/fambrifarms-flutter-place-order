@@ -29,6 +29,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
   final Map<int, TextEditingController> _commentControllers = {};
   final Map<int, TextEditingController> _wastageControllers = {};
   final Map<int, TextEditingController> _wastageReasonControllers = {};
+  final Map<int, TextEditingController> _weightControllers = {};
   final Map<int, double> _originalStock = {};
   final Map<int, DateTime> _addedTimestamps = {}; // Track when products were added
   final TextEditingController _searchController = TextEditingController();
@@ -113,6 +114,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     for (final controller in _wastageReasonControllers.values) {
       controller.dispose();
     }
+    for (final controller in _weightControllers.values) {
+      controller.dispose();
+    }
     _addedTimestamps.clear(); // Clean up timestamps
     super.dispose();
   }
@@ -126,6 +130,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       commentControllers: _commentControllers,
       wastageControllers: _wastageControllers,
       wastageReasonControllers: _wastageReasonControllers,
+      weightControllers: _weightControllers,
       addedTimestamps: _addedTimestamps,
       showSnackbar: showSnackbar,
       context: mounted ? context : null,
@@ -237,6 +242,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         _commentControllers[product.id] = TextEditingController(text: entryData['comment']);
         _wastageControllers[product.id] = TextEditingController(text: entryData['wastageValue']);
         _wastageReasonControllers[product.id] = TextEditingController(text: entryData['wastageReason']);
+        _weightControllers[product.id] = TextEditingController(text: entryData['weight'] ?? '');
         _originalStock[product.id] = product.stockLevel;
         
         // Restore timestamp if available
@@ -693,6 +699,10 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
             _wastageReasonControllers[productId] = TextEditingController(text: wastageReasonText);
           }
           
+          if (!_weightControllers.containsKey(productId)) {
+            _weightControllers[productId] = TextEditingController();
+          }
+          
           _originalStock[productId] = product.stockLevel;
           if (!_addedTimestamps.containsKey(productId)) {
             _addedTimestamps[productId] = DateTime.now();
@@ -750,6 +760,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       _commentControllers[product.id] = TextEditingController();
       _wastageControllers[product.id] = TextEditingController();
       _wastageReasonControllers[product.id] = TextEditingController();
+      _weightControllers[product.id] = TextEditingController();
       _originalStock[product.id] = product.stockLevel;
       _expandedProducts.add(product.id); // Expand new products by default
       _addedTimestamps[product.id] = DateTime.now(); // Record when added
@@ -768,6 +779,316 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     print('[BULK_STOCK_TAKE] Added ${product.name} at ${_addedTimestamps[product.id]} - will appear at top');
   }
 
+  // Show modal for adding product to stock take - allows editing and moving to next
+  Future<void> _showAddProductModal(Product product, int currentIndex) async {
+    final stockTextController = TextEditingController(text: product.stockLevel.toString());
+    final wastageTextController = TextEditingController();
+    final wastageReasonController = TextEditingController();
+    final weightController = TextEditingController();
+    final commentController = TextEditingController();
+    
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+          child: Container(
+            width: double.infinity,
+            constraints: BoxConstraints(
+              maxWidth: 500,
+              maxHeight: MediaQuery.of(context).size.height * 0.85,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.1),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.inventory_2,
+                        color: Colors.blue.shade600,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              product.name,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${currentIndex + 1} of ${_searchResultsNotInList.length}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue.shade700,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                // Content
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Product Details
+                        _buildProductDetailRow('SKU', product.sku ?? 'No SKU'),
+                        _buildProductDetailRow('Unit', product.unit),
+                        _buildProductDetailRow('Current Stock', '${product.stockLevel} ${product.unit}'),
+                        _buildProductDetailRow('Department', product.department),
+                        _buildProductDetailRow('Price', 'R${product.price.toStringAsFixed(2)} per ${product.unit}'),
+                        
+                        const SizedBox(height: 20),
+                        const Divider(),
+                        const SizedBox(height: 20),
+                        
+                        // Stock Count
+                        Text(
+                          'Stock Count',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: stockTextController,
+                          keyboardType: TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            labelText: 'Counted Quantity',
+                            hintText: 'Enter counted stock',
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // Wastage
+                        Text(
+                          'Wastage',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: TextField(
+                                controller: wastageTextController,
+                                keyboardType: TextInputType.numberWithOptions(decimal: true),
+                                decoration: InputDecoration(
+                                  labelText: 'Wastage Quantity',
+                                  hintText: '0',
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              flex: 3,
+                              child: TextField(
+                                controller: wastageReasonController,
+                                decoration: InputDecoration(
+                                  labelText: 'Wastage Reason',
+                                  hintText: 'e.g., Spoilage',
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // Weight
+                        Text(
+                          'Weight',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: weightController,
+                          keyboardType: TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            labelText: 'Weight (kg)',
+                            hintText: 'Enter weight if applicable',
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                            prefixIcon: Icon(Icons.scale),
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // Comment
+                        Text(
+                          'Comment',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: commentController,
+                          decoration: InputDecoration(
+                            labelText: 'Additional Notes',
+                            hintText: 'Optional comment',
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                          ),
+                          maxLines: 2,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                
+                // Actions
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.05),
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(12),
+                      bottomRight: Radius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      // Cancel button
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cancel'),
+                      ),
+                      
+                      // Add button
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          // Add product with entered values
+                          setState(() {
+                            if (!_stockTakeProducts.any((p) => p.id == product.id)) {
+                              _stockTakeProducts.add(product);
+                              _controllers[product.id] = TextEditingController(text: stockTextController.text);
+                              _commentControllers[product.id] = TextEditingController(text: commentController.text);
+                              _wastageControllers[product.id] = TextEditingController(text: wastageTextController.text);
+                              _wastageReasonControllers[product.id] = TextEditingController(text: wastageReasonController.text);
+                              _weightControllers[product.id] = TextEditingController(text: weightController.text);
+                              _originalStock[product.id] = product.stockLevel;
+                              // Don't expand - keep it collapsed like others
+                              _addedTimestamps[product.id] = DateTime.now();
+                            }
+                          });
+                          
+                          _scheduleAutoSave();
+                          
+                          // Close modal - user will search for next product
+                          Navigator.pop(context);
+                          
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('✅ Added ${product.name} to stock'),
+                              backgroundColor: Colors.green,
+                              duration: const Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blue.shade600,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        ),
+                        icon: const Icon(Icons.add, size: 20),
+                        label: const Text('Add to Stock'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    
+    // Dispose controllers
+    stockTextController.dispose();
+    wastageTextController.dispose();
+    wastageReasonController.dispose();
+    commentController.dispose();
+  }
+  
+  Widget _buildProductDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _removeProductFromStockTake(int productId) {
     setState(() {
       _stockTakeProducts.removeWhere((p) => p.id == productId);
@@ -779,6 +1100,8 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       _wastageControllers.remove(productId);
       _wastageReasonControllers[productId]?.dispose();
       _wastageReasonControllers.remove(productId);
+      _weightControllers[productId]?.dispose();
+      _weightControllers.remove(productId);
       _originalStock.remove(productId);
       _addedTimestamps.remove(productId); // Remove timestamp
     });
@@ -898,6 +1221,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         commentControllers: _commentControllers,
         wastageControllers: _wastageControllers,
         wastageReasonControllers: _wastageReasonControllers,
+        weightControllers: _weightControllers,
         originalStock: _originalStock,
       );
 
@@ -932,8 +1256,8 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
           // Show Excel and allow sharing
           await Share.shareXFiles(
             [XFile(excelPath)],
-            text: 'Stock Take Preview (NOT submitted) - ${DateTime.now().toString().split(' ')[0]}',
-            subject: 'Stock Take Preview',
+            text: 'Stock Preview (NOT submitted) - ${DateTime.now().toString().split(' ')[0]}',
+            subject: 'Stock Preview',
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -969,6 +1293,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       commentControllers: _commentControllers,
       wastageControllers: _wastageControllers,
       wastageReasonControllers: _wastageReasonControllers,
+      weightControllers: _weightControllers,
       originalStock: _originalStock,
     );
 
@@ -1008,6 +1333,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         commentControllers: _commentControllers,
         wastageControllers: _wastageControllers,
         wastageReasonControllers: _wastageReasonControllers,
+        weightControllers: _weightControllers,
         originalStock: _originalStock,
       );
 
@@ -1097,8 +1423,8 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       if (files.isNotEmpty) {
         await Share.shareXFiles(
           files,
-          text: 'Stock Take Report - ${DateTime.now().toString().split(' ')[0]}',
-          subject: 'Bulk Stock Take Results',
+          text: 'Stock Report - ${DateTime.now().toString().split(' ')[0]}',
+          subject: 'Stock Results',
         );
       } else {
         if (mounted) {
@@ -1132,8 +1458,8 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       if (await file.exists()) {
         await Share.shareXFiles(
           [XFile(file.path)],
-          text: 'Stock Take Progress - ${DateTime.now().toString().split(' ')[0]}',
-          subject: 'Bulk Stock Take Progress',
+          text: 'Stock Progress - ${DateTime.now().toString().split(' ')[0]}',
+          subject: 'Stock Progress',
         );
       } else {
         if (mounted) {
@@ -1179,7 +1505,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     return Scaffold(
       resizeToAvoidBottomInset: true, // Important for keyboard handling
       appBar: AppBar(
-        title: const Text('Bulk Stock Take'),
+        title: const Text('Stock'),
         backgroundColor: Theme.of(context).primaryColor,
         foregroundColor: Colors.white,
         actions: [
@@ -1532,8 +1858,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                 ),
                                 trailing: IconButton(
                                   icon: Icon(Icons.add_circle, color: Colors.green[600], size: 32), // Bigger add button
-                                  onPressed: () => _addProductToStockTake(product),
+                                  onPressed: () => _showAddProductModal(product, index),
                                 ),
+                                onTap: () => _showAddProductModal(product, index),
                               );
                             },
                           ),
@@ -1652,6 +1979,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                       final commentController = _commentControllers[product.id]!;
                       final wastageController = _wastageControllers[product.id]!;
                       final wastageReasonController = _wastageReasonControllers[product.id]!;
+                      final weightController = _weightControllers[product.id]!;
                       final originalStock = _originalStock[product.id] ?? 0.0;
                       final isExpanded = _expandedProducts.contains(product.id);
 
@@ -1708,6 +2036,8 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                                   Icon(Icons.check_circle, size: 16, color: Colors.green[600]),
                                                 if (wastageController.text.isNotEmpty)
                                                   Icon(Icons.warning, size: 16, color: Colors.orange[600]),
+                                                if (weightController.text.isNotEmpty)
+                                                  Icon(Icons.scale, size: 16, color: Colors.purple[600]),
                                                 if (commentController.text.isNotEmpty)
                                                   Icon(Icons.comment, size: 16, color: Colors.blue[600]),
                                               ],
@@ -1916,6 +2246,32 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                     ),
                                   ],
                                 ),
+                              ),
+
+                              const SizedBox(height: 16),
+
+                              // Weight Section
+                              TextField(
+                                controller: weightController,
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                textInputAction: TextInputAction.next,
+                                enableInteractiveSelection: true,
+                                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+                                decoration: InputDecoration(
+                                  labelText: 'Weight (kg)',
+                                  hintText: 'Enter weight if applicable',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 16,
+                                  ),
+                                  prefixIcon: const Icon(Icons.scale),
+                                ),
+                                onChanged: (value) {
+                                  _scheduleAutoSave();
+                                },
                               ),
 
                               const SizedBox(height: 16),

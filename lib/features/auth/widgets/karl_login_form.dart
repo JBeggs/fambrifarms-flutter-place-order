@@ -25,8 +25,8 @@ class _KarlLoginFormState extends ConsumerState<KarlLoginForm> {
   @override
   void initState() {
     super.initState();
-    // Pre-fill Karl's email for convenience
-    _emailController.text = 'karl@fambrifarms.co.za';
+    // Pre-fill admin email for convenience
+    _emailController.text = 'admin@fambrifarms.co.za';
     // Store the notifier reference safely
     _authNotifier = ref.read(karlAuthProvider.notifier);
   }
@@ -130,7 +130,7 @@ class _KarlLoginFormState extends ConsumerState<KarlLoginForm> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Welcome back, Karl!',
+                        'Welcome back!',
                         style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                           color: const Color(0xFF2D5016),
@@ -157,7 +157,7 @@ class _KarlLoginFormState extends ConsumerState<KarlLoginForm> {
             textInputAction: TextInputAction.next,
             decoration: const InputDecoration(
               labelText: 'Email Address',
-              hintText: 'karl@fambrifarms.co.za',
+              hintText: 'admin@fambrifarms.co.za',
               prefixIcon: Icon(Icons.email_outlined),
             ),
             validator: (value) {

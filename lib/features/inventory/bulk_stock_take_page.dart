@@ -202,8 +202,8 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text('✅ Stock Take Complete'),
-        content: const Text('Bulk stock take has been completed successfully. The application will now close.'),
+        title: const Text('✅ Stock Complete'),
+        content: const Text('Stock has been completed successfully. The application will now close.'),
         actions: [
           TextButton(
             onPressed: _exitApp,
@@ -251,7 +251,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Please login to access bulk stock take:'),
+              const Text('Please login to access stock:'),
               const SizedBox(height: 16),
               TextField(
                 controller: usernameController,
@@ -329,7 +329,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
-        title: const Text('Bulk Stock Take'),
+        title: const Text('Stock'),
         backgroundColor: const Color(0xFF2D5016),
         leading: IconButton(
           icon: const Icon(Icons.close),

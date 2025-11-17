@@ -199,7 +199,7 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
         actions: [
           IconButton(
             icon: const Icon(Icons.compare_arrows),
-            tooltip: 'Compare with Previous Stock Take',
+            tooltip: 'Compare with Previous Stock',
             onPressed: () => _compareWithPreviousStock(context),
           ),
           IconButton(
@@ -626,7 +626,7 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
             ),
             ListTile(
               leading: const Icon(Icons.list_alt),
-              title: const Text('Bulk Stock Take'),
+              title: const Text('Stock'),
               subtitle: const Text('Count and update multiple products'),
               onTap: () {
                 Navigator.pop(context);
@@ -1065,7 +1065,7 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
             ),
             const SizedBox(height: 16),
             const Text(
-              '🎯 Complete Stock Take (Recommended)',
+              '🎯 Complete Stock (Recommended)',
               style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
             ),
             const Text(
@@ -1104,14 +1104,14 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
           ),
           ElevatedButton(
             onPressed: () {
-              debugPrint('🔧 User selected Complete Stock Take');
+              debugPrint('🔧 User selected Complete Stock');
               Navigator.of(context).pop(true);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Complete Stock Take'),
+            child: const Text('Complete Stock'),
           ),
         ],
       ),
@@ -1141,7 +1141,7 @@ class _InventoryPageState extends ConsumerState<InventoryPage> with SingleTicker
               const CircularProgressIndicator(),
               const SizedBox(width: 16),
               Text(resetStock 
-                ? 'Processing complete stock take...' 
+                ? 'Processing complete stock...' 
                 : 'Applying additive stock updates...'),
             ],
           ),

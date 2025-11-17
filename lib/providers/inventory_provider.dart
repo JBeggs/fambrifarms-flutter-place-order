@@ -282,6 +282,7 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
         final countedQuantity = (entry['counted_quantity'] as double);
         final wastageQuantity = (entry['wastage_quantity'] as double? ?? 0.0);
         final wastageReason = entry['wastage_reason'] as String? ?? '';
+        final weight = entry['weight'] as double? ?? 0.0;
         final comment = entry['comment'] as String? ?? '';
         
         // Get product name from entry first (most reliable), then fallback to state lookup
@@ -321,12 +322,19 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
           final actionText = adjustmentMode == 'set' ? 'Set' : 'Added';
           
           try {
+            // Build notes with comment if provided (weight is now a separate field)
+            String notes = 'Complete stock take: $actionText counted quantity to $countedQuantity';
+            if (comment.isNotEmpty) {
+              notes += '. $comment';
+            }
+            
             await _apiService.adjustStock(productId, {
               'adjustment_type': adjustmentType,
               'quantity': countedQuantity,
               'reason': adjustmentMode == 'set' ? 'complete_stock_take_set' : 'complete_stock_take_add',
-              'notes': 'Complete stock take: $actionText counted quantity to $countedQuantity${comment.isNotEmpty ? '. $comment' : ''}',
+              'notes': notes,
               'reference_number': referenceNumber,
+              if (weight > 0) 'weight': weight,
             });
             adjustmentCount++;
             print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): $countedQuantity');

@@ -134,7 +134,7 @@ class BulkStockTakePdfGenerator {
     return pw.Header(
       level: 0,
       child: pw.Text(
-        'Bulk Stock Take Report',
+        'Stock Report',
         style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold),
       ),
     );
@@ -154,11 +154,11 @@ class BulkStockTakePdfGenerator {
             flex: 2, 
             child: pw.Align(
               alignment: pw.Alignment.centerRight,
-              child: pw.Text('Stock Counted (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
+              child: pw.Text('Stock Counted', style: pw.TextStyle(fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
             ),
           ),
-          pw.Expanded(flex: 2, child: pw.Text('Packaged', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 1, child: pw.Text('Unit', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+          pw.Expanded(flex: 2, child: pw.Text('Weight (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Comment', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Wastage', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Reason', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
@@ -181,6 +181,7 @@ class BulkStockTakePdfGenerator {
       }
       
       final countedStock = entry['counted_quantity'] as double;
+      final weight = entry['weight'] as double? ?? 0.0;
       final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
       final wastageReason = entry['wastage_reason'] as String? ?? '';
       final comment = entry['comment'] as String? ?? '';
@@ -190,19 +191,12 @@ class BulkStockTakePdfGenerator {
           ? '🌱 ${product.name}'
           : product.name;
       
-      final isKg = product.unit.toLowerCase() == 'kg';
+      // Standard display - always show count in Stock Counted column
+      final stockCountedDisplay = countedStock % 1 == 0 
+          ? countedStock.toInt().toString() 
+          : countedStock.toStringAsFixed(2);
       
-      // For NON-kg products (boxes, bags, etc): comment goes in "Stock Counted (kg)" column, count goes in "Packaged"
-      // For kg products: count goes in "Stock Counted (kg)", comment goes in "Comment" column
-      final stockCountedDisplay = isKg
-          ? (countedStock % 1 == 0 ? countedStock.toInt().toString() : countedStock.toStringAsFixed(2))
-          : (comment.isNotEmpty ? comment : '-');
-      
-      final packagedDisplay = !isKg
-          ? (countedStock % 1 == 0 ? countedStock.toInt().toString() : countedStock.toStringAsFixed(2))
-          : '-';
-      
-      final commentDisplay = isKg && comment.isNotEmpty ? comment : '-';
+      final commentDisplay = comment.isNotEmpty ? comment : '-';
       
       return pw.Container(
         padding: const pw.EdgeInsets.all(8),
@@ -219,24 +213,16 @@ class BulkStockTakePdfGenerator {
                 style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
               ),
             ),
-            // Stock Counted (kg) - shows count for kg, comment for non-kg (right-aligned)
+            // Stock Counted (kg) - always shows count (right-aligned)
             pw.Expanded(
               flex: 2,
               child: pw.Align(
                 alignment: pw.Alignment.centerRight,
                 child: pw.Text(
                   stockCountedDisplay,
-                  style: const pw.TextStyle(fontSize: 9),
+                  style: const pw.TextStyle(fontSize: 10),
                   textAlign: pw.TextAlign.right,
                 ),
-              ),
-            ),
-            // Packaged
-            pw.Expanded(
-              flex: 2,
-              child: pw.Text(
-                packagedDisplay,
-                style: const pw.TextStyle(fontSize: 10),
               ),
             ),
             // Unit
@@ -244,7 +230,21 @@ class BulkStockTakePdfGenerator {
               flex: 1,
               child: pw.Text(product.unit, style: const pw.TextStyle(fontSize: 10)),
             ),
-            // Comment - only for non-kg products
+            // Weight (kg)
+            pw.Expanded(
+              flex: 2,
+              child: pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Text(
+                  weight > 0 
+                    ? (weight % 1 == 0 ? weight.toInt().toString() : weight.toStringAsFixed(2))
+                    : '-',
+                  style: const pw.TextStyle(fontSize: 10),
+                  textAlign: pw.TextAlign.right,
+                ),
+              ),
+            ),
+            // Comment
             pw.Expanded(
               flex: 2,
               child: pw.Text(
@@ -296,9 +296,9 @@ class BulkStockTakePdfGenerator {
   static void _addExcelHeader(excel.Sheet sheet) {
     final headerRow = [
       excel.TextCellValue('Product'),
-      excel.TextCellValue('Stock Counted (kg)'),
-      excel.TextCellValue('Packaged'),
+      excel.TextCellValue('Stock Counted'),
       excel.TextCellValue('Unit'),
+      excel.TextCellValue('Weight (kg)'),
       excel.TextCellValue('Comment'),
       excel.TextCellValue('Wastage'),
       excel.TextCellValue('Reason'),
@@ -310,7 +310,7 @@ class BulkStockTakePdfGenerator {
       final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0));
       cell.cellStyle = excel.CellStyle(
         bold: true,
-        horizontalAlign: i == 1 ? excel.HorizontalAlign.Right : excel.HorizontalAlign.Center, // Right-align "Stock Counted (kg)" column
+        horizontalAlign: (i == 1 || i == 3) ? excel.HorizontalAlign.Right : excel.HorizontalAlign.Center, // Right-align "Stock Counted" and "Weight (kg)" columns
       );
     }
   }
@@ -329,6 +329,7 @@ class BulkStockTakePdfGenerator {
     }
     
     final countedStock = entry['counted_quantity'] as double;
+    final weight = entry['weight'] as double? ?? 0.0;
     final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
     final wastageReason = entry['wastage_reason'] as String? ?? '';
     final comment = entry['comment'] as String? ?? '';
@@ -338,29 +339,20 @@ class BulkStockTakePdfGenerator {
         ? '🌱 ${product.name}'
         : product.name;
     
-    final isKg = product.unit.toLowerCase() == 'kg';
-    
-    // For NON-kg products (boxes, bags, etc): comment goes in "Stock Counted (kg)" column, count goes in "Packaged"
-    // For kg products: count goes in "Stock Counted (kg)", comment goes in "Comment" column
-    final stockCountedValue = isKg
-        ? excel.DoubleCellValue(countedStock)
-        : (comment.isNotEmpty 
-            ? excel.TextCellValue(comment)
-            : excel.TextCellValue('-'));
-    
-    final packagedValue = !isKg
-        ? excel.DoubleCellValue(countedStock)
-        : excel.TextCellValue('-');
-    
-    final commentValue = isKg && comment.isNotEmpty 
+    // Standard values - always show count in Stock Counted column
+    final stockCountedValue = excel.DoubleCellValue(countedStock);
+    final commentValue = comment.isNotEmpty 
         ? excel.TextCellValue(comment)
+        : excel.TextCellValue('-');
+    final weightValue = weight > 0 
+        ? excel.DoubleCellValue(weight)
         : excel.TextCellValue('-');
     
     final dataRow = [
       excel.TextCellValue(productName),
       stockCountedValue,
-      packagedValue,
       excel.TextCellValue(product.unit),
+      weightValue,
       commentValue,
       wastageQuantity > 0 ? excel.DoubleCellValue(wastageQuantity) : excel.TextCellValue('-'),
       excel.TextCellValue(wastageQuantity > 0 ? wastageReason : '-'),
@@ -368,10 +360,14 @@ class BulkStockTakePdfGenerator {
     
     sheet.appendRow(dataRow);
     
-    // Right-align the "Stock Counted (kg)" column (column index 1)
+    // Right-align the "Stock Counted" column (column index 1) and "Weight (kg)" column (column index 3)
     final rowIndex = sheet.maxRows - 1;
     final stockCountedCell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIndex));
     stockCountedCell.cellStyle = excel.CellStyle(
+      horizontalAlign: excel.HorizontalAlign.Right,
+    );
+    final weightCell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIndex));
+    weightCell.cellStyle = excel.CellStyle(
       horizontalAlign: excel.HorizontalAlign.Right,
     );
   }

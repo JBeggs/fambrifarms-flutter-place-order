@@ -5,6 +5,7 @@ import '../models/order.dart';
 import '../models/product.dart' as product_model;
 import '../services/api_service.dart';
 import '../providers/inventory_provider.dart';
+import '../features/messages/utils/order_items_persistence.dart';
 
 class OrdersState {
   final List<Order> orders;
@@ -172,6 +173,16 @@ class OrdersNotifier extends StateNotifier<OrdersState> {
       final updatedOrder = await _apiService.updateOrderStatus(orderId, status);
       
       print('[DEBUG] OrdersProvider: Got updated order: ${updatedOrder.id}, status: ${updatedOrder.status}');
+      
+      // If order is marked as delivered, clear all saved order items progress
+      if (status == 'delivered') {
+        try {
+          await OrderItemsPersistence.clearAllProgress();
+          print('[ORDERS_PROVIDER] Cleared all order items progress after marking order as delivered');
+        } catch (e) {
+          print('[ORDERS_PROVIDER] Error clearing order items progress: $e');
+        }
+      }
       
       // Update the order in the list
       final updatedOrders = state.orders.map((order) {

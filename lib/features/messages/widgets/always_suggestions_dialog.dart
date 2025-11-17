@@ -10,6 +10,7 @@ import '../../../services/excel_service.dart';
 import '../../../utils/messages_provider.dart';
 import '../../../providers/products_provider.dart';
 import '../../../models/product.dart' as product_model;
+import '../utils/order_items_persistence.dart';
 
 class AlwaysSuggestionsDialog extends ConsumerStatefulWidget {
   final String messageId;
@@ -31,6 +32,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   final Map<String, String> _units = {};
   final Map<String, String> _stockActions = {}; // 'reserve', 'no_reserve', 'convert_to_kg'
   final Map<String, TextEditingController> _unitControllers = {};
+  final Map<String, TextEditingController> _quantityControllers = {};
   final Map<String, bool> _skippedItems = {}; // Track items that should be skipped
   // Source product for stock deduction
   final Map<String, bool> _useSourceProduct = {}; // Track if source product is used per item
@@ -67,6 +69,9 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   void dispose() {
     // Dispose all controllers
     for (var controller in _unitControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _quantityControllers.values) {
       controller.dispose();
     }
     for (var controller in _sourceQuantityControllers.values) {
@@ -195,6 +200,14 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       _quantities[originalText] = (parsed['quantity'] as num?)?.toDouble() ?? 1.0;
       _units[originalText] = parsed['unit'] as String? ?? 'each';
       
+      // Initialize TextEditingController for quantity editing
+      final quantityValue = _quantities[originalText]!;
+      _quantityControllers[originalText] = TextEditingController(
+        text: quantityValue == quantityValue.toInt() 
+            ? quantityValue.toInt().toString() 
+            : quantityValue.toString(),
+      );
+      
       // Initialize TextEditingController for unit editing
       _unitControllers[originalText] = TextEditingController(text: _units[originalText]);
       
@@ -270,38 +283,41 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           return bScore.compareTo(aScore);
         });
         
+        // DISABLED: Automatic selection - users must manually select
         // First try to find a product with the matching unit
-        final parsedUnit = _units[originalText];
-        Map<String, dynamic>? unitMatch;
-        
-        for (var suggestion in sortedSuggestions) {
-          if (suggestion['unit'].toString().toLowerCase() == parsedUnit?.toLowerCase()) {
-            unitMatch = suggestion;
-            break;
-          }
-        }
-        
-        _selectedSuggestions[originalText] = unitMatch ?? sortedSuggestions.first;
-        
-        // CRITICAL FIX: Update unit to match the auto-selected product
-        final autoSelected = _selectedSuggestions[originalText];
-        if (autoSelected != null) {
-          final productUnit = autoSelected['unit'] as String? ?? 'each';
-          _units[originalText] = productUnit;
-          _unitControllers[originalText]?.text = productUnit;
-        }
-      } else if (suggestions.isNotEmpty) {
-        // Fallback: if no suggestions after sorting, use the first original suggestion
-        _selectedSuggestions[originalText] = suggestions.first;
-        
-        // CRITICAL FIX: Update unit to match the auto-selected product
-        final autoSelected = _selectedSuggestions[originalText];
-        if (autoSelected != null) {
-          final productUnit = autoSelected['unit'] as String? ?? 'each';
-          _units[originalText] = productUnit;
-          _unitControllers[originalText]?.text = productUnit;
-        }
-      }
+        // final parsedUnit = _units[originalText];
+        // Map<String, dynamic>? unitMatch;
+        // 
+        // for (var suggestion in sortedSuggestions) {
+        //   if (suggestion['unit'].toString().toLowerCase() == parsedUnit?.toLowerCase()) {
+        //     unitMatch = suggestion;
+        //     break;
+        //   }
+        // }
+        // 
+        // _selectedSuggestions[originalText] = unitMatch ?? sortedSuggestions.first;
+        // 
+        // // CRITICAL FIX: Update unit to match the auto-selected product
+        // final autoSelected = _selectedSuggestions[originalText];
+        // if (autoSelected != null) {
+        //   final productUnit = autoSelected['unit'] as String? ?? 'each';
+        //   _units[originalText] = productUnit;
+        //   _unitControllers[originalText]?.text = productUnit;
+        // }
+      } 
+      // DISABLED: Automatic selection fallback - users must manually select
+      // else if (suggestions.isNotEmpty) {
+      //   // Fallback: if no suggestions after sorting, use the first original suggestion
+      //   _selectedSuggestions[originalText] = suggestions.first;
+      //   
+      //   // CRITICAL FIX: Update unit to match the auto-selected product
+      //   final autoSelected = _selectedSuggestions[originalText];
+      //   if (autoSelected != null) {
+      //     final productUnit = autoSelected['unit'] as String? ?? 'each';
+      //     _units[originalText] = productUnit;
+      //     _unitControllers[originalText]?.text = productUnit;
+      //   }
+      // }
       
       // Initialize stock action - default based on stock availability and product type
       final selectedSuggestion = _selectedSuggestions[originalText];
@@ -447,6 +463,24 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                               ),
                             ),
                             const SizedBox(height: 16),
+                            // Save Progress button
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: OutlinedButton.icon(
+                                onPressed: _isProcessing ? null : _saveProgress,
+                                icon: const Icon(Icons.save, size: 20),
+                                label: const Text(
+                                  'Save Progress',
+                                  style: TextStyle(fontSize: 16),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: Colors.blue),
+                                  foregroundColor: Colors.blue,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
                             // Preview button - shows Excel preview
                             SizedBox(
                               width: double.infinity,
@@ -616,14 +650,19 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         ? '$formattedQuantity ${selectedSuggestion['product_name']} $unit'
         : originalText;
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      color: isSkipped ? Colors.grey.withValues(alpha: 0.2) : null,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+    // Get screen height and make card full height
+    final screenHeight = MediaQuery.of(context).size.height;
+    return SizedBox(
+      height: screenHeight * 0.75, // Use 85% of screen height for the card
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        color: isSkipped ? Colors.grey.withValues(alpha: 0.2) : null,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.max,
+            children: [
             // Item number, checkbox, and original text
             Row(
               children: [
@@ -699,154 +738,213 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               ],
             ),
             
-            // Show original vs edited comparison
+            // Show original vs edited comparison (centered)
             if (selectedSuggestion != null) ...[
               const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.grey.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Original: $originalText',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey[600],
-                        fontStyle: FontStyle.italic,
+              Center(
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Original: $originalText',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey[600],
+                          fontStyle: FontStyle.italic,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Edited: $editedText',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.green,
+                      const SizedBox(height: 2),
+                      Text(
+                        'Edited: $editedText',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.green,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ],
             
             const SizedBox(height: 8),
             
-            // Compact quantity and unit editing
-            Row(
-              children: [
-                const Text('Qty:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
-                const SizedBox(width: 4),
-                SizedBox(
-                  width: 60,
-                  height: 28,
-                  child: TextFormField(
-                    key: ValueKey('${originalText}_quantity'), // Stable key for quantity field
-                    initialValue: quantity == quantity.toInt() 
-                        ? quantity.toInt().toString() 
-                        : quantity.toString(),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    style: const TextStyle(fontSize: 11),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    ),
-                    onChanged: (value) {
-                      final newQuantity = double.tryParse(value) ?? 1.0;
-                      setState(() {
-                        _quantities[originalText] = newQuantity;
-                      });
-                    },
+            // Centered quantity and unit editing with source product checkbox
+            Center(
+              child: Column(
+                children: [
+                  // Select Product label (centered)
+                  Text(
+                    'Select Product:',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
                   ),
-                ),
-                const SizedBox(width: 12),
-                const Text('Unit:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
-                const SizedBox(width: 4),
-                SizedBox(
-                  width: 70,
-                  height: 28,
-                  child: TextFormField(
-                    key: ValueKey('${originalText}_unit'), // Stable key for unit field
-                    controller: _unitControllers[originalText]!,
-                    style: const TextStyle(fontSize: 11),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    ),
-                    onChanged: (value) {
-                      setState(() {
-                        _units[originalText] = value;
-                        
-                        // Find product with matching unit
-                        final currentSuggestion = _selectedSuggestions[originalText];
-                        if (currentSuggestion != null && value.trim().isNotEmpty) {
-                          final suggestions = widget.suggestionsData['items']
-                              .firstWhere((item) => item['original_text'] == originalText)['suggestions'] as List<dynamic>;
-                          
-                          // Look for exact unit match
-                          for (var suggestion in suggestions) {
-                            if (suggestion['unit'].toLowerCase() == value.toLowerCase()) {
-                              _selectedSuggestions[originalText] = suggestion;
-                              break;
-                            }
-                          }
-                        }
-                      });
-                    },
+                  const SizedBox(height: 6),
+                  // Quantity and unit fields (centered)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Qty:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
+                      const SizedBox(width: 4),
+                      SizedBox(
+                        width: 60,
+                        height: 28,
+                        child: TextFormField(
+                          key: ValueKey('${originalText}_quantity'), // Stable key for quantity field
+                          controller: _quantityControllers[originalText],
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          style: const TextStyle(fontSize: 11),
+                          textAlign: TextAlign.center,
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          ),
+                          onChanged: (value) {
+                            final newQuantity = double.tryParse(value) ?? 1.0;
+                            setState(() {
+                              _quantities[originalText] = newQuantity;
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Text('Unit:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500)),
+                      const SizedBox(width: 4),
+                      SizedBox(
+                        width: 70,
+                        height: 28,
+                        child: TextFormField(
+                          key: ValueKey('${originalText}_unit'), // Stable key for unit field
+                          controller: _unitControllers[originalText]!,
+                          style: const TextStyle(fontSize: 11),
+                          textAlign: TextAlign.center,
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          ),
+                          onChanged: (value) {
+                            setState(() {
+                              _units[originalText] = value;
+                              
+                              // Find product with matching unit
+                              final currentSuggestion = _selectedSuggestions[originalText];
+                              if (currentSuggestion != null && value.trim().isNotEmpty) {
+                                final suggestions = widget.suggestionsData['items']
+                                    .firstWhere((item) => item['original_text'] == originalText)['suggestions'] as List<dynamic>;
+                                
+                                // Look for exact unit match
+                                for (var suggestion in suggestions) {
+                                  if (suggestion['unit'].toLowerCase() == value.toLowerCase()) {
+                                    _selectedSuggestions[originalText] = suggestion;
+                                    break;
+                                  }
+                                }
+                              }
+                            });
+                          },
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
             
             const SizedBox(height: 8),
             
-            // Stock Action Selection
+            // Stock Action Selection (full width)
             _buildStockActionSelector(originalText, selectedSuggestion),
             
             const SizedBox(height: 8),
             
-            // Source Product Selection
-            _buildSourceProductSelector(originalText, selectedSuggestion),
-            
-            const SizedBox(height: 8),
-            
-            // Suggestions
-            Text(
-              'Select Product:',
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
-            ),
-            
             const SizedBox(height: 6),
             
-            if (suggestions.isEmpty)
-              (_isSearching[originalText] == true)
-                  ? const Row(
-                      children: [
-                        SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          'Searching...',
-                          style: TextStyle(color: Colors.grey, fontSize: 10),
+            // Scrollable suggestions section - use remaining space
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Source Product Selection at top of options box (only show if out of stock)
+                      if (selectedSuggestion != null) ...[
+                        Builder(
+                          builder: (context) {
+                            final stock = selectedSuggestion['stock'] as Map<String, dynamic>?;
+                            final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+                            final inStock = selectedSuggestion['in_stock'] as bool? ?? false;
+                            final unlimitedStock = selectedSuggestion['unlimited_stock'] as bool? ?? false;
+                            if (!inStock && !unlimitedStock && availableQuantity <= 0) {
+                              // Auto-enable source product when out of stock
+                              if (_useSourceProduct[originalText] != true) {
+                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                  if (mounted) {
+                                    setState(() {
+                                      _useSourceProduct[originalText] = true;
+                                    });
+                                  }
+                                });
+                              }
+                              return Column(
+                                children: [
+                                  _buildSourceProductSelector(originalText, selectedSuggestion),
+                                  const SizedBox(height: 12),
+                                  const Divider(),
+                                  const SizedBox(height: 12),
+                                ],
+                              );
+                            }
+                            return const SizedBox.shrink();
+                          },
                         ),
                       ],
-                    )
-                  : const Text(
-                      'No suggestions available',
-                      style: TextStyle(color: Colors.grey, fontSize: 10),
-                    )
-            else
-              _buildSuggestionsList(suggestions, originalText),
+                      
+                      // Suggestions list
+                      suggestions.isEmpty
+                          ? (_isSearching[originalText] == true)
+                              ? const Row(
+                                  children: [
+                                    SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Searching...',
+                                      style: TextStyle(color: Colors.grey, fontSize: 10),
+                                    ),
+                                  ],
+                                )
+                              : const Text(
+                                  'No suggestions available',
+                                  style: TextStyle(color: Colors.grey, fontSize: 10),
+                                )
+                          : _buildSuggestionsList(suggestions, originalText),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -898,27 +996,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     
     return GestureDetector(
       onTap: () {
-        setState(() {
-          if (useSource) {
-            // Source product selection mode - only allow products with stock
-            if (hasStock && suggestionProductId != _selectedSuggestions[originalText]?['product_id']) {
-              _selectedSourceProducts[originalText] = {
-                'id': suggestionProductId,
-                'name': suggestion['product_name'] ?? '',
-                'unit': suggestion['unit'] ?? '',
-                'stockLevel': availableQuantity,
-              };
-            }
-          } else {
-            // Normal product selection
-            _selectedSuggestions[originalText] = suggestion;
-            // Update unit to match the selected suggestion
-            _units[originalText] = suggestion['unit'] as String? ?? 'each';
-            // Update the unit controller to reflect the change
-            _unitControllers[originalText]?.text = suggestion['unit'] as String? ?? 'each';
-          }
-        });
+        // Always show modal for product selection
+        _showProductSelectionModal(originalText, suggestion);
       },
+      behavior: HitTestBehavior.opaque,
       child: Container(
         constraints: const BoxConstraints(
           minWidth: 220,
@@ -1094,27 +1175,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     
     return GestureDetector(
       onTap: () {
-        setState(() {
-          if (useSource) {
-            // Source product selection mode - only allow products with stock
-            if (hasStock && suggestionProductId != _selectedSuggestions[originalText]?['product_id']) {
-              _selectedSourceProducts[originalText] = {
-                'id': suggestionProductId,
-                'name': suggestion['product_name'] ?? '',
-                'unit': suggestion['unit'] ?? '',
-                'stockLevel': availableQuantity,
-              };
-            }
-          } else {
-            // Normal product selection
-            _selectedSuggestions[originalText] = suggestion;
-            // Update unit to match the selected suggestion
-            _units[originalText] = suggestion['unit'] as String? ?? 'each';
-            // Update the unit controller to reflect the change
-            _unitControllers[originalText]?.text = suggestion['unit'] as String? ?? 'each';
-          }
-        });
+        // Always show modal for product selection
+        _showProductSelectionModal(originalText, suggestion);
       },
+      behavior: HitTestBehavior.opaque,
       child: Container(
         constraints: const BoxConstraints(
           minWidth: 140,
@@ -1217,6 +1281,36 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         ),
       ),
     );
+  }
+
+  Future<void> _saveProgress() async {
+    try {
+      await OrderItemsPersistence.saveProgress(
+        messageId: widget.messageId,
+        selectedSuggestions: _selectedSuggestions,
+        quantities: _quantities,
+        units: _units,
+        stockActions: _stockActions,
+        skippedItems: _skippedItems,
+        useSourceProduct: _useSourceProduct,
+        selectedSourceProducts: _selectedSourceProducts,
+        sourceQuantities: _sourceQuantities,
+        editedOriginalText: _editedOriginalText,
+        showSnackbar: true,
+        context: context,
+      );
+    } catch (e) {
+      print('[ORDER_ITEMS] Error saving progress: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving progress: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _previewOrderExcel() async {
@@ -1697,7 +1791,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     }
   }
 
-  Widget _buildStockActionSelector(String originalText, Map<String, dynamic>? selectedSuggestion) {
+  Widget _buildStockActionSelector(String originalText, Map<String, dynamic>? selectedSuggestion, {VoidCallback? onChanged}) {
     final currentAction = _stockActions[originalText] ?? 'reserve';
     final productName = selectedSuggestion?['product_name'] as String? ?? '';
     final unit = selectedSuggestion?['unit'] as String? ?? '';
@@ -1737,8 +1831,46 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     // Don't show stock actions if there's no available stock (reserved stock counts as unavailable)
     final reserved = (stock?['reserved_quantity'] as num?)?.toDouble() ?? 0.0;
     final hasAvailableStock = availableQuantity > 0; // Only free stock counts as available
+    final useSource = _useSourceProduct[originalText] ?? false;
+    final selectedSourceProduct = _selectedSourceProducts[originalText];
+    final sourceQuantity = _sourceQuantities[originalText];
     
-    if (!hasAvailableStock) {
+    // If source product is selected, show green alert with reserved stock info instead of red alert
+    if (!hasAvailableStock && useSource && selectedSourceProduct != null) {
+      final hasQuantity = sourceQuantity != null && sourceQuantity > 0;
+      final quantityText = hasQuantity 
+          ? '${sourceQuantity.toStringAsFixed(1)} ${selectedSourceProduct['unit'] ?? ''}'
+          : 'Select quantity';
+      return Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.green.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.green.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.check_circle_outline, size: 16, color: Colors.green.shade600),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                hasQuantity
+                    ? '✅ Ready to go! Stock reserved: $quantityText from ${selectedSourceProduct['name']}'
+                    : 'Source product selected: ${selectedSourceProduct['name']} - Enter quantity below',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.green.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    // Hide the no stock alert if source product is being used
+    if (!hasAvailableStock && !(useSource && selectedSourceProduct != null)) {
       return Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
@@ -1767,6 +1899,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       );
     }
     
+    // If has stock, continue to show stock action selector below
+    
     // Check if this product supports flexible kg conversion
     // Show conversion option when:
     // 1. Product supports conversion (has kg or packaged variants available)
@@ -1782,6 +1916,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     final canConvertToBulk = supportsConversion && availableQuantity <= 0;
     
     return Container(
+      width: double.infinity, // Full width
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Colors.grey.withValues(alpha: 0.05),
@@ -1797,40 +1932,52 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           ),
           const SizedBox(height: 4),
           
-          // Stock action options
-          Wrap(
-            spacing: 8,
+          // Stock action options (full width)
+          Row(
             children: [
               // Reserve stock option
-              _buildStockActionChip(
-                originalText,
-                'reserve',
-                'Reserve Stock',
-                Icons.lock,
-                Colors.green,
-                currentAction == 'reserve',
+              Expanded(
+                child: _buildStockActionChip(
+                  originalText,
+                  'reserve',
+                  'Reserve Stock',
+                  Icons.lock,
+                  Colors.green,
+                  currentAction == 'reserve',
+                  onChanged: onChanged,
+                ),
               ),
               
+              const SizedBox(width: 8),
+              
               // No reserve option
-              _buildStockActionChip(
-                originalText,
-                'no_reserve',
-                'No Reserve',
-                Icons.lock_open,
-                Colors.orange,
-                currentAction == 'no_reserve',
+              Expanded(
+                child: _buildStockActionChip(
+                  originalText,
+                  'no_reserve',
+                  'No Reserve',
+                  Icons.lock_open,
+                  Colors.orange,
+                  currentAction == 'no_reserve',
+                  onChanged: onChanged,
+                ),
               ),
               
               // Flexible kg conversion option (only if applicable)
-              if (canConvertToBulk)
-                _buildStockActionChip(
-                  originalText,
-                  'convert_to_kg',
-                  'Flexible Kg Conversion',
-                  Icons.transform,
-                  Colors.blue,
-                  currentAction == 'convert_to_kg',
+              if (canConvertToBulk) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildStockActionChip(
+                    originalText,
+                    'convert_to_kg',
+                    'Flexible Kg Conversion',
+                    Icons.transform,
+                    Colors.blue,
+                    currentAction == 'convert_to_kg',
+                    onChanged: onChanged,
+                  ),
                 ),
+              ],
             ],
           ),
           
@@ -1871,7 +2018,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     if (selectedSuggestion == null) return const SizedBox.shrink();
     
     final productId = selectedSuggestion['product_id'] as int?;
-    final useSource = _useSourceProduct[originalText] ?? false;
+    final useSource = _useSourceProduct[originalText] ?? true; // Always true when shown (out of stock)
     final selectedSourceProduct = _selectedSourceProducts[originalText];
     
     return Container(
@@ -1884,85 +2031,66 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Checkbox(
-                value: useSource,
-                onChanged: (value) {
-                  setState(() {
-                    _useSourceProduct[originalText] = value ?? false;
-                    if (!value!) {
-                      _selectedSourceProducts.remove(originalText);
-                      _sourceQuantities.remove(originalText);
-                      _sourceQuantityControllers[originalText]?.clear();
-                    }
-                  });
-                },
-              ),
-              Expanded(
-                child: Text(
-                  'Use stock from another product',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+          // Header text
+          Text(
+            'Use stock from another product',
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.blue.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 14, color: Colors.blue.shade700),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    selectedSourceProduct != null
+                      ? 'Source: ${selectedSourceProduct['name']} (${selectedSourceProduct['stockLevel']} ${selectedSourceProduct['unit']})'
+                      : 'Click on any product below with stock to use as source',
+                    style: TextStyle(fontSize: 10, color: Colors.blue.shade700),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           
-          if (useSource) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.blue.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline, size: 14, color: Colors.blue.shade700),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      selectedSourceProduct != null
-                        ? 'Source: ${selectedSourceProduct['name']} (${selectedSourceProduct['stockLevel']} ${selectedSourceProduct['unit']})'
-                        : 'Click on any product below with stock to use as source',
-                      style: TextStyle(fontSize: 10, color: Colors.blue.shade700),
-                    ),
-                  ),
-                ],
-              ),
+          // Always show quantity field when source is enabled
+          const SizedBox(height: 8),
+          TextField(
+            controller: _sourceQuantityControllers[originalText],
+            keyboardType: TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              isDense: true,
+              border: OutlineInputBorder(),
+              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              labelText: selectedSourceProduct != null
+                  ? 'Quantity to Deduct (${selectedSourceProduct['unit'] ?? ''}) *'
+                  : 'Quantity to Deduct *',
+              labelStyle: TextStyle(fontSize: 11),
+              suffixText: selectedSourceProduct?['unit'] as String? ?? '',
+              hintText: selectedSourceProduct != null ? 'e.g., 5' : 'Select source product first',
+              helperText: selectedSourceProduct != null
+                  ? 'Required: Enter amount to deduct from ${selectedSourceProduct['name']}'
+                  : 'Select a source product above first, then enter quantity',
+              helperMaxLines: 2,
             ),
-            
-            // Always show quantity field when source is enabled
-            const SizedBox(height: 8),
-            TextField(
-              controller: _sourceQuantityControllers[originalText],
-              keyboardType: TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                isDense: true,
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                labelText: selectedSourceProduct != null
-                    ? 'Quantity to Deduct (${selectedSourceProduct['unit'] ?? ''}) *'
-                    : 'Quantity to Deduct *',
-                labelStyle: TextStyle(fontSize: 11),
-                suffixText: selectedSourceProduct?['unit'] as String? ?? '',
-                hintText: selectedSourceProduct != null ? 'e.g., 5' : 'Select source product first',
-                helperText: selectedSourceProduct != null
-                    ? 'Required: Enter amount to deduct from ${selectedSourceProduct['name']}'
-                    : 'Select a source product above first, then enter quantity',
-                helperMaxLines: 2,
-              ),
-              style: TextStyle(fontSize: 11),
-              onChanged: (value) {
+            style: TextStyle(fontSize: 11),
+            onChanged: (value) {
+              setState(() {
                 final quantity = double.tryParse(value);
                 if (quantity != null && quantity > 0) {
                   _sourceQuantities[originalText] = quantity;
                 } else {
                   _sourceQuantities.remove(originalText);
                 }
-              },
-            ),
-          ],
+              });
+            },
+          ),
         ],
       ),
     );
@@ -1974,13 +2102,16 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     String label,
     IconData icon,
     Color color,
-    bool isSelected,
-  ) {
+    bool isSelected, {
+    VoidCallback? onChanged,
+  }) {
     return GestureDetector(
       onTap: () {
         setState(() {
           _stockActions[originalText] = action;
         });
+        // Also trigger modal state update if callback provided
+        onChanged?.call();
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -2263,42 +2394,60 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           // Reset selected suggestion since search changed
           _selectedSuggestions.remove(originalText);
           
+          // DISABLED: Automatic selection after search - users must manually select
           // Auto-select best suggestion if available
-          if (suggestions.isNotEmpty) {
-            // Sort suggestions by confidence and stock availability
-            final sortedSuggestions = List<Map<String, dynamic>>.from(suggestions);
-            sortedSuggestions.sort((a, b) {
-              // Handle confidence_score which might be int or double from backend
-              final aScore = (a['confidence_score'] as num?)?.toDouble() ?? 0.0;
-              final bScore = (b['confidence_score'] as num?)?.toDouble() ?? 0.0;
-              final aInStock = a['in_stock'] as bool? ?? false;
-              final bInStock = b['in_stock'] as bool? ?? false;
-              
-              if (aInStock != bInStock) {
-                return bInStock ? 1 : -1;
-              }
-              return bScore.compareTo(aScore);
-            });
-            
-            _selectedSuggestions[originalText] = sortedSuggestions.first;
-            
-            // Update unit to match selected product
-            final selectedSuggestion = _selectedSuggestions[originalText];
-            if (selectedSuggestion != null) {
-              final productUnit = selectedSuggestion['unit'] as String? ?? 'each';
-              _units[originalText] = productUnit;
-              _unitControllers[originalText]?.text = productUnit;
-              
-              // Set stock action based on product
-              final unlimitedStock = selectedSuggestion['unlimited_stock'] as bool? ?? false;
-              if (unlimitedStock) {
-                _stockActions[originalText] = 'no_reserve';
-              } else {
-                final inStock = selectedSuggestion['in_stock'] as bool? ?? false;
-                _stockActions[originalText] = inStock ? 'reserve' : 'no_reserve';
-              }
-            }
-          }
+          // if (suggestions.isNotEmpty) {
+          //   // Sort suggestions by confidence and stock availability
+          //   final sortedSuggestions = List<Map<String, dynamic>>.from(suggestions);
+          //   sortedSuggestions.sort((a, b) {
+          //     // Handle confidence_score which might be int or double from backend
+          //     final aScore = (a['confidence_score'] as num?)?.toDouble() ?? 0.0;
+          //     final bScore = (b['confidence_score'] as num?)?.toDouble() ?? 0.0;
+          //     final aInStock = a['in_stock'] as bool? ?? false;
+          //     final bInStock = b['in_stock'] as bool? ?? false;
+          //     
+          //     if (aInStock != bInStock) {
+          //       return bInStock ? 1 : -1;
+          //     }
+          //     return bScore.compareTo(aScore);
+          //   });
+          //   
+          //   _selectedSuggestions[originalText] = sortedSuggestions.first;
+          //   
+          //   // Update unit and quantity to match selected product
+          //   final selectedSuggestion = _selectedSuggestions[originalText];
+          //   if (selectedSuggestion != null) {
+          //     // Update unit
+          //     final productUnit = selectedSuggestion['unit'] as String? ?? 'each';
+          //     _units[originalText] = productUnit;
+          //     _unitControllers[originalText]?.text = productUnit;
+          //     
+          //     // Update quantity if suggestion has a parsed quantity
+          //     final suggestionQuantity = selectedSuggestion['quantity'] as num?;
+          //     if (suggestionQuantity != null) {
+          //       final newQuantity = suggestionQuantity.toDouble();
+          //       _quantities[originalText] = newQuantity;
+          //       // Update quantity controller to reflect the change (after setState to avoid rebuild issues)
+          //       WidgetsBinding.instance.addPostFrameCallback((_) {
+          //         final quantityController = _quantityControllers[originalText];
+          //         if (quantityController != null && mounted) {
+          //           quantityController.text = newQuantity == newQuantity.toInt() 
+          //               ? newQuantity.toInt().toString() 
+          //               : newQuantity.toString();
+          //         }
+          //       });
+          //     }
+          //     
+          //     // Set stock action based on product
+          //     final unlimitedStock = selectedSuggestion['unlimited_stock'] as bool? ?? false;
+          //     if (unlimitedStock) {
+          //       _stockActions[originalText] = 'no_reserve';
+          //     } else {
+          //       final inStock = selectedSuggestion['in_stock'] as bool? ?? false;
+          //       _stockActions[originalText] = inStock ? 'reserve' : 'no_reserve';
+          //     }
+          //   }
+          // }
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2325,5 +2474,738 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         );
       }
     }
+  }
+
+  // Show product selection modal (similar to bulk stock take)
+  Future<void> _showProductSelectionModal(
+    String originalText,
+    Map<String, dynamic> suggestion,
+  ) async {
+    final stock = suggestion['stock'] as Map<String, dynamic>?;
+    final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+    final inStock = suggestion['in_stock'] as bool? ?? false;
+    final unlimitedStock = suggestion['unlimited_stock'] as bool? ?? false;
+    final hasStock = availableQuantity > 0 || inStock || unlimitedStock;
+    
+    // Check if there are in-stock alternatives if this product is out of stock
+    final allSuggestions = _getSuggestionsForItem(originalText);
+    final inStockAlternatives = allSuggestions.where((s) {
+      final sStock = s['stock'] as Map<String, dynamic>?;
+      final sAvailableQuantity = (sStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+      final sInStock = s['in_stock'] as bool? ?? false;
+      final sUnlimitedStock = s['unlimited_stock'] as bool? ?? false;
+      return (sInStock || sUnlimitedStock || sAvailableQuantity > 0) && 
+             s['product_id'] != suggestion['product_id'];
+    }).toList();
+    
+    // If out of stock and has alternatives, show the out-of-stock options modal
+    if (!hasStock && inStockAlternatives.isNotEmpty) {
+      await _showOutOfStockOptionsModal(originalText, suggestion, inStockAlternatives);
+      return;
+    }
+    
+    // Otherwise show the product selection modal
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+          child: Container(
+            width: double.infinity,
+            constraints: BoxConstraints(
+              maxWidth: 500,
+              maxHeight: MediaQuery.of(context).size.height * 0.85,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: hasStock 
+                        ? Colors.green.withValues(alpha: 0.1)
+                        : Colors.orange.withValues(alpha: 0.1),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        hasStock ? Icons.check_circle : Icons.warning,
+                        color: hasStock ? Colors.green.shade600 : Colors.orange.shade600,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              suggestion['product_name'] ?? 'Unknown Product',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              hasStock
+                                  ? (unlimitedStock 
+                                      ? '🌱 Always Available'
+                                      : 'In Stock: ${availableQuantity.toStringAsFixed(1)} ${suggestion['unit'] ?? ''}')
+                                  : 'Out of Stock',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: hasStock ? Colors.green.shade700 : Colors.orange.shade700,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                // Content
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Product Details
+                        _buildProductDetailRow('Price', 'R${(suggestion['price'] ?? 0.0).toStringAsFixed(2)}'),
+                        _buildProductDetailRow('Unit', suggestion['unit'] ?? 'each'),
+                        if (suggestion['department'] != null)
+                          _buildProductDetailRow('Department', suggestion['department']),
+                        if (suggestion['confidence_score'] != null)
+                          _buildProductDetailRow(
+                            'Match Confidence',
+                            '${(((suggestion['confidence_score'] as num?)?.toDouble() ?? 0.0) * 100).toStringAsFixed(0)}%',
+                          ),
+                        
+                        const SizedBox(height: 20),
+                        const Divider(),
+                        const SizedBox(height: 20),
+                        
+                        // Quantity and Unit Selection
+                        Text(
+                          'Quantity & Unit',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        
+                        Row(
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: TextField(
+                                controller: _quantityControllers[originalText] ??= TextEditingController(
+                                  text: (suggestion['quantity'] as num?)?.toString() ?? 
+                                        _quantities[originalText]?.toString() ?? '1',
+                                ),
+                                keyboardType: TextInputType.numberWithOptions(decimal: true),
+                                decoration: InputDecoration(
+                                  labelText: 'Quantity',
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                                ),
+                                onChanged: (value) {
+                                  final qty = double.tryParse(value);
+                                  if (qty != null && qty > 0) {
+                                    setModalState(() {
+                                      _quantities[originalText] = qty;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              flex: 2,
+                              child: Builder(
+                                builder: (context) {
+                                  // Always use suggestion's unit when modal opens, unless user has manually changed it
+                                  final suggestionUnit = suggestion['unit']?.toString().trim();
+                                  final unitController = _unitControllers[originalText];
+                                  
+                                  // Initialize or update controller with suggestion's unit
+                                  if (unitController == null) {
+                                    // Create new controller with suggestion's unit
+                                    _unitControllers[originalText] = TextEditingController(
+                                      text: suggestionUnit ?? _units[originalText] ?? 'each',
+                                    );
+                                    // Update _units map to match
+                                    if (suggestionUnit != null) {
+                                      _units[originalText] = suggestionUnit;
+                                    }
+                                  } else {
+                                    // Update existing controller if suggestion has a unit and it's different
+                                    if (suggestionUnit != null && unitController.text != suggestionUnit) {
+                                      unitController.text = suggestionUnit;
+                                      _units[originalText] = suggestionUnit;
+                                    }
+                                  }
+                                  
+                                  return TextField(
+                                    controller: _unitControllers[originalText]!,
+                                    decoration: InputDecoration(
+                                      labelText: 'Unit',
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                                    ),
+                                    onChanged: (value) {
+                                      setModalState(() {
+                                        _units[originalText] = value.trim();
+                                      });
+                                    },
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        
+                        const SizedBox(height: 20),
+                        
+                        // Stock Action (only if in stock)
+                        if (hasStock) ...[
+                          Text(
+                            'Stock Action',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[800],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Builder(
+                            builder: (context) => _buildStockActionSelector(originalText, suggestion, onChanged: () {
+                              setModalState(() {});
+                            }),
+                          ),
+                        ],
+                        
+                        // Out of stock message
+                        if (!hasStock) ...[
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.info_outline, color: Colors.orange.shade700),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    'This product is out of stock. You can still add it without reserving stock.',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.orange.shade900,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                
+                // Actions
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.05),
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(12),
+                      bottomRight: Radius.circular(12),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Cancel'),
+                      ),
+                      const SizedBox(width: 12),
+                      ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          setState(() {
+                            _selectedSuggestions[originalText] = suggestion;
+                            _selectedSourceProducts.remove(originalText);
+                            _useSourceProduct[originalText] = false;
+                            _sourceQuantities.remove(originalText);
+                            _sourceQuantityControllers[originalText]?.clear();
+                            
+                            // Use values from modal
+                            final qty = _quantities[originalText] ?? 
+                                       (suggestion['quantity'] as num?)?.toDouble() ?? 1.0;
+                            // Prioritize suggestion's unit if user hasn't manually changed it
+                            // If unit controller exists and was modified, use that; otherwise use suggestion's unit
+                            final unitController = _unitControllers[originalText];
+                            final unitFromController = unitController?.text.trim();
+                            final unitFromSuggestion = suggestion['unit']?.toString().trim();
+                            final unit = (unitFromController != null && unitFromController.isNotEmpty && unitFromController != unitFromSuggestion)
+                                ? unitFromController  // User manually changed it
+                                : (unitFromSuggestion ?? _units[originalText] ?? 'each');  // Use suggestion's unit or existing
+                            
+                            _quantities[originalText] = qty;
+                            _units[originalText] = unit;
+                            
+                            // Update unit controller to match final unit
+                            if (unitController != null) {
+                              unitController.text = unit;
+                            }
+                            
+                            // Preserve user's stock action selection from modal, or set default if not set
+                            // Only override if stock action wasn't already set by user in the modal
+                            if (!_stockActions.containsKey(originalText)) {
+                              if (unlimitedStock) {
+                                _stockActions[originalText] = 'no_reserve';
+                              } else if (hasStock) {
+                                _stockActions[originalText] = 'reserve';
+                              } else {
+                                _stockActions[originalText] = 'no_reserve';
+                              }
+                            }
+                            // If stock action was already set (by user clicking in modal), keep it
+                          });
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green.shade600,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check, size: 20),
+                            SizedBox(width: 8),
+                            Text('Confirm Selection'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildProductDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Show modal with in-stock alternatives and source product option
+  Future<void> _showOutOfStockOptionsModal(
+    String originalText,
+    Map<String, dynamic> outOfStockSuggestion,
+    List<dynamic> inStockAlternatives,
+  ) async {
+    await showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.orange.shade600),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Out of Stock',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${outOfStockSuggestion['product_name']} is out of stock. Choose an option:',
+                style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.blue.shade700, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Stock may need to be ordered. You can continue to add this item without reserving stock.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.blue.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              
+              // In-stock alternatives
+              if (inStockAlternatives.isNotEmpty) ...[
+                Text(
+                  'In-Stock Alternatives:',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                ...inStockAlternatives.map((alt) {
+                  final altStock = alt['stock'] as Map<String, dynamic>?;
+                  final altAvailableQuantity = (altStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+                  final altInStock = alt['in_stock'] as bool? ?? false;
+                  final altUnlimitedStock = alt['unlimited_stock'] as bool? ?? false;
+                  
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.pop(context);
+                        setState(() {
+                          _selectedSuggestions[originalText] = alt;
+                          _selectedSourceProducts.remove(originalText);
+                          _useSourceProduct[originalText] = false;
+                          _sourceQuantities.remove(originalText);
+                          _sourceQuantityControllers[originalText]?.clear();
+                          
+                          final newUnit = alt['unit'] as String? ?? 'each';
+                          _units[originalText] = newUnit;
+                          
+                          final suggestionQuantity = alt['quantity'] as num?;
+                          if (suggestionQuantity != null) {
+                            _quantities[originalText] = suggestionQuantity.toDouble();
+                          }
+                        });
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.check_circle, color: Colors.green.shade600, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    alt['product_name'] ?? 'Unknown',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    altUnlimitedStock
+                                        ? '🌱 Always Available'
+                                        : 'Stock: ${altAvailableQuantity.toStringAsFixed(1)} ${alt['unit'] ?? ''}',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              'R${(alt['price'] ?? 0.0).toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.green.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 16),
+              ],
+              
+              // Use stock from another product option
+              Text(
+                'Or use stock from another product:',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              
+              // Show all suggestions with stock for source product selection
+              Text(
+                'Select a source product:',
+                style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+              ),
+              const SizedBox(height: 8),
+              
+              // List of all suggestions with stock (for source product selection)
+              Builder(
+                builder: (context) {
+                  final allSuggestions = _getSuggestionsForItem(originalText);
+                  final productsWithStock = allSuggestions.where((s) {
+                    final sStock = s['stock'] as Map<String, dynamic>?;
+                    final sAvailableQuantity = (sStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+                    final sInStock = s['in_stock'] as bool? ?? false;
+                    final sUnlimitedStock = s['unlimited_stock'] as bool? ?? false;
+                    return sInStock || sUnlimitedStock || sAvailableQuantity > 0;
+                  }).toList();
+                  
+                  return ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: 200),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: productsWithStock.length,
+                      itemBuilder: (context, index) {
+                        final sourceSuggestion = productsWithStock[index];
+                        final sourceStock = sourceSuggestion['stock'] as Map<String, dynamic>?;
+                        final sourceAvailableQuantity = (sourceStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+                        final sourceInStock = sourceSuggestion['in_stock'] as bool? ?? false;
+                        final sourceUnlimitedStock = sourceSuggestion['unlimited_stock'] as bool? ?? false;
+                        final sourceProductId = sourceSuggestion['product_id'] as int?;
+                        final currentSourceProduct = _selectedSourceProducts[originalText];
+                        final isSourceSelected = currentSourceProduct != null && currentSourceProduct['id'] == sourceProductId;
+                        
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: InkWell(
+                            onTap: () {
+                              setModalState(() {
+                                _selectedSourceProducts[originalText] = {
+                                  'id': sourceProductId,
+                                  'name': sourceSuggestion['product_name'] ?? '',
+                                  'unit': sourceSuggestion['unit'] ?? '',
+                                  'stockLevel': sourceAvailableQuantity,
+                                };
+                                _useSourceProduct[originalText] = true;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: isSourceSelected 
+                                    ? Colors.amber.withValues(alpha: 0.3)
+                                    : Colors.grey.withValues(alpha: 0.05),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: isSourceSelected 
+                                      ? Colors.amber.shade600
+                                      : Colors.grey.withValues(alpha: 0.2),
+                                  width: isSourceSelected ? 2 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isSourceSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+                                    color: isSourceSelected ? Colors.amber.shade700 : Colors.grey,
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          sourceSuggestion['product_name'] ?? 'Unknown',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: isSourceSelected ? FontWeight.w600 : FontWeight.normal,
+                                          ),
+                                        ),
+                                        Text(
+                                          sourceUnlimitedStock
+                                              ? '🌱 Always Available'
+                                              : 'Stock: ${sourceAvailableQuantity.toStringAsFixed(1)} ${sourceSuggestion['unit'] ?? ''}',
+                                          style: TextStyle(
+                                            fontSize: 9,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  );
+                },
+              ),
+              
+              const SizedBox(height: 12),
+              
+              // Quantity field (only shown if source product is selected)
+              if (_selectedSourceProducts[originalText] != null) ...[
+                TextField(
+                  controller: _sourceQuantityControllers[originalText] ??= TextEditingController(),
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    labelText: 'Quantity to Deduct *',
+                    labelStyle: TextStyle(fontSize: 11),
+                    hintText: 'e.g., 5',
+                    helperText: 'Enter amount to deduct from ${_selectedSourceProducts[originalText]?['name'] ?? 'source product'}',
+                    helperMaxLines: 2,
+                  ),
+                  style: TextStyle(fontSize: 11),
+                  onChanged: (value) {
+                    setModalState(() {
+                      final quantity = double.tryParse(value);
+                      if (quantity != null && quantity > 0) {
+                        _sourceQuantities[originalText] = quantity;
+                      } else {
+                        _sourceQuantities.remove(originalText);
+                      }
+                    });
+                  },
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          // Continue button - always enabled, allows proceeding with out-of-stock product
+          OutlinedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                // Set the out-of-stock product as selected
+                _selectedSuggestions[originalText] = outOfStockSuggestion;
+                // Clear source product settings (user chose to continue without alternatives)
+                _selectedSourceProducts.remove(originalText);
+                _useSourceProduct[originalText] = false;
+                _sourceQuantities.remove(originalText);
+                _sourceQuantityControllers[originalText]?.clear();
+                
+                final newUnit = outOfStockSuggestion['unit'] as String? ?? 'each';
+                _units[originalText] = newUnit;
+                
+                final suggestionQuantity = outOfStockSuggestion['quantity'] as num?;
+                if (suggestionQuantity != null) {
+                  _quantities[originalText] = suggestionQuantity.toDouble();
+                }
+                
+                // Set stock action to 'no_reserve' - stock will need to be ordered
+                _stockActions[originalText] = 'no_reserve';
+              });
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.orange.shade700,
+              side: BorderSide(color: Colors.orange.shade700),
+            ),
+            child: const Text('Continue'),
+          ),
+          Builder(
+            builder: (context) {
+              final hasSourceProduct = _selectedSourceProducts[originalText] != null;
+              final hasSourceQuantity = _sourceQuantities[originalText] != null && _sourceQuantities[originalText]! > 0;
+              
+              return ElevatedButton(
+                onPressed: (hasSourceProduct && hasSourceQuantity) ? () {
+                  Navigator.pop(context);
+                  setState(() {
+                    // Set the out-of-stock product as selected
+                    _selectedSuggestions[originalText] = outOfStockSuggestion;
+                    // Source product mode is already enabled
+                    
+                    final newUnit = outOfStockSuggestion['unit'] as String? ?? 'each';
+                    _units[originalText] = newUnit;
+                    
+                    final suggestionQuantity = outOfStockSuggestion['quantity'] as num?;
+                    if (suggestionQuantity != null) {
+                      _quantities[originalText] = suggestionQuantity.toDouble();
+                    }
+                  });
+                } : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: (hasSourceProduct && hasSourceQuantity) 
+                      ? Colors.amber.shade600 
+                      : Colors.grey,
+                ),
+                child: const Text('Use Source Product'),
+              );
+            },
+          ),
+        ],
+        ),
+      ),
+    );
   }
 }

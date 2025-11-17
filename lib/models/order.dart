@@ -14,6 +14,10 @@ class Order {
   final bool? parsedByAi;
   final double? subtotal;
   final double? totalAmount;
+  final int? lockedBy;
+  final String? lockedByEmail;
+  final String? lockedByName;
+  final DateTime? lockedAt;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -30,6 +34,10 @@ class Order {
     this.parsedByAi,
     this.subtotal,
     this.totalAmount,
+    this.lockedBy,
+    this.lockedByEmail,
+    this.lockedByName,
+    this.lockedAt,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -92,6 +100,10 @@ class Order {
         parsedByAi: json['parsed_by_ai'] as bool?,
         subtotal: _parseDouble(json['subtotal']),
         totalAmount: _parseDouble(json['total_amount']),
+        lockedBy: json['locked_by'] as int?,
+        lockedByEmail: json['locked_by_email'] as String?,
+        lockedByName: json['locked_by_name'] as String?,
+        lockedAt: json['locked_at'] != null ? DateTime.parse(json['locked_at']) : null,
         createdAt: DateTime.parse(json['created_at']),
         updatedAt: DateTime.parse(json['updated_at']),
       );
@@ -116,9 +128,20 @@ class Order {
       'parsed_by_ai': parsedByAi,
       'subtotal': subtotal,
       'total_amount': totalAmount,
+      'locked_by': lockedBy,
+      'locked_by_email': lockedByEmail,
+      'locked_by_name': lockedByName,
+      'locked_at': lockedAt?.toIso8601String(),
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
+  }
+
+  bool get isLocked => lockedBy != null;
+  
+  bool isLockedByUser(int? userId) {
+    if (!isLocked || userId == null) return false;
+    return lockedBy == userId;
   }
 
   String get statusDisplay {

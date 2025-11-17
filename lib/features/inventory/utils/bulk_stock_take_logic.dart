@@ -12,6 +12,7 @@ class BulkStockTakeLogic {
     required Map<int, TextEditingController> commentControllers,
     required Map<int, TextEditingController> wastageControllers,
     required Map<int, TextEditingController> wastageReasonControllers,
+    required Map<int, TextEditingController> weightControllers,
     required Map<int, double> originalStock,
   }) {
     final entries = <Map<String, dynamic>>[];
@@ -30,13 +31,15 @@ class BulkStockTakeLogic {
       final commentController = commentControllers[productId];
       final wastageController = wastageControllers[productId];
       final wastageReasonController = wastageReasonControllers[productId];
+      final weightController = weightControllers[productId];
       
       final hasCountedQuantity = controller != null && controller.text.trim().isNotEmpty;
       final hasComment = commentController != null && commentController.text.trim().isNotEmpty;
       final hasWastage = wastageController != null && wastageController.text.trim().isNotEmpty;
+      final hasWeight = weightController != null && weightController.text.trim().isNotEmpty;
       
       // Skip products with NO data at all
-      if (!hasCountedQuantity && !hasComment && !hasWastage) continue;
+      if (!hasCountedQuantity && !hasComment && !hasWastage && !hasWeight) continue;
       
       final countedQuantity = double.tryParse(controller?.text ?? '') ?? 0.0;
       final currentStock = originalStock[productId] ?? 0.0;
@@ -47,10 +50,13 @@ class BulkStockTakeLogic {
       final wastageReason = wastageReasonController?.text.trim().isNotEmpty == true 
           ? wastageReasonController?.text.trim() ?? 'Spoilage'
           : 'Spoilage';
+      final weightText = weightController?.text.trim() ?? '';
+      final cleanWeightText = weightText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
+      final weight = double.tryParse(cleanWeightText) ?? 0.0;
       
       final productName = product?.name ?? 'Unknown Product';
       
-      print('[STOCK_TAKE_LOGIC] Including $productName (ID: $productId): counted=$countedQuantity, wastage=$wastageQuantity, reason="$wastageReason", comment="$comment"');
+      print('[STOCK_TAKE_LOGIC] Including $productName (ID: $productId): counted=$countedQuantity, wastage=$wastageQuantity, reason="$wastageReason", weight=$weight, comment="$comment"');
       
       entries.add({
         'product_id': productId,
@@ -59,6 +65,7 @@ class BulkStockTakeLogic {
         'current_stock': currentStock,
         'wastage_quantity': wastageQuantity,
         'wastage_reason': wastageReason,
+        'weight': weight,
         'comment': comment,
       });
     }

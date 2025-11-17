@@ -26,6 +26,7 @@ class BulkStockTakePersistence {
     required Map<int, TextEditingController> commentControllers,
     required Map<int, TextEditingController> wastageControllers,
     required Map<int, TextEditingController> wastageReasonControllers,
+    required Map<int, TextEditingController> weightControllers,
     required Map<int, DateTime> addedTimestamps,
     bool showSnackbar = false,
     BuildContext? context,
@@ -44,6 +45,7 @@ class BulkStockTakePersistence {
           final commentController = commentControllers[product.id];
           final wastageController = wastageControllers[product.id];
           final wastageReasonController = wastageReasonControllers[product.id];
+          final weightController = weightControllers[product.id];
           
           return {
             'id': product.id,
@@ -57,6 +59,7 @@ class BulkStockTakePersistence {
             'comment': commentController?.text ?? '',
             'wastageValue': wastageController?.text ?? '',
             'wastageReason': wastageReasonController?.text ?? '',
+            'weight': weightController?.text ?? '',
             'addedTimestamp': addedTimestamps[product.id]?.millisecondsSinceEpoch,
           };
         }).toList(),
@@ -139,6 +142,7 @@ class BulkStockTakePersistence {
           'comment': productData['comment'] ?? '',
           'wastageValue': productData['wastageValue'] ?? '',
           'wastageReason': productData['wastageReason'] ?? '',
+          'weight': productData['weight'] ?? '',
           'addedTimestamp': productData['addedTimestamp']?.toString() ?? '',
         };
       }

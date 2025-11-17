@@ -27,6 +27,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   final Map<int, TextEditingController> _commentControllers = {};
   final Map<int, TextEditingController> _wastageControllers = {};
   final Map<int, TextEditingController> _wastageReasonControllers = {};
+  final Map<int, TextEditingController> _weightControllers = {};
   final Map<int, double> _originalStock = {};
   final TextEditingController _searchController = TextEditingController(); // Search field controller
   // Dynamic list of products in stock take (can be added/removed)
@@ -70,6 +71,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       _commentControllers[product.id] = TextEditingController(); // Initialize comment controllers
       _wastageControllers[product.id] = TextEditingController(); // Initialize wastage controllers
       _wastageReasonControllers[product.id] = TextEditingController(); // Initialize wastage reason controllers
+      _weightControllers[product.id] = TextEditingController(); // Initialize weight controllers
       _originalStock[product.id] = product.stockLevel;
       _controllers[product.id]!.text = product.stockLevel % 1 == 0
           ? product.stockLevel.toInt().toString()
@@ -155,6 +157,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
           final controller = _controllers[product.id];
           final commentController = _commentControllers[product.id];
           final wastageController = _wastageControllers[product.id];
+          final weightController = _weightControllers[product.id];
           
           return {
             'id': product.id,
@@ -168,6 +171,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
             'comment': commentController?.text ?? '',
             'wastageValue': wastageController?.text ?? '',
             'wastageReason': _wastageReasonControllers[product.id]?.text ?? '',
+            'weight': weightController?.text ?? '',
           };
         }).toList(),
       };
@@ -287,6 +291,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         _commentControllers.clear();
         _wastageControllers.clear();
         _wastageReasonControllers.clear();
+        _weightControllers.clear();
         
         for (final productData in savedProducts) {
           final product = Product(
@@ -309,6 +314,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
           _commentControllers[product.id] = commentController;
           _wastageControllers[product.id] = wastageController;
           _wastageReasonControllers[product.id] = TextEditingController(text: productData['wastageReason']);
+          _weightControllers[product.id] = TextEditingController(text: productData['weight'] ?? '');
           _originalStock[product.id] = product.stockLevel;
         }
       });
@@ -399,6 +405,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       _commentControllers[product.id] = TextEditingController(); // Initialize comment controller for new products
       _wastageControllers[product.id] = TextEditingController(); // Initialize wastage controller for new products
       _wastageReasonControllers[product.id] = TextEditingController(); // Initialize wastage reason controller for new products
+      _weightControllers[product.id] = TextEditingController(); // Initialize weight controller for new products
       _originalStock[product.id] = product.stockLevel;
       _controllers[product.id]!.text = product.stockLevel % 1 == 0
           ? product.stockLevel.toInt().toString()
@@ -417,10 +424,12 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       _commentControllers[productId]?.dispose(); // Dispose comment controller
       _wastageControllers[productId]?.dispose(); // Dispose wastage controller
       _wastageReasonControllers[productId]?.dispose(); // Dispose wastage reason controller
+      _weightControllers[productId]?.dispose(); // Dispose weight controller
       _controllers.remove(productId);
       _commentControllers.remove(productId); // Remove comment controller
       _wastageControllers.remove(productId); // Remove wastage controller
       _wastageReasonControllers.remove(productId); // Remove wastage reason controller
+      _weightControllers.remove(productId); // Remove weight controller
       _originalStock.remove(productId);
     });
     
@@ -461,6 +470,9 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
     }
     for (final controller in _wastageReasonControllers.values) {
       controller.dispose(); // Dispose all wastage reason controllers
+    }
+    for (final controller in _weightControllers.values) {
+      controller.dispose(); // Dispose all weight controllers
     }
     super.dispose();
   }
@@ -741,6 +753,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
       allProductIds.addAll(_controllers.keys);
       allProductIds.addAll(_commentControllers.keys);
       allProductIds.addAll(_wastageControllers.keys);
+      allProductIds.addAll(_weightControllers.keys);
       allProductIds.addAll(_stockTakeProducts.map((p) => p.id));
       
       for (final productId in allProductIds) {
@@ -750,14 +763,16 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         final controller = _controllers[productId];
         final commentController = _commentControllers[productId];
         final wastageController = _wastageControllers[productId];
+        final weightController = _weightControllers[productId];
         
         // Check if ANY data was entered for this product
         final hasCountedQuantity = controller != null && controller.text.trim().isNotEmpty;
         final hasComment = commentController != null && commentController.text.trim().isNotEmpty;
         final hasWastage = wastageController != null && wastageController.text.trim().isNotEmpty;
+        final hasWeight = weightController != null && weightController.text.trim().isNotEmpty;
         
         // Skip products with NO data at all
-        if (!hasCountedQuantity && !hasComment && !hasWastage) continue;
+        if (!hasCountedQuantity && !hasComment && !hasWastage && !hasWeight) continue;
         
         // Parse as double to support kg and other decimal units
         final countedQuantity = double.tryParse(controller?.text ?? '') ?? 0.0;
@@ -773,17 +788,23 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
         final wastageQuantity = double.tryParse(cleanWastageText) ?? 0.0;
         final wastageReason = _wastageReasonControllers[productId]?.text?.trim() ?? '';
         
+        // Get weight data
+        final weightText = weightController?.text?.trim() ?? '';
+        final cleanWeightText = weightText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
+        final weight = double.tryParse(cleanWeightText) ?? 0.0;
+        
         final productName = product?.name ?? 'Unknown Product';
         
-        print('[STOCK_TAKE] Including $productName: counted=$countedQuantity, wastage=$wastageQuantity, comment="$comment"');
+        print('[STOCK_TAKE] Including $productName: counted=$countedQuantity, wastage=$wastageQuantity, weight=$weight, comment="$comment"');
         
-        // Include ALL entries with ANY data (counted quantities, wastage, or comments)
+        // Include ALL entries with ANY data (counted quantities, wastage, weight, or comments)
         entries.add({
           'product_id': productId,
           'counted_quantity': countedQuantity,
           'current_stock': currentStock,
           'wastage_quantity': wastageQuantity,
           'wastage_reason': wastageReason,
+          'weight': weight,
           'comment': comment,
         });
       }
@@ -795,12 +816,14 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
           final controller = _controllers[product.id];
           final commentController = _commentControllers[product.id];
           final wastageController = _wastageControllers[product.id];
+          final weightController = _weightControllers[product.id];
           
           final hasCountedQuantity = controller != null && controller.text.isNotEmpty;
           final hasComment = commentController != null && commentController.text.trim().isNotEmpty;
           final hasWastage = wastageController != null && wastageController.text.isNotEmpty;
+          final hasWeight = weightController != null && weightController.text.trim().isNotEmpty;
           
-          if (hasCountedQuantity || hasComment || hasWastage) {
+          if (hasCountedQuantity || hasComment || hasWastage || hasWeight) {
             hasAnyEntries = true;
             break;
           }
@@ -885,8 +908,20 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
   void _clearAllEntries() {
     for (final controller in _controllers.values) {
       controller.clear();
-  }
-  setState(() {});
+    }
+    for (final controller in _commentControllers.values) {
+      controller.clear();
+    }
+    for (final controller in _wastageControllers.values) {
+      controller.clear();
+    }
+    for (final controller in _wastageReasonControllers.values) {
+      controller.clear();
+    }
+    for (final controller in _weightControllers.values) {
+      controller.clear();
+    }
+    setState(() {});
   }
 
   Widget _buildMainContent() {
@@ -977,7 +1012,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
               child: TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
-                  hintText: 'Search products to add to stock take...',
+                  hintText: 'Search products to add to stock...',
                   prefixIcon: const Icon(Icons.search),
                   border: const OutlineInputBorder(),
                   suffixIcon: _searchQuery.isNotEmpty
@@ -1125,7 +1160,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                       Icon(Icons.inventory_2, color: Colors.grey[700]),
                       const SizedBox(width: 8),
                       Text(
-                        'Products in Stock Take (${_stockTakeProducts.length})',
+                        'Products in Stock (${_stockTakeProducts.length})',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.grey[700],
@@ -1141,11 +1176,13 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                                 _commentControllers[product.id]?.dispose();
                                 _wastageControllers[product.id]?.dispose();
                                 _wastageReasonControllers[product.id]?.dispose();
+                                _weightControllers[product.id]?.dispose();
                               }
                               _controllers.clear();
                               _commentControllers.clear();
                               _wastageControllers.clear();
                               _wastageReasonControllers.clear();
+                              _weightControllers.clear();
                               _originalStock.clear();
                               _stockTakeProducts.clear();
                             });
@@ -1177,7 +1214,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                                   ),
                                   const SizedBox(height: 16),
                                   Text(
-                                    'No products in stock take',
+                                    'No products in stock',
                                     style: TextStyle(
                                       fontSize: 16,
                                       color: Colors.grey[600],
@@ -1325,7 +1362,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                                               onPressed: () => _removeProductFromStockTake(product.id),
                                               icon: const Icon(Icons.delete_outline),
                                               color: Colors.red[600],
-                                              tooltip: 'Remove from stock take',
+                                              tooltip: 'Remove from stock',
                                             ),
                                           ],
                                         ),
@@ -1350,6 +1387,32 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                                           maxLines: 2,
                                           onChanged: (value) {
                                             _scheduleAutoSave(); // Auto-save when comment changes
+                                          },
+                                        ),
+                                        
+                                        const SizedBox(height: 8),
+                                        
+                                        // Weight field
+                                        TextFormField(
+                                          controller: _weightControllers[product.id],
+                                          decoration: const InputDecoration(
+                                            labelText: 'Weight (kg)',
+                                            hintText: 'Enter weight if applicable',
+                                            border: OutlineInputBorder(),
+                                            prefixIcon: Icon(Icons.scale, size: 18),
+                                            contentPadding: EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 8,
+                                            ),
+                                            isDense: true,
+                                          ),
+                                          style: const TextStyle(fontSize: 14),
+                                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                          inputFormatters: [
+                                            FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                                          ],
+                                          onChanged: (value) {
+                                            _scheduleAutoSave(); // Auto-save when weight changes
                                           },
                                         ),
                                         
@@ -1450,7 +1513,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
             children: [
               Icon(Icons.inventory, color: Theme.of(context).primaryColor),
               const SizedBox(width: 8),
-              const Text('Bulk Stock Take'),
+              const Text('Stock'),
             ],
           ),
           actions: [
@@ -1483,7 +1546,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                   child: Row(
                     children: [
                       Text(
-                        '${_stockTakeProducts.length} products in stock take',
+                        '${_stockTakeProducts.length} products in stock',
                         style: TextStyle(color: Colors.grey[600]),
                       ),
                       const Spacer(),
@@ -1500,7 +1563,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                                 height: 16,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
-                            : const Text('Complete Stock Take'),
+                            : const Text('Complete Stock'),
                       ),
                     ],
                   ),
@@ -1526,7 +1589,7 @@ class _BulkStockTakeDialogState extends ConsumerState<BulkStockTakeDialog> {
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
-                      'Bulk Stock Take',
+                      'Stock',
                       style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -1866,13 +1929,13 @@ class _StockTakeConfirmationDialogState extends State<_StockTakeConfirmationDial
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Complete Stock Take?'),
+      title: const Text('Complete Stock?'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('You are about to complete the stock take with:'),
+            Text('You are about to complete stock with:'),
             const SizedBox(height: 12),
             Text('• ${widget.entryCount} products', style: const TextStyle(fontWeight: FontWeight.bold)),
             Text('• ${widget.wastageCount} with wastage', style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -1895,7 +1958,7 @@ class _StockTakeConfirmationDialogState extends State<_StockTakeConfirmationDial
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               subtitle: const Text(
-                'Replace current stock with counted values\n✓ Recommended for most stock takes',
+                'Replace current stock with counted values\n✓ Recommended for most stock',
                 style: TextStyle(fontSize: 12),
               ),
               value: 'set',

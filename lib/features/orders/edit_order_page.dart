@@ -6,6 +6,7 @@ import '../../models/product.dart' as ProductModel;
 import '../../services/api_service.dart';
 import '../../providers/orders_provider.dart';
 import '../../providers/products_provider.dart';
+import '../../features/auth/karl_auth_provider.dart';
 
 class EditOrderPage extends ConsumerStatefulWidget {
   final Order order;
@@ -20,11 +21,53 @@ class _EditOrderPageState extends ConsumerState<EditOrderPage> {
   late Order _currentOrder;
   bool _isLoading = false;
   bool _hasChanges = false;
+  bool _isLocked = false;
+  bool _lockFailed = false;
+  String? _lockErrorMessage;
 
   @override
   void initState() {
     super.initState();
     _currentOrder = widget.order;
+    _lockOrder();
+  }
+
+  Future<void> _lockOrder() async {
+    try {
+      final apiService = ref.read(apiServiceProvider);
+      final updatedOrder = await apiService.lockOrder(_currentOrder.id);
+      setState(() {
+        _currentOrder = updatedOrder;
+        _isLocked = true;
+        _lockFailed = false;
+        _lockErrorMessage = null;
+      });
+    } catch (e) {
+      setState(() {
+        _lockFailed = true;
+        _lockErrorMessage = e.toString().contains('409') 
+            ? 'Order is currently being edited by another user'
+            : 'Failed to lock order: $e';
+      });
+    }
+  }
+
+  Future<void> _unlockOrder() async {
+    if (!_isLocked) return;
+    
+    try {
+      final apiService = ref.read(apiServiceProvider);
+      await apiService.unlockOrder(_currentOrder.id);
+    } catch (e) {
+      print('[ERROR] Failed to unlock order: $e');
+      // Continue anyway - lock will expire after 30 minutes
+    }
+  }
+
+  @override
+  void dispose() {
+    _unlockOrder();
+    super.dispose();
   }
 
   void _markAsChanged() {
@@ -68,9 +111,74 @@ class _EditOrderPageState extends ConsumerState<EditOrderPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Check if order is locked by another user
+    final currentUser = ref.watch(karlUserProvider);
+    final isLockedByOther = _currentOrder.isLocked && 
+        _currentOrder.lockedBy != null && 
+        currentUser != null &&
+        _currentOrder.lockedBy != currentUser.id;
+    
+    if (_lockFailed || isLockedByOther) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text('Order ${_currentOrder.orderNumber}'),
+          backgroundColor: Colors.red.shade600,
+          foregroundColor: Colors.white,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.lock, size: 64, color: Colors.red.shade600),
+                const SizedBox(height: 16),
+                Text(
+                  'Order is Locked',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    color: Colors.red.shade600,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _lockErrorMessage ?? 
+                  'This order is currently being edited by ${_currentOrder.lockedByName ?? _currentOrder.lockedByEmail ?? "another user"}.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+                if (_currentOrder.lockedAt != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Locked at: ${_currentOrder.lockedAt!.toString().split('.')[0]}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: () => context.pop(),
+                  child: const Text('Go Back'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('Edit Order ${_currentOrder.orderNumber}'),
+        title: Row(
+          children: [
+            Text('Edit Order ${_currentOrder.orderNumber}'),
+            if (_isLocked) ...[
+              const SizedBox(width: 8),
+              Icon(Icons.lock, size: 18, color: Colors.white),
+            ],
+          ],
+        ),
         backgroundColor: Colors.green.shade600,
         foregroundColor: Colors.white,
         actions: [

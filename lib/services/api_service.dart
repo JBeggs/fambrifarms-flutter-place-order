@@ -964,6 +964,25 @@ class ApiService {
     }
   }
 
+  Future<Order> lockOrder(int orderId) async {
+    try {
+      final response = await _djangoDio.post('/orders/$orderId/lock/');
+      return Order.fromJson(Map<String, dynamic>.from(response.data));
+    } catch (e) {
+      print('[ERROR] Failed to lock order $orderId: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> unlockOrder(int orderId) async {
+    try {
+      await _djangoDio.post('/orders/$orderId/unlock/');
+    } catch (e) {
+      print('[ERROR] Failed to unlock order $orderId: $e');
+      rethrow;
+    }
+  }
+
   Future<void> deleteOrder(int orderId) async {
     try {
       print('[DEBUG] Starting deleteOrder for ID: $orderId');
