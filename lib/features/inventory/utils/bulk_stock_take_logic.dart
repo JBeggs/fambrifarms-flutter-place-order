@@ -11,6 +11,7 @@ class BulkStockTakeLogic {
     required Map<int, TextEditingController> controllers,
     required Map<int, TextEditingController> commentControllers,
     required Map<int, TextEditingController> wastageControllers,
+    required Map<int, TextEditingController> wastageWeightControllers,
     required Map<int, TextEditingController> wastageReasonControllers,
     required Map<int, TextEditingController> weightControllers,
     required Map<int, double> originalStock,
@@ -30,16 +31,30 @@ class BulkStockTakeLogic {
       final controller = controllers[productId];
       final commentController = commentControllers[productId];
       final wastageController = wastageControllers[productId];
+      final wastageWeightController = wastageWeightControllers[productId];
       final wastageReasonController = wastageReasonControllers[productId];
       final weightController = weightControllers[productId];
       
       final hasCountedQuantity = controller != null && controller.text.trim().isNotEmpty;
       final hasComment = commentController != null && commentController.text.trim().isNotEmpty;
       final hasWastage = wastageController != null && wastageController.text.trim().isNotEmpty;
+      final hasWastageWeight = wastageWeightController != null && wastageWeightController.text.trim().isNotEmpty;
+      final hasWastageReason = wastageReasonController != null && wastageReasonController.text.trim().isNotEmpty;
       final hasWeight = weightController != null && weightController.text.trim().isNotEmpty;
       
+      // Check product unit to determine required fields
+      final productUnit = (product?.unit ?? '').toLowerCase().trim();
+      final isKgProduct = productUnit == 'kg';
+      
+      // For kg products: weight is required (replaces quantity)
+      // For other products: quantity is required (count of packages)
       // Skip products with NO data at all
-      if (!hasCountedQuantity && !hasComment && !hasWastage && !hasWeight) continue;
+      final hasRequiredData = isKgProduct 
+          ? hasWeight  // Kg products require weight
+          : hasCountedQuantity;  // Other products require quantity
+      
+      // Skip if no required data AND no optional data (comment, wastage, wastage reason)
+      if (!hasRequiredData && !hasComment && !hasWastage && !hasWastageWeight && !hasWastageReason) continue;
       
       final countedQuantity = double.tryParse(controller?.text ?? '') ?? 0.0;
       final currentStock = originalStock[productId] ?? 0.0;
@@ -47,16 +62,17 @@ class BulkStockTakeLogic {
       final wastageText = wastageController?.text?.trim() ?? '';
       final cleanWastageText = wastageText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
       final wastageQuantity = double.tryParse(cleanWastageText) ?? 0.0;
-      final wastageReason = wastageReasonController?.text.trim().isNotEmpty == true 
-          ? wastageReasonController?.text.trim() ?? 'Spoilage'
-          : 'Spoilage';
+      final wastageWeightText = wastageWeightController?.text?.trim() ?? '';
+      final cleanWastageWeightText = wastageWeightText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
+      final wastageWeight = double.tryParse(cleanWastageWeightText) ?? 0.0;
+      final wastageReason = wastageReasonController?.text.trim() ?? '';
       final weightText = weightController?.text.trim() ?? '';
       final cleanWeightText = weightText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
       final weight = double.tryParse(cleanWeightText) ?? 0.0;
       
       final productName = product?.name ?? 'Unknown Product';
       
-      print('[STOCK_TAKE_LOGIC] Including $productName (ID: $productId): counted=$countedQuantity, wastage=$wastageQuantity, reason="$wastageReason", weight=$weight, comment="$comment"');
+      print('[STOCK_TAKE_LOGIC] Including $productName (ID: $productId): counted=$countedQuantity, wastage=$wastageQuantity, wastageWeight=$wastageWeight, reason="$wastageReason", weight=$weight, comment="$comment"');
       
       entries.add({
         'product_id': productId,
@@ -64,6 +80,7 @@ class BulkStockTakeLogic {
         'counted_quantity': countedQuantity,
         'current_stock': currentStock,
         'wastage_quantity': wastageQuantity,
+        'wastage_weight': wastageWeight,
         'wastage_reason': wastageReason,
         'weight': weight,
         'comment': comment,

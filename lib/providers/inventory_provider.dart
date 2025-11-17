@@ -281,6 +281,7 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
         final productId = entry['product_id'] as int;
         final countedQuantity = (entry['counted_quantity'] as double);
         final wastageQuantity = (entry['wastage_quantity'] as double? ?? 0.0);
+        final wastageWeight = (entry['wastage_weight'] as double? ?? 0.0);
         final wastageReason = entry['wastage_reason'] as String? ?? '';
         final weight = entry['weight'] as double? ?? 0.0;
         final comment = entry['comment'] as String? ?? '';
@@ -298,49 +299,100 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
           }
         }
         
-        // Record wastage if any - store just the reason value (no prefix)
-        if (wastageQuantity > 0) {
-          try {
-            await _apiService.adjustStock(productId, {
-              'adjustment_type': 'finished_waste',
-              'quantity': wastageQuantity,
-              'reason': 'stock_take_wastage',
-              'notes': wastageReason, // Just the reason value, no prefix
-              'reference_number': referenceNumber,
-            });
-            adjustmentCount++;
-            print('[INVENTORY] ✓ Recorded wastage for $productName (ID: $productId): $wastageQuantity');
-          } catch (e) {
-            print('[INVENTORY] ⚠️ Failed wastage for $productName (ID: $productId, qty: $wastageQuantity): $e');
-            // Continue with other products
+        // Record wastage if any - use wastage weight for kg products, wastage quantity for others
+        final hasWastage = wastageQuantity > 0 || wastageWeight > 0;
+        if (hasWastage) {
+          // Get product to check unit type for wastage
+          final wastageProduct = allProducts.where((p) => p.id == productId).firstOrNull;
+          final wastageProductUnit = (wastageProduct?.unit ?? '').toLowerCase().trim();
+          final isKgProduct = wastageProductUnit == 'kg';
+          
+          // For kg products: use wastage weight, for others: use wastage quantity
+          final wastageValue = isKgProduct ? wastageWeight : wastageQuantity;
+          
+          if (wastageValue > 0) {
+            try {
+              await _apiService.adjustStock(productId, {
+                'adjustment_type': 'finished_waste',
+                'quantity': wastageQuantity,  // Always send quantity (for non-kg or reference)
+                'reason': 'stock_take_wastage',
+                'notes': wastageReason, // Just the reason value, no prefix
+                'reference_number': referenceNumber,
+                if (wastageWeight > 0) 'weight': wastageWeight,  // Send weight for kg products
+              });
+              adjustmentCount++;
+              if (isKgProduct) {
+                print('[INVENTORY] ✓ Recorded wastage for $productName (ID: $productId): ${wastageWeight}kg');
+              } else {
+                print('[INVENTORY] ✓ Recorded wastage for $productName (ID: $productId): $wastageQuantity');
+              }
+            } catch (e) {
+              if (isKgProduct) {
+                print('[INVENTORY] ⚠️ Failed wastage for $productName (ID: $productId, weight: $wastageWeight): $e');
+              } else {
+                print('[INVENTORY] ⚠️ Failed wastage for $productName (ID: $productId, qty: $wastageQuantity): $e');
+              }
+              // Continue with other products
+            }
           }
         }
         
-        // Set or add counted quantities (only products with stock > 0)
-        if (countedQuantity > 0) {
+        // Get product to check unit type
+        final product = allProducts.where((p) => p.id == productId).firstOrNull;
+        final productUnit = (product?.unit ?? '').toLowerCase().trim();
+        final isKgProduct = productUnit == 'kg';
+        
+        // For kg products: weight replaces quantity, weight is required
+        // For other products: quantity is required (count of packages)
+        final hasValidData = isKgProduct 
+            ? (weight > 0)  // Kg products require weight
+            : (countedQuantity > 0);  // Other products require quantity
+        
+        if (hasValidData) {
           final adjustmentType = adjustmentMode == 'set' ? 'finished_set' : 'finished_adjust';
           final actionText = adjustmentMode == 'set' ? 'Set' : 'Added';
           
           try {
-            // Build notes with comment if provided (weight is now a separate field)
-            String notes = 'Complete stock take: $actionText counted quantity to $countedQuantity';
+            // Build notes with comment if provided
+            String notes;
+            if (isKgProduct) {
+              notes = 'Complete stock take: $actionText weight to ${weight}kg';
+            } else {
+              notes = 'Complete stock take: $actionText counted quantity to $countedQuantity';
+            }
             if (comment.isNotEmpty) {
               notes += '. $comment';
             }
             
+            // Always send both quantity and weight - backend will decide which to use based on unit
             await _apiService.adjustStock(productId, {
               'adjustment_type': adjustmentType,
-              'quantity': countedQuantity,
+              'quantity': countedQuantity,  // For non-kg products or reference
               'reason': adjustmentMode == 'set' ? 'complete_stock_take_set' : 'complete_stock_take_add',
               'notes': notes,
               'reference_number': referenceNumber,
-              if (weight > 0) 'weight': weight,
+              if (weight > 0) 'weight': weight,  // Required for kg products
             });
             adjustmentCount++;
-            print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): $countedQuantity');
+            if (isKgProduct) {
+              print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): ${weight}kg');
+            } else {
+              print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): $countedQuantity');
+            }
           } catch (e) {
-            print('[INVENTORY] ⚠️ Failed to $actionText stock for $productName (ID: $productId, qty: $countedQuantity): $e');
+            if (isKgProduct) {
+              print('[INVENTORY] ⚠️ Failed to $actionText stock for $productName (ID: $productId, weight: $weight): $e');
+            } else {
+              print('[INVENTORY] ⚠️ Failed to $actionText stock for $productName (ID: $productId, qty: $countedQuantity): $e');
+            }
             // Continue with other products
+          }
+        } else {
+          // Log warning for missing required data
+          if (isKgProduct && weight == 0) {
+            print('[INVENTORY] ⚠️ Skipping kg product $productName (ID: $productId) - weight is required but not provided');
+          } else if (!isKgProduct && countedQuantity == 0) {
+            print('[INVENTORY] ⚠️ Skipping $productName (ID: $productId) - quantity is required but not provided');
           }
         }
       }

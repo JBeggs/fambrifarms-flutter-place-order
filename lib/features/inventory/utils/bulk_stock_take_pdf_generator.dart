@@ -81,7 +81,7 @@ class BulkStockTakePdfGenerator {
       }
       
       // Auto-fit columns
-      for (int i = 0; i < 7; i++) {
+      for (int i = 0; i < 8; i++) {
         sheet.setColumnAutoFit(i);
       }
       
@@ -160,7 +160,8 @@ class BulkStockTakePdfGenerator {
           pw.Expanded(flex: 1, child: pw.Text('Unit', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Weight (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Comment', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-          pw.Expanded(flex: 2, child: pw.Text('Wastage', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+          pw.Expanded(flex: 2, child: pw.Text('Wastage Qty', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+          pw.Expanded(flex: 2, child: pw.Text('Wastage Weight (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Reason', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
         ],
       ),
@@ -183,6 +184,7 @@ class BulkStockTakePdfGenerator {
       final countedStock = entry['counted_quantity'] as double;
       final weight = entry['weight'] as double? ?? 0.0;
       final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
+      final wastageWeight = entry['wastage_weight'] as double? ?? 0.0;
       final wastageReason = entry['wastage_reason'] as String? ?? '';
       final comment = entry['comment'] as String? ?? '';
       
@@ -252,16 +254,37 @@ class BulkStockTakePdfGenerator {
                 style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
               ),
             ),
-            // Wastage
+            // Wastage Quantity
             pw.Expanded(
               flex: 2,
-              child: pw.Text(
-                wastageQuantity > 0 
-                  ? (wastageQuantity % 1 == 0 ? wastageQuantity.toInt().toString() : wastageQuantity.toStringAsFixed(2))
-                  : '-',
-                style: pw.TextStyle(
-                  fontSize: 10,
-                  color: wastageQuantity > 0 ? PdfColors.red : PdfColors.black,
+              child: pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Text(
+                  wastageQuantity > 0 
+                    ? (wastageQuantity % 1 == 0 ? wastageQuantity.toInt().toString() : wastageQuantity.toStringAsFixed(2))
+                    : '-',
+                  style: pw.TextStyle(
+                    fontSize: 10,
+                    color: wastageQuantity > 0 ? PdfColors.red : PdfColors.black,
+                  ),
+                  textAlign: pw.TextAlign.right,
+                ),
+              ),
+            ),
+            // Wastage Weight (kg)
+            pw.Expanded(
+              flex: 2,
+              child: pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Text(
+                  wastageWeight > 0 
+                    ? (wastageWeight % 1 == 0 ? wastageWeight.toInt().toString() : wastageWeight.toStringAsFixed(2))
+                    : '-',
+                  style: pw.TextStyle(
+                    fontSize: 10,
+                    color: wastageWeight > 0 ? PdfColors.red : PdfColors.black,
+                  ),
+                  textAlign: pw.TextAlign.right,
                 ),
               ),
             ),
@@ -269,7 +292,7 @@ class BulkStockTakePdfGenerator {
             pw.Expanded(
               flex: 2,
               child: pw.Text(
-                wastageQuantity > 0 ? wastageReason : '-',
+                wastageReason.isNotEmpty ? wastageReason : '-',
                 style: const pw.TextStyle(fontSize: 9),
               ),
             ),
@@ -280,7 +303,10 @@ class BulkStockTakePdfGenerator {
   }
   
   static pw.Widget _buildPdfSummary(List<Map<String, dynamic>> entries) {
-    final productsWithWastage = entries.where((e) => (e['wastage_quantity'] as double? ?? 0.0) > 0).length;
+    final productsWithWastage = entries.where((e) => 
+      (e['wastage_quantity'] as double? ?? 0.0) > 0 || 
+      (e['wastage_weight'] as double? ?? 0.0) > 0
+    ).length;
     
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -300,7 +326,8 @@ class BulkStockTakePdfGenerator {
       excel.TextCellValue('Unit'),
       excel.TextCellValue('Weight (kg)'),
       excel.TextCellValue('Comment'),
-      excel.TextCellValue('Wastage'),
+      excel.TextCellValue('Wastage Qty'),
+      excel.TextCellValue('Wastage Weight (kg)'),
       excel.TextCellValue('Reason'),
     ];
     sheet.appendRow(headerRow);
@@ -310,7 +337,7 @@ class BulkStockTakePdfGenerator {
       final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0));
       cell.cellStyle = excel.CellStyle(
         bold: true,
-        horizontalAlign: (i == 1 || i == 3) ? excel.HorizontalAlign.Right : excel.HorizontalAlign.Center, // Right-align "Stock Counted" and "Weight (kg)" columns
+        horizontalAlign: (i == 1 || i == 3 || i == 5 || i == 6) ? excel.HorizontalAlign.Right : excel.HorizontalAlign.Center, // Right-align numeric columns: Stock Counted (1), Weight (3), Wastage Qty (5), Wastage Weight (6)
       );
     }
   }
@@ -331,6 +358,7 @@ class BulkStockTakePdfGenerator {
     final countedStock = entry['counted_quantity'] as double;
     final weight = entry['weight'] as double? ?? 0.0;
     final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
+    final wastageWeight = entry['wastage_weight'] as double? ?? 0.0;
     final wastageReason = entry['wastage_reason'] as String? ?? '';
     final comment = entry['comment'] as String? ?? '';
     
@@ -348,19 +376,27 @@ class BulkStockTakePdfGenerator {
         ? excel.DoubleCellValue(weight)
         : excel.TextCellValue('-');
     
+    final wastageQtyValue = wastageQuantity > 0 
+        ? excel.DoubleCellValue(wastageQuantity) 
+        : excel.TextCellValue('-');
+    final wastageWeightValue = wastageWeight > 0 
+        ? excel.DoubleCellValue(wastageWeight) 
+        : excel.TextCellValue('-');
+    
     final dataRow = [
       excel.TextCellValue(productName),
       stockCountedValue,
       excel.TextCellValue(product.unit),
       weightValue,
       commentValue,
-      wastageQuantity > 0 ? excel.DoubleCellValue(wastageQuantity) : excel.TextCellValue('-'),
-      excel.TextCellValue(wastageQuantity > 0 ? wastageReason : '-'),
+      wastageQtyValue,
+      wastageWeightValue,
+      excel.TextCellValue(wastageReason.isNotEmpty ? wastageReason : '-'),
     ];
     
     sheet.appendRow(dataRow);
     
-    // Right-align the "Stock Counted" column (column index 1) and "Weight (kg)" column (column index 3)
+    // Right-align numeric columns: Stock Counted (1), Weight (3), Wastage Qty (5), Wastage Weight (6)
     final rowIndex = sheet.maxRows - 1;
     final stockCountedCell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIndex));
     stockCountedCell.cellStyle = excel.CellStyle(
@@ -368,6 +404,14 @@ class BulkStockTakePdfGenerator {
     );
     final weightCell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIndex));
     weightCell.cellStyle = excel.CellStyle(
+      horizontalAlign: excel.HorizontalAlign.Right,
+    );
+    final wastageQtyCell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: rowIndex));
+    wastageQtyCell.cellStyle = excel.CellStyle(
+      horizontalAlign: excel.HorizontalAlign.Right,
+    );
+    final wastageWeightCell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: rowIndex));
+    wastageWeightCell.cellStyle = excel.CellStyle(
       horizontalAlign: excel.HorizontalAlign.Right,
     );
   }

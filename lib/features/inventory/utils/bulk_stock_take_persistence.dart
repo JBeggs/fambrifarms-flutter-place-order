@@ -25,6 +25,7 @@ class BulkStockTakePersistence {
     required Map<int, TextEditingController> controllers,
     required Map<int, TextEditingController> commentControllers,
     required Map<int, TextEditingController> wastageControllers,
+    required Map<int, TextEditingController> wastageWeightControllers,
     required Map<int, TextEditingController> wastageReasonControllers,
     required Map<int, TextEditingController> weightControllers,
     required Map<int, DateTime> addedTimestamps,
@@ -44,6 +45,7 @@ class BulkStockTakePersistence {
           final controller = controllers[product.id];
           final commentController = commentControllers[product.id];
           final wastageController = wastageControllers[product.id];
+          final wastageWeightController = wastageWeightControllers[product.id];
           final wastageReasonController = wastageReasonControllers[product.id];
           final weightController = weightControllers[product.id];
           
@@ -58,6 +60,7 @@ class BulkStockTakePersistence {
             'enteredValue': controller?.text ?? '',
             'comment': commentController?.text ?? '',
             'wastageValue': wastageController?.text ?? '',
+            'wastageWeight': wastageWeightController?.text ?? '',
             'wastageReason': wastageReasonController?.text ?? '',
             'weight': weightController?.text ?? '',
             'addedTimestamp': addedTimestamps[product.id]?.millisecondsSinceEpoch,
@@ -141,6 +144,7 @@ class BulkStockTakePersistence {
           'enteredValue': productData['enteredValue'] ?? '',
           'comment': productData['comment'] ?? '',
           'wastageValue': productData['wastageValue'] ?? '',
+          'wastageWeight': productData['wastageWeight'] ?? '',
           'wastageReason': productData['wastageReason'] ?? '',
           'weight': productData['weight'] ?? '',
           'addedTimestamp': productData['addedTimestamp']?.toString() ?? '',

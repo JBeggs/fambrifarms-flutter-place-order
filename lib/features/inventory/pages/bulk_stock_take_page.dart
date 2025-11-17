@@ -28,6 +28,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
   final Map<int, TextEditingController> _controllers = {};
   final Map<int, TextEditingController> _commentControllers = {};
   final Map<int, TextEditingController> _wastageControllers = {};
+  final Map<int, TextEditingController> _wastageWeightControllers = {};
   final Map<int, TextEditingController> _wastageReasonControllers = {};
   final Map<int, TextEditingController> _weightControllers = {};
   final Map<int, double> _originalStock = {};
@@ -111,6 +112,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     for (final controller in _wastageControllers.values) {
       controller.dispose();
     }
+    for (final controller in _wastageWeightControllers.values) {
+      controller.dispose();
+    }
     for (final controller in _wastageReasonControllers.values) {
       controller.dispose();
     }
@@ -129,6 +133,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       controllers: _controllers,
       commentControllers: _commentControllers,
       wastageControllers: _wastageControllers,
+      wastageWeightControllers: _wastageWeightControllers,
       wastageReasonControllers: _wastageReasonControllers,
       weightControllers: _weightControllers,
       addedTimestamps: _addedTimestamps,
@@ -231,6 +236,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       _controllers.clear();
       _commentControllers.clear();
       _wastageControllers.clear();
+      _wastageWeightControllers.clear();
       _wastageReasonControllers.clear();
       _addedTimestamps.clear();
       
@@ -241,6 +247,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         _controllers[product.id] = TextEditingController(text: entryData['enteredValue']);
         _commentControllers[product.id] = TextEditingController(text: entryData['comment']);
         _wastageControllers[product.id] = TextEditingController(text: entryData['wastageValue']);
+        _wastageWeightControllers[product.id] = TextEditingController(text: entryData['wastageWeight'] ?? '');
         _wastageReasonControllers[product.id] = TextEditingController(text: entryData['wastageReason']);
         _weightControllers[product.id] = TextEditingController(text: entryData['weight'] ?? '');
         _originalStock[product.id] = product.stockLevel;
@@ -337,6 +344,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         for (final controller in _wastageControllers.values) {
           controller.dispose();
         }
+        for (final controller in _wastageWeightControllers.values) {
+          controller.dispose();
+        }
         for (final controller in _wastageReasonControllers.values) {
           controller.dispose();
         }
@@ -346,6 +356,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         _controllers.clear();
         _commentControllers.clear();
         _wastageControllers.clear();
+        _wastageWeightControllers.clear();
         _wastageReasonControllers.clear();
         _originalStock.clear();
         _addedTimestamps.clear();
@@ -759,6 +770,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       _controllers[product.id] = TextEditingController();
       _commentControllers[product.id] = TextEditingController();
       _wastageControllers[product.id] = TextEditingController();
+      _wastageWeightControllers[product.id] = TextEditingController();
       _wastageReasonControllers[product.id] = TextEditingController();
       _weightControllers[product.id] = TextEditingController();
       _originalStock[product.id] = product.stockLevel;
@@ -783,6 +795,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
   Future<void> _showAddProductModal(Product product, int currentIndex) async {
     final stockTextController = TextEditingController(text: product.stockLevel.toString());
     final wastageTextController = TextEditingController();
+    final wastageWeightController = TextEditingController();
     final wastageReasonController = TextEditingController();
     final weightController = TextEditingController();
     final commentController = TextEditingController();
@@ -882,54 +895,15 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                           controller: stockTextController,
                           keyboardType: TextInputType.numberWithOptions(decimal: true),
                           decoration: InputDecoration(
-                            labelText: 'Counted Quantity',
-                            hintText: 'Enter counted stock',
+                            labelText: product.unit.toLowerCase() == 'kg' 
+                                ? 'Counted Quantity (optional)' 
+                                : 'Counted Quantity',
+                            hintText: product.unit.toLowerCase() == 'kg' 
+                                ? 'Weight field is required' 
+                                : 'Enter counted stock',
                             border: OutlineInputBorder(),
                             contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                           ),
-                        ),
-                        
-                        const SizedBox(height: 16),
-                        
-                        // Wastage
-                        Text(
-                          'Wastage',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey[800],
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              flex: 2,
-                              child: TextField(
-                                controller: wastageTextController,
-                                keyboardType: TextInputType.numberWithOptions(decimal: true),
-                                decoration: InputDecoration(
-                                  labelText: 'Wastage Quantity',
-                                  hintText: '0',
-                                  border: OutlineInputBorder(),
-                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              flex: 3,
-                              child: TextField(
-                                controller: wastageReasonController,
-                                decoration: InputDecoration(
-                                  labelText: 'Wastage Reason',
-                                  hintText: 'e.g., Spoilage',
-                                  border: OutlineInputBorder(),
-                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                                ),
-                              ),
-                            ),
-                          ],
                         ),
                         
                         const SizedBox(height: 16),
@@ -978,6 +952,58 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                           ),
                           maxLines: 2,
                         ),
+                        
+                        const SizedBox(height: 16),
+                        
+                        // Wastage Section (after comments)
+                        Text(
+                          'Wastage',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        
+                        // Wastage Quantity (on its own line)
+                        TextField(
+                          controller: wastageTextController,
+                          keyboardType: TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            labelText: product.unit.toLowerCase() == 'kg' 
+                                ? 'Wastage Qty (optional)' 
+                                : 'Wastage Quantity',
+                            hintText: '0',
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                          ),
+                        ),
+                        
+                        // Wastage Weight (on its own line)
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: wastageWeightController,
+                          keyboardType: TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            labelText: 'Wastage Weight (kg)',
+                            hintText: '0',
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                          ),
+                        ),
+                        
+                        // Wastage Reason (on its own line)
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: wastageReasonController,
+                          decoration: InputDecoration(
+                            labelText: 'Wastage Reason',
+                            hintText: 'e.g., Spoilage, Damaged, Expired',
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -1012,6 +1038,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                               _controllers[product.id] = TextEditingController(text: stockTextController.text);
                               _commentControllers[product.id] = TextEditingController(text: commentController.text);
                               _wastageControllers[product.id] = TextEditingController(text: wastageTextController.text);
+                              _wastageWeightControllers[product.id] = TextEditingController(text: wastageWeightController.text);
                               _wastageReasonControllers[product.id] = TextEditingController(text: wastageReasonController.text);
                               _weightControllers[product.id] = TextEditingController(text: weightController.text);
                               _originalStock[product.id] = product.stockLevel;
@@ -1054,6 +1081,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     // Dispose controllers
     stockTextController.dispose();
     wastageTextController.dispose();
+    wastageWeightController.dispose();
     wastageReasonController.dispose();
     commentController.dispose();
   }
@@ -1089,6 +1117,88 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     );
   }
 
+  Future<void> _confirmRemoveProduct(int productId) async {
+    final product = _stockTakeProducts.where((p) => p.id == productId).firstOrNull;
+    if (product == null) return;
+    
+    // Check if product has any entered data
+    final hasData = (_controllers[productId]?.text.isNotEmpty ?? false) ||
+                    (_commentControllers[productId]?.text.isNotEmpty ?? false) ||
+                    (_wastageControllers[productId]?.text.isNotEmpty ?? false) ||
+                    (_wastageWeightControllers[productId]?.text.isNotEmpty ?? false) ||
+                    (_wastageReasonControllers[productId]?.text.isNotEmpty ?? false) ||
+                    (_weightControllers[productId]?.text.isNotEmpty ?? false);
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.orange[600], size: 28),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Remove Product?',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to remove "${product.name}" from the stock take?',
+              style: const TextStyle(fontSize: 16),
+            ),
+            if (hasData) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange[200]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.orange[700], size: 20),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'This product has entered data that will be lost.',
+                        style: TextStyle(fontSize: 14, color: Colors.orange),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel', style: TextStyle(fontSize: 16)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Remove', style: TextStyle(fontSize: 16)),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      _removeProductFromStockTake(productId);
+    }
+  }
+  
   void _removeProductFromStockTake(int productId) {
     setState(() {
       _stockTakeProducts.removeWhere((p) => p.id == productId);
@@ -1098,12 +1208,15 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       _commentControllers.remove(productId);
       _wastageControllers[productId]?.dispose();
       _wastageControllers.remove(productId);
+      _wastageWeightControllers[productId]?.dispose();
+      _wastageWeightControllers.remove(productId);
       _wastageReasonControllers[productId]?.dispose();
       _wastageReasonControllers.remove(productId);
       _weightControllers[productId]?.dispose();
       _weightControllers.remove(productId);
       _originalStock.remove(productId);
       _addedTimestamps.remove(productId); // Remove timestamp
+      _expandedProducts.remove(productId); // Remove from expanded set
     });
     
     _scheduleAutoSave();
@@ -1220,6 +1333,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         controllers: _controllers,
         commentControllers: _commentControllers,
         wastageControllers: _wastageControllers,
+        wastageWeightControllers: _wastageWeightControllers,
         wastageReasonControllers: _wastageReasonControllers,
         weightControllers: _weightControllers,
         originalStock: _originalStock,
@@ -1292,6 +1406,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       controllers: _controllers,
       commentControllers: _commentControllers,
       wastageControllers: _wastageControllers,
+      wastageWeightControllers: _wastageWeightControllers,
       wastageReasonControllers: _wastageReasonControllers,
       weightControllers: _weightControllers,
       originalStock: _originalStock,
@@ -1332,6 +1447,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
         controllers: _controllers,
         commentControllers: _commentControllers,
         wastageControllers: _wastageControllers,
+        wastageWeightControllers: _wastageWeightControllers,
         wastageReasonControllers: _wastageReasonControllers,
         weightControllers: _weightControllers,
         originalStock: _originalStock,
@@ -1978,6 +2094,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                       final controller = _controllers[product.id]!;
                       final commentController = _commentControllers[product.id]!;
                       final wastageController = _wastageControllers[product.id]!;
+                      final wastageWeightController = _wastageWeightControllers[product.id]!;
                       final wastageReasonController = _wastageReasonControllers[product.id]!;
                       final weightController = _weightControllers[product.id]!;
                       final originalStock = _originalStock[product.id] ?? 0.0;
@@ -2051,7 +2168,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                       color: Colors.grey[600],
                                     ),
                                     IconButton(
-                                      onPressed: () => _removeProductFromStockTake(product.id),
+                                      onPressed: () => _confirmRemoveProduct(product.id),
                                       icon: const Icon(Icons.close, color: Colors.red, size: 20),
                                       tooltip: 'Remove',
                                     ),
@@ -2075,37 +2192,9 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                       enableInteractiveSelection: true, // Keep keyboard active
                                       inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
                                       decoration: InputDecoration(
-                                        labelText: 'Count (${product.unit})',
-                                        border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                        contentPadding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 16, // More padding for easier touch
-                                        ),
-                                      ),
-                                      onChanged: (value) {
-                                        _scheduleAutoSave();
-                                      },
-                                      onTap: () {
-                                        // Ensure keyboard stays open
-                                      },
-                                    ),
-                                  ),
-
-                                  const SizedBox(width: 12),
-
-                                  // Wastage Input
-                                  Expanded(
-                                    flex: 2,
-                                    child: TextField(
-                                      controller: wastageController,
-                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                      textInputAction: TextInputAction.next,
-                                      enableInteractiveSelection: true, // Keep keyboard active
-                                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
-                                      decoration: InputDecoration(
-                                        labelText: 'Wastage (${product.unit})',
+                                        labelText: product.unit.toLowerCase() == 'kg' 
+                                            ? 'Count (optional)' 
+                                            : 'Count (${product.unit})',
                                         border: OutlineInputBorder(
                                           borderRadius: BorderRadius.circular(8),
                                         ),
@@ -2160,92 +2249,6 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                     ),
                                   ),
                                 ],
-                              ),
-
-                              const SizedBox(height: 16),
-
-                              // Wastage Reason Section with Enhanced UI
-                              Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: wastageReasonController.text.isNotEmpty 
-                                    ? Colors.orange[50] 
-                                    : Colors.grey[50],
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: wastageReasonController.text.isNotEmpty 
-                                      ? Colors.orange[300]! 
-                                      : Colors.grey[300]!,
-                                    width: wastageReasonController.text.isNotEmpty ? 2 : 1,
-                                  ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Icon(
-                                          Icons.delete_outline,
-                                          size: 20,
-                                          color: wastageReasonController.text.isNotEmpty 
-                                            ? Colors.orange[700] 
-                                            : Colors.grey[600],
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          'Wastage Reason',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.bold,
-                                            color: wastageReasonController.text.isNotEmpty 
-                                              ? Colors.orange[900] 
-                                              : Colors.grey[700],
-                                          ),
-                                        ),
-                                        if (wastageReasonController.text.isNotEmpty)
-                                          Container(
-                                            margin: const EdgeInsets.only(left: 8),
-                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                            decoration: BoxDecoration(
-                                              color: Colors.orange[700],
-                                              borderRadius: BorderRadius.circular(10),
-                                            ),
-                                            child: const Text(
-                                              'SAVED',
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                    TextField(
-                                      controller: wastageReasonController,
-                                      textInputAction: TextInputAction.next,
-                                      textCapitalization: TextCapitalization.words,
-                                      enableInteractiveSelection: true,
-                                      style: const TextStyle(fontSize: 16, color: Colors.black),
-                                      decoration: InputDecoration(
-                                        hintText: 'e.g., Spoilage, Damaged, Expired',
-                                        hintStyle: TextStyle(color: Colors.grey[400]),
-                                        filled: true,
-                                        fillColor: Colors.white,
-                                        border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(8),
-                                          borderSide: BorderSide.none,
-                                        ),
-                                        contentPadding: const EdgeInsets.all(14),
-                                      ),
-                                      onChanged: (value) {
-                                        setState(() {}); // Update UI when text changes
-                                        _scheduleAutoSave();
-                                      },
-                                    ),
-                                  ],
-                                ),
                               ),
 
                               const SizedBox(height: 16),
@@ -2346,7 +2349,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                         hintText: 'Tap to add notes about this product...',
                                         hintStyle: TextStyle(color: Colors.grey[400]),
                                         filled: true,
-                                        fillColor: Colors.white,
+                                        fillColor: Colors.transparent,
                                         border: OutlineInputBorder(
                                           borderRadius: BorderRadius.circular(8),
                                           borderSide: BorderSide.none,
@@ -2357,10 +2360,152 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                         setState(() {}); // Update UI when text changes
                                         _scheduleAutoSave();
                                       },
-                                      onTap: () {
-                                        commentController.selection = TextSelection.fromPosition(
-                                          TextPosition(offset: commentController.text.length),
-                                        );
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 16),
+
+                              // Wastage Section (after comments)
+                              Text(
+                                'Wastage',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey[800],
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              
+                              // Wastage Quantity (on its own line)
+                              TextField(
+                                controller: wastageController,
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                textInputAction: TextInputAction.next,
+                                enableInteractiveSelection: true,
+                                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+                                decoration: InputDecoration(
+                                  labelText: product.unit.toLowerCase() == 'kg' 
+                                      ? 'Wastage Qty (optional)' 
+                                      : 'Wastage (${product.unit})',
+                                  hintText: '0',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 16,
+                                  ),
+                                ),
+                                onChanged: (value) {
+                                  _scheduleAutoSave();
+                                },
+                              ),
+
+                              // Wastage Weight (on its own line)
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: wastageWeightController,
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                textInputAction: TextInputAction.next,
+                                enableInteractiveSelection: true,
+                                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+                                decoration: InputDecoration(
+                                  labelText: 'Wastage Weight (kg)',
+                                  hintText: '0',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 16,
+                                  ),
+                                ),
+                                onChanged: (value) {
+                                  _scheduleAutoSave();
+                                },
+                              ),
+
+                              // Wastage Reason (on its own line)
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: wastageReasonController.text.isNotEmpty 
+                                    ? Colors.orange[50] 
+                                    : Colors.grey[50],
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: wastageReasonController.text.isNotEmpty 
+                                      ? Colors.orange[300]! 
+                                      : Colors.grey[300]!,
+                                    width: wastageReasonController.text.isNotEmpty ? 2 : 1,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.delete_outline,
+                                          size: 20,
+                                          color: wastageReasonController.text.isNotEmpty 
+                                            ? Colors.orange[700] 
+                                            : Colors.grey[600],
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Wastage Reason',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                            color: wastageReasonController.text.isNotEmpty 
+                                              ? Colors.orange[900] 
+                                              : Colors.grey[700],
+                                          ),
+                                        ),
+                                        if (wastageReasonController.text.isNotEmpty)
+                                          Container(
+                                            margin: const EdgeInsets.only(left: 8),
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.orange[700],
+                                              borderRadius: BorderRadius.circular(10),
+                                            ),
+                                            child: const Text(
+                                              'SAVED',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    TextField(
+                                      controller: wastageReasonController,
+                                      textInputAction: TextInputAction.next,
+                                      textCapitalization: TextCapitalization.words,
+                                      enableInteractiveSelection: true,
+                                      style: const TextStyle(fontSize: 16, color: Colors.black),
+                                      decoration: InputDecoration(
+                                        hintText: 'e.g., Spoilage, Damaged, Expired',
+                                        hintStyle: TextStyle(color: Colors.grey[400]),
+                                        filled: true,
+                                        fillColor: Colors.transparent,
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                          borderSide: BorderSide.none,
+                                        ),
+                                        contentPadding: const EdgeInsets.all(14),
+                                      ),
+                                      onChanged: (value) {
+                                        setState(() {}); // Update UI when text changes
+                                        _scheduleAutoSave();
                                       },
                                     ),
                                   ],
