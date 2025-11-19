@@ -532,7 +532,6 @@ class BulkStockTakePdfGenerator {
       sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
         bold: true,
         horizontalAlign: excel.HorizontalAlign.Center,
-        backgroundColor: excel.Color.fromHex('#FFE6E6'), // Light red background
       );
     }
     currentRow++;
@@ -600,12 +599,6 @@ class BulkStockTakePdfGenerator {
       for (int i = 0; i < rowData.length; i++) {
         final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow));
         cell.value = rowData[i];
-        // Highlight error rows with light red background
-        if (i == 0) { // Only apply to first cell to avoid over-styling
-          cell.cellStyle = excel.CellStyle(
-            backgroundColor: excel.Color.fromHex('#FFF0F0'),
-          );
-        }
       }
       currentRow++;
     }

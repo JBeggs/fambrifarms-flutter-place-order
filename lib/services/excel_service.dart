@@ -287,9 +287,11 @@ class ExcelService {
       // Check for source product issues
       if (item.sourceProductId != null && item.sourceProductName != null) {
         // Check if source product stock is insufficient
-        if (item.sourceProductStockLevel != null && item.sourceQuantity != null) {
-          if (item.sourceQuantity > item.sourceProductStockLevel!) {
-            errors.add('Source Product Insufficient: ${item.sourceProductName} has ${item.sourceProductStockLevel}${item.sourceProductUnit ?? ''}, need ${item.sourceQuantity}${item.sourceProductUnit ?? ''}');
+        final sourceQty = item.sourceQuantity;
+        final sourceStock = item.sourceProductStockLevel;
+        if (sourceStock != null && sourceQty != null && sourceQty > 0) {
+          if (sourceQty > sourceStock) {
+            errors.add('Source Product Insufficient: ${item.sourceProductName} has ${sourceStock}${item.sourceProductUnit ?? ''}, need ${sourceQty}${item.sourceProductUnit ?? ''}');
           }
         }
       }
@@ -302,10 +304,8 @@ class ExcelService {
         }
       }
       
-      // Check for no reserve items that might need attention
-      if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
-        errors.add('No Stock Available: Product is out of stock and no reservation was made');
-      }
+      // Note: Cannot check product.stockLevel here as Product in order.dart doesn't have stockLevel
+      // Stock level checks are handled via stockResult and isStockReservationFailed
       
       errorField = errors.join('\n');
       
@@ -674,12 +674,16 @@ class ExcelService {
       if (item.isStockReservationFailed) return true;
       
       // Check for source product issues
-      if (item.sourceProductId != null && item.sourceProductStockLevel != null && item.sourceQuantity != null) {
-        if (item.sourceQuantity > item.sourceProductStockLevel!) return true;
+      if (item.sourceProductId != null) {
+        final sourceQty = item.sourceQuantity;
+        final sourceStock = item.sourceProductStockLevel;
+        if (sourceStock != null && sourceQty != null && sourceQty > 0) {
+          if (sourceQty > sourceStock) return true;
+        }
       }
       
-      // Check for no reserve items with no stock
-      if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) return true;
+      // Note: Cannot check product.stockLevel here as Product in order.dart doesn't have stockLevel
+      // Stock level checks are handled via stockResult and isStockReservationFailed
       
       return false;
     }).toList();
@@ -716,7 +720,6 @@ class ExcelService {
       sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = CellStyle(
         bold: true,
         horizontalAlign: HorizontalAlign.Center,
-        backgroundColor: excel.Color.fromHex('#FFE6E6'), // Light red background
       );
     }
     currentRow++;
@@ -751,20 +754,21 @@ class ExcelService {
         }
         
         actionRequired = 'Order stock or find alternative product';
-      } else if (item.sourceProductId != null && item.sourceProductStockLevel != null && item.sourceQuantity != null) {
-        if (item.sourceQuantity > item.sourceProductStockLevel!) {
-          errorType = 'Source Product Insufficient';
-          errorDetails = 'Source product ${item.sourceProductName} has insufficient stock.\n'
-              'Available: ${item.sourceProductStockLevel}${item.sourceProductUnit ?? ''}\n'
-              'Required: ${item.sourceQuantity}${item.sourceProductUnit ?? ''}';
-          actionRequired = 'Check source product stock or use different source';
+      } else if (item.sourceProductId != null) {
+        final sourceQty = item.sourceQuantity;
+        final sourceStock = item.sourceProductStockLevel;
+        if (sourceStock != null && sourceQty != null && sourceQty > 0) {
+          if (sourceQty > sourceStock) {
+            errorType = 'Source Product Insufficient';
+            errorDetails = 'Source product ${item.sourceProductName} has insufficient stock.\n'
+                'Available: ${sourceStock}${item.sourceProductUnit ?? ''}\n'
+                'Required: ${sourceQty}${item.sourceProductUnit ?? ''}';
+            actionRequired = 'Check source product stock or use different source';
+          }
         }
-      } else if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
-        errorType = 'No Stock Available';
-        errorDetails = 'Product is out of stock and no reservation was made.\n'
-            'Current Stock: ${item.product.stockLevel} ${item.product.unit}';
-        actionRequired = 'Order stock or confirm customer wants to proceed without stock';
       }
+      // Note: Cannot check product.stockLevel here as Product in order.dart doesn't have stockLevel
+      // Stock level checks are handled via stockResult and isStockReservationFailed
       
       final rowData = [
         TextCellValue(item.product.name),
@@ -778,12 +782,6 @@ class ExcelService {
       for (int i = 0; i < rowData.length; i++) {
         final cell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow));
         cell.value = rowData[i];
-        // Highlight error rows with light red background
-        if (i == 0) { // Only apply to first cell to avoid over-styling
-          cell.cellStyle = CellStyle(
-            backgroundColor: excel.Color.fromHex('#FFF0F0'),
-          );
-        }
       }
       currentRow++;
     }

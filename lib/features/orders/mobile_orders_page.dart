@@ -543,6 +543,10 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
       // Create Excel workbook
       final workbook = excel.Excel.createExcel();
       
+      // Get products data early for error checking
+      final productsState = ref.read(productsProvider);
+      final products = productsState.products;
+      
       // Create a sheet for each order
       for (final order in receivedOrders) {
         // Use business name from profile, fallback to restaurant name
@@ -712,16 +716,21 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
           
           // Check for source product issues
           if (item.sourceProductId != null && item.sourceProductName != null) {
-            if (item.sourceProductStockLevel != null && item.sourceQuantity != null) {
-              if (item.sourceQuantity > item.sourceProductStockLevel!) {
-                errors.add('Source Product Insufficient: ${item.sourceProductName} has ${item.sourceProductStockLevel}${item.sourceProductUnit ?? ''}, need ${item.sourceQuantity}${item.sourceProductUnit ?? ''}');
+            final sourceQty = item.sourceQuantity;
+            final sourceStock = item.sourceProductStockLevel;
+            if (sourceStock != null && sourceQty != null && sourceQty > 0) {
+              if (sourceQty > sourceStock) {
+                errors.add('Source Product Insufficient: ${item.sourceProductName} has ${sourceStock}${item.sourceProductUnit ?? ''}, need ${sourceQty}${item.sourceProductUnit ?? ''}');
               }
             }
           }
           
-          // Check for no reserve items that might need attention
-          if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
-            errors.add('No Stock Available: Product is out of stock and no reservation was made');
+          // Check for no reserve items - use products list to check stock level
+          if (item.isNoReserve) {
+            final productFromList = products.where((p) => p.id == item.product.id).firstOrNull;
+            if (productFromList != null && productFromList.stockLevel <= 0) {
+              errors.add('No Stock Available: Product is out of stock and no reservation was made');
+            }
           }
           
           errorField = errors.join('\n');
@@ -746,10 +755,6 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
           sheet.setColumnAutoFit(i);
         }
       }
-      
-      // Get products data for additional sheets
-      final productsState = ref.read(productsProvider);
-      final products = productsState.products;
       
       // Add Reserved Stock sheet
       _addReservedStockSheet(workbook, receivedOrders, products);
@@ -1133,20 +1138,27 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
           });
         }
         // Check for source product issues
-        else if (item.sourceProductId != null && item.sourceProductStockLevel != null && item.sourceQuantity != null) {
-          if (item.sourceQuantity > item.sourceProductStockLevel!) {
+        else if (item.sourceProductId != null) {
+          final sourceQty = item.sourceQuantity;
+          final sourceStock = item.sourceProductStockLevel;
+          if (sourceStock != null && sourceQty != null && sourceQty > 0) {
+            if (sourceQty > sourceStock) {
+              itemsWithErrors.add({
+                'order': order,
+                'item': item,
+              });
+            }
+          }
+        }
+        // Check for no reserve items with no stock
+        else if (item.isNoReserve) {
+          final productFromList = products.where((p) => p.id == item.product.id).firstOrNull;
+          if (productFromList != null && productFromList.stockLevel <= 0) {
             itemsWithErrors.add({
               'order': order,
               'item': item,
             });
           }
-        }
-        // Check for no reserve items with no stock
-        else if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
-          itemsWithErrors.add({
-            'order': order,
-            'item': item,
-          });
         }
       }
     }
@@ -1169,14 +1181,13 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
     // Table headers
     int currentRow = 3;
     final headers = ['Order Number', 'Restaurant', 'Product', 'Quantity', 'Unit', 'Error Type', 'Error Details', 'Action Required'];
-    for (int i = 0; i < headers.length; i++) {
-      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
-      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
-        bold: true,
-        horizontalAlign: excel.HorizontalAlign.Center,
-        backgroundColor: excel.Color.fromHex('#FFE6E6'), // Light red background
-      );
-    }
+      for (int i = 0; i < headers.length; i++) {
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+          bold: true,
+          horizontalAlign: excel.HorizontalAlign.Center,
+        );
+      }
     currentRow++;
     
     // Add error items
@@ -1212,19 +1223,26 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
         }
         
         actionRequired = 'Order stock or find alternative product';
-      } else if (item.sourceProductId != null && item.sourceProductStockLevel != null && item.sourceQuantity != null) {
-        if (item.sourceQuantity > item.sourceProductStockLevel!) {
-          errorType = 'Source Product Insufficient';
-          errorDetails = 'Source product ${item.sourceProductName} has insufficient stock.\n'
-              'Available: ${item.sourceProductStockLevel}${item.sourceProductUnit ?? ''}\n'
-              'Required: ${item.sourceQuantity}${item.sourceProductUnit ?? ''}';
-          actionRequired = 'Check source product stock or use different source';
+      } else if (item.sourceProductId != null) {
+        final sourceQty = item.sourceQuantity;
+        final sourceStock = item.sourceProductStockLevel;
+        if (sourceStock != null && sourceQty != null && sourceQty > 0) {
+          if (sourceQty > sourceStock) {
+            errorType = 'Source Product Insufficient';
+            errorDetails = 'Source product ${item.sourceProductName} has insufficient stock.\n'
+                'Available: ${sourceStock}${item.sourceProductUnit ?? ''}\n'
+                'Required: ${sourceQty}${item.sourceProductUnit ?? ''}';
+            actionRequired = 'Check source product stock or use different source';
+          }
         }
-      } else if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
-        errorType = 'No Stock Available';
-        errorDetails = 'Product is out of stock and no reservation was made.\n'
-            'Current Stock: ${item.product.stockLevel} ${item.product.unit}';
-        actionRequired = 'Order stock or confirm customer wants to proceed without stock';
+      } else if (item.isNoReserve) {
+        final productFromList = products.where((p) => p.id == item.product.id).firstOrNull;
+        if (productFromList != null && productFromList.stockLevel <= 0) {
+          errorType = 'No Stock Available';
+          errorDetails = 'Product is out of stock and no reservation was made.\n'
+              'Current Stock: ${productFromList.stockLevel} ${item.product.unit}';
+          actionRequired = 'Order stock or confirm customer wants to proceed without stock';
+        }
       }
       
       final restaurantName = order.restaurant.profile?.businessName ?? order.restaurant.name;
@@ -1243,12 +1261,6 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
       for (int i = 0; i < rowData.length; i++) {
         final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow));
         cell.value = rowData[i];
-        // Highlight error rows with light red background
-        if (i == 0) { // Only apply to first cell to avoid over-styling
-          cell.cellStyle = excel.CellStyle(
-            backgroundColor: excel.Color.fromHex('#FFF0F0'),
-          );
-        }
       }
       currentRow++;
     }
