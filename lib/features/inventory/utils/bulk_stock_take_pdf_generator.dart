@@ -80,8 +80,11 @@ class BulkStockTakePdfGenerator {
         _addExcelDataRow(sheet, entry, stockTakeProducts);
       }
       
+      // Add Errors sheet if there are any errors
+      _addErrorsSheet(excelFile, sortedEntries, stockTakeProducts);
+      
       // Auto-fit columns
-      for (int i = 0; i < 8; i++) {
+      for (int i = 0; i < 9; i++) {  // Updated from 8 to 9 for new Errors/Issues column
         sheet.setColumnAutoFit(i);
       }
       
@@ -163,6 +166,7 @@ class BulkStockTakePdfGenerator {
           pw.Expanded(flex: 2, child: pw.Text('Wastage Qty', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Wastage Weight (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Reason', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+          pw.Expanded(flex: 2, child: pw.Text('Errors/Issues', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),  // Add Errors/Issues column
         ],
       ),
     );
@@ -199,6 +203,27 @@ class BulkStockTakePdfGenerator {
           : countedStock.toStringAsFixed(2);
       
       final commentDisplay = comment.isNotEmpty ? comment : '-';
+      
+      // Extract error information
+      String errorField = '';
+      final List<String> errors = [];
+      
+      // Check for missing required data
+      final productUnit = (product.unit ?? '').toLowerCase().trim();
+      final isKgProduct = productUnit == 'kg';
+      
+      if (isKgProduct && weight <= 0) {
+        errors.add('Missing Required Data: Weight is required for kg products');
+      } else if (!isKgProduct && countedStock <= 0 && weight <= 0) {
+        errors.add('Missing Required Data: Quantity or weight is required');
+      }
+      
+      // Check for wastage without reason
+      if ((wastageQuantity > 0 || wastageWeight > 0) && wastageReason.isEmpty) {
+        errors.add('Wastage Recorded: Wastage quantity/weight entered but no reason provided');
+      }
+      
+      errorField = errors.join('; ');
       
       return pw.Container(
         padding: const pw.EdgeInsets.all(8),
@@ -296,6 +321,17 @@ class BulkStockTakePdfGenerator {
                 style: const pw.TextStyle(fontSize: 9),
               ),
             ),
+            // Errors/Issues
+            pw.Expanded(
+              flex: 2,
+              child: pw.Text(
+                errorField.isNotEmpty ? errorField : '-',
+                style: pw.TextStyle(
+                  fontSize: 8,
+                  color: errorField.isNotEmpty ? PdfColors.red : PdfColors.black,
+                ),
+              ),
+            ),
           ],
         ),
       );
@@ -329,6 +365,7 @@ class BulkStockTakePdfGenerator {
       excel.TextCellValue('Wastage Qty'),
       excel.TextCellValue('Wastage Weight (kg)'),
       excel.TextCellValue('Reason'),
+      excel.TextCellValue('Errors/Issues'),  // Add Errors/Issues column
     ];
     sheet.appendRow(headerRow);
     
@@ -383,6 +420,32 @@ class BulkStockTakePdfGenerator {
         ? excel.DoubleCellValue(wastageWeight) 
         : excel.TextCellValue('-');
     
+    // Extract error information
+    String errorField = '';
+    final List<String> errors = [];
+    
+    // Check for missing required data
+    final productUnit = (product.unit ?? '').toLowerCase().trim();
+    final isKgProduct = productUnit == 'kg';
+    
+    if (isKgProduct && weight <= 0) {
+      errors.add('Missing Required Data: Weight is required for kg products');
+    } else if (!isKgProduct && countedStock <= 0 && weight <= 0) {
+      errors.add('Missing Required Data: Quantity or weight is required');
+    }
+    
+    // Check for wastage without reason
+    if ((wastageQuantity > 0 || wastageWeight > 0) && wastageReason.isEmpty) {
+      errors.add('Wastage Recorded: Wastage quantity/weight entered but no reason provided');
+    }
+    
+    // Check for product not found (shouldn't happen but just in case)
+    if (productId <= 0) {
+      errors.add('Invalid Product: Product ID is invalid');
+    }
+    
+    errorField = errors.join('\n');
+    
     final dataRow = [
       excel.TextCellValue(productName),
       stockCountedValue,
@@ -392,6 +455,7 @@ class BulkStockTakePdfGenerator {
       wastageQtyValue,
       wastageWeightValue,
       excel.TextCellValue(wastageReason.isNotEmpty ? wastageReason : '-'),
+      excel.TextCellValue(errorField),  // Errors/Issues column
     ];
     
     sheet.appendRow(dataRow);
@@ -414,6 +478,144 @@ class BulkStockTakePdfGenerator {
     wastageWeightCell.cellStyle = excel.CellStyle(
       horizontalAlign: excel.HorizontalAlign.Right,
     );
+  }
+
+  /// Add Errors sheet - lists all entries with errors/issues
+  static void _addErrorsSheet(excel.Excel excelFile, List<Map<String, dynamic>> entries, List<Product> stockTakeProducts) {
+    print('[STOCK_TAKE_EXCEL] Building Errors sheet');
+    
+    // Filter entries with errors
+    final entriesWithErrors = entries.where((entry) {
+      final productId = entry['product_id'] as int;
+      final product = stockTakeProducts.where((p) => p.id == productId).firstOrNull;
+      
+      if (product == null) return true;
+      
+      final productUnit = (product.unit ?? '').toLowerCase().trim();
+      final isKgProduct = productUnit == 'kg';
+      final countedStock = entry['counted_quantity'] as double? ?? 0.0;
+      final weight = entry['weight'] as double? ?? 0.0;
+      final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
+      final wastageWeight = entry['wastage_weight'] as double? ?? 0.0;
+      final wastageReason = entry['wastage_reason'] as String? ?? '';
+      
+      // Check for missing required data
+      if (isKgProduct && weight <= 0) return true;
+      if (!isKgProduct && countedStock <= 0 && weight <= 0) return true;
+      
+      // Check for wastage without reason
+      if ((wastageQuantity > 0 || wastageWeight > 0) && wastageReason.isEmpty) return true;
+      
+      return false;
+    }).toList();
+    
+    // If no errors, skip creating the sheet
+    if (entriesWithErrors.isEmpty) {
+      print('[STOCK_TAKE_EXCEL] No entries with errors - skipping Errors sheet');
+      return;
+    }
+    
+    final sheet = excelFile['Errors'];
+    
+    // Sheet title
+    sheet.cell(excel.CellIndex.indexByString('A1')).value = excel.TextCellValue('ITEMS WITH ERRORS/ISSUES');
+    sheet.cell(excel.CellIndex.indexByString('A1')).cellStyle = excel.CellStyle(
+      bold: true,
+      fontSize: 16,
+    );
+    
+    // Table headers
+    int currentRow = 3;
+    final headers = ['Product', 'Unit', 'Stock Counted', 'Weight (kg)', 'Error Type', 'Error Details', 'Action Required'];
+    for (int i = 0; i < headers.length; i++) {
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+        horizontalAlign: excel.HorizontalAlign.Center,
+        backgroundColor: excel.Color.fromHex('#FFE6E6'), // Light red background
+      );
+    }
+    currentRow++;
+    
+    // Add error entries
+    for (final entry in entriesWithErrors) {
+      final productId = entry['product_id'] as int;
+      final product = stockTakeProducts.where((p) => p.id == productId).firstOrNull;
+      
+      if (product == null) {
+        // Product not found error
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = excel.TextCellValue('Product ID: $productId');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = excel.TextCellValue('-');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: currentRow)).value = excel.TextCellValue('-');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: currentRow)).value = excel.TextCellValue('-');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: currentRow)).value = excel.TextCellValue('Product Not Found');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: currentRow)).value = excel.TextCellValue('Product with ID $productId was not found in the system');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: currentRow)).value = excel.TextCellValue('Check product ID or remove entry');
+        currentRow++;
+        continue;
+      }
+      
+      final productUnit = (product.unit ?? '').toLowerCase().trim();
+      final isKgProduct = productUnit == 'kg';
+      final countedStock = entry['counted_quantity'] as double? ?? 0.0;
+      final weight = entry['weight'] as double? ?? 0.0;
+      final wastageQuantity = entry['wastage_quantity'] as double? ?? 0.0;
+      final wastageWeight = entry['wastage_weight'] as double? ?? 0.0;
+      final wastageReason = entry['wastage_reason'] as String? ?? '';
+      
+      String errorType = 'Unknown';
+      String errorDetails = '';
+      String actionRequired = '';
+      
+      // Determine error type and details
+      if (isKgProduct && weight <= 0) {
+        errorType = 'Missing Required Data';
+        errorDetails = 'Weight is required for kg products but was not provided.\n'
+            'Current Weight: ${weight > 0 ? weight : 0} kg';
+        actionRequired = 'Enter weight for this kg product';
+      } else if (!isKgProduct && countedStock <= 0 && weight <= 0) {
+        errorType = 'Missing Required Data';
+        errorDetails = 'Quantity or weight is required but neither was provided.\n'
+            'Current Counted: $countedStock\n'
+            'Current Weight: ${weight > 0 ? weight : 0}';
+        actionRequired = 'Enter quantity or weight for this product';
+      } else if ((wastageQuantity > 0 || wastageWeight > 0) && wastageReason.isEmpty) {
+        errorType = 'Wastage Without Reason';
+        errorDetails = 'Wastage was recorded but no reason was provided.\n'
+            'Wastage Quantity: $wastageQuantity\n'
+            'Wastage Weight: $wastageWeight kg';
+        actionRequired = 'Add a reason for the wastage';
+      }
+      
+      final rowData = [
+        excel.TextCellValue(product.name),
+        excel.TextCellValue(product.unit),
+        excel.DoubleCellValue(countedStock),
+        weight > 0 ? excel.DoubleCellValue(weight) : excel.TextCellValue('-'),
+        excel.TextCellValue(errorType),
+        excel.TextCellValue(errorDetails),
+        excel.TextCellValue(actionRequired),
+      ];
+      
+      for (int i = 0; i < rowData.length; i++) {
+        final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow));
+        cell.value = rowData[i];
+        // Highlight error rows with light red background
+        if (i == 0) { // Only apply to first cell to avoid over-styling
+          cell.cellStyle = excel.CellStyle(
+            backgroundColor: excel.Color.fromHex('#FFF0F0'),
+          );
+        }
+      }
+      currentRow++;
+    }
+    
+    // Auto-fit columns
+    for (int i = 0; i < headers.length; i++) {
+      sheet.setColumnAutoFit(i);
+    }
+    
+    print('[STOCK_TAKE_EXCEL] Errors sheet built successfully with ${entriesWithErrors.length} entries');
   }
 }
 

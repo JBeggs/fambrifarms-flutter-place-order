@@ -1192,8 +1192,8 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
         );
         currentRow += 2;
         
-        // Table headers
-        final headers = ['Product', 'Quantity', 'Unit', 'Stock Status', 'Notes'];
+        // Table headers - add Errors/Issues column
+        final headers = ['Product', 'Quantity', 'Unit', 'Stock Status', 'Errors/Issues', 'Notes'];
         for (int i = 0; i < headers.length; i++) {
           sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
           sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
@@ -1225,11 +1225,54 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
             stockStatus = 'Reservation Failed';
           }
           
+          // Extract error information from stockResult
+          String errorField = '';
+          final List<String> errors = [];
+          
+          // Check for stock reservation failures
+          if (item.isStockReservationFailed && item.stockResult != null) {
+            final message = item.stockResult!['message'] as String?;
+            if (message != null && message.isNotEmpty) {
+              errors.add('Stock Reservation Failed: $message');
+            } else {
+              errors.add('Stock Reservation Failed: Insufficient stock available');
+            }
+            
+            // Check for available stock info
+            final availableStock = item.stockResult!['available_stock'];
+            if (availableStock != null) {
+              errors.add('Available Stock: $availableStock ${item.product.unit}');
+            }
+            
+            // Check for required quantity
+            final requiredQuantity = item.stockResult!['required_quantity'];
+            if (requiredQuantity != null) {
+              errors.add('Required: $requiredQuantity ${item.product.unit}');
+            }
+          }
+          
+          // Check for source product issues
+          if (item.sourceProductId != null && item.sourceProductName != null) {
+            if (item.sourceProductStockLevel != null && item.sourceQuantity != null) {
+              if (item.sourceQuantity > item.sourceProductStockLevel!) {
+                errors.add('Source Product Insufficient: ${item.sourceProductName} has ${item.sourceProductStockLevel}${item.sourceProductUnit ?? ''}, need ${item.sourceQuantity}${item.sourceProductUnit ?? ''}');
+              }
+            }
+          }
+          
+          // Check for no reserve items that might need attention
+          if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
+            errors.add('No Stock Available: Product is out of stock and no reservation was made');
+          }
+          
+          errorField = errors.join('\n');
+          
           final rowData = [
             excel.TextCellValue(productName),
             excel.DoubleCellValue(item.quantity),
             excel.TextCellValue(item.product.unit),
             excel.TextCellValue(stockStatus),
+            excel.TextCellValue(errorField),  // Errors/Issues column
             excel.TextCellValue(item.notes ?? ''),
           ];
           
@@ -1250,6 +1293,9 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
       
       // Add Stock to be Ordered sheet
       _addStockToOrderSheet(workbook, receivedOrders, products);
+      
+      // Add Errors sheet (if there are any errors)
+      _addErrorsSheet(workbook, receivedOrders, products);
       
       // Remove default Sheet1 AFTER creating all custom sheets
       if (workbook.sheets.containsKey('Sheet1')) {
@@ -1468,20 +1514,27 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
         // Check if this item needs to be ordered:
         // 1. Stock reservation failed (out of stock)
         // 2. No reservation was made (intentional no-reserve for bulk items)
-        final needsOrdering = item.isStockReservationFailed || item.isNoReserve;
+        // Also check stockAction directly as fallback
+        final isNoReserve = item.isNoReserve || item.stockAction == 'no_reserve';
+        final isFailed = item.isStockReservationFailed || 
+            (item.stockAction == 'reserve' && item.stockResult != null && 
+             !(item.stockResult!['success'] as bool? ?? true));
+        final needsOrdering = isFailed || isNoReserve;
         
         if (needsOrdering) {
-          if (item.isNoReserve) noReserveCount++;
-          if (item.isStockReservationFailed) failedReserveCount++;
+          if (isNoReserve) noReserveCount++;
+          if (isFailed) failedReserveCount++;
           
           final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
-          print('[WORKBOOK]     -> Adding ${item.product.name} to Stock to Order sheet');
+          print('[WORKBOOK]     -> Adding ${item.product.name} to Stock to Order sheet (isNoReserve=$isNoReserve, isFailed=$isFailed, stockAction=${item.stockAction})');
           itemsToOrder.add({
             'order': order,
             'item': item,
             'product': product,
             'shortage': shortage,
           });
+        } else {
+          print('[WORKBOOK]     -> Skipping ${item.product.name} (stockAction=${item.stockAction}, isNoReserve=${item.isNoReserve}, isFailed=${item.isStockReservationFailed})');
         }
       }
     }

@@ -359,7 +359,12 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
                               await ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
                             },
                             child: ListView.builder(
-                              padding: const EdgeInsets.all(16),
+                              padding: EdgeInsets.only(
+                                left: 16,
+                                right: 16,
+                                top: 16,
+                                bottom: filteredList.isNotEmpty ? 100 : 16, // Extra padding for footer and buttons
+                              ),
                               itemCount: filteredList.length,
                               itemBuilder: (context, index) {
                                 final message = filteredList[index];
@@ -424,7 +429,7 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
     final messagesNotifier = ref.read(messagesProvider.notifier);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 16), // Increased margin for better spacing
       elevation: message.processed ? 1 : 2,
       child: Padding(
         padding: const EdgeInsets.all(16),

@@ -201,8 +201,8 @@ class ExcelService {
     );
     currentRow += 2;
     
-    // Table headers
-    final headers = ['Product', 'Quantity', 'Unit', /* 'Unit Price', 'Total Price', */ 'Stock Status', 'Notes'];
+    // Table headers - add Errors column
+    final headers = ['Product', 'Quantity', 'Unit', /* 'Unit Price', 'Total Price', */ 'Stock Status', 'Errors/Issues', 'Notes'];
     for (int i = 0; i < headers.length; i++) {
       sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = TextCellValue(headers[i]);
       sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = CellStyle(
@@ -258,6 +258,57 @@ class ExcelService {
         stockStatus = 'Stock Reserved from Source';
       }
       
+      // Extract error information from stockResult
+      String errorField = '';
+      final List<String> errors = [];
+      
+      // Check for stock reservation failures
+      if (item.isStockReservationFailed && item.stockResult != null) {
+        final message = item.stockResult!['message'] as String?;
+        if (message != null && message.isNotEmpty) {
+          errors.add('Stock Reservation Failed: $message');
+        } else {
+          errors.add('Stock Reservation Failed: Insufficient stock available');
+        }
+        
+        // Check for available stock info
+        final availableStock = item.stockResult!['available_stock'];
+        if (availableStock != null) {
+          errors.add('Available Stock: $availableStock ${item.product.unit}');
+        }
+        
+        // Check for required quantity
+        final requiredQuantity = item.stockResult!['required_quantity'];
+        if (requiredQuantity != null) {
+          errors.add('Required: $requiredQuantity ${item.product.unit}');
+        }
+      }
+      
+      // Check for source product issues
+      if (item.sourceProductId != null && item.sourceProductName != null) {
+        // Check if source product stock is insufficient
+        if (item.sourceProductStockLevel != null && item.sourceQuantity != null) {
+          if (item.sourceQuantity > item.sourceProductStockLevel!) {
+            errors.add('Source Product Insufficient: ${item.sourceProductName} has ${item.sourceProductStockLevel}${item.sourceProductUnit ?? ''}, need ${item.sourceQuantity}${item.sourceProductUnit ?? ''}');
+          }
+        }
+      }
+      
+      // Check for conversion issues
+      if (item.isConvertedToBulkKg && item.stockResult != null) {
+        final conversionMessage = item.stockResult!['message'] as String?;
+        if (conversionMessage != null && conversionMessage.isNotEmpty) {
+          errors.add('Conversion: $conversionMessage');
+        }
+      }
+      
+      // Check for no reserve items that might need attention
+      if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
+        errors.add('No Stock Available: Product is out of stock and no reservation was made');
+      }
+      
+      errorField = errors.join('\n');
+      
       // Build notes field with original text if available
       String notesField = '';
       if (item.originalText != null && item.originalText!.isNotEmpty) {
@@ -284,6 +335,7 @@ class ExcelService {
         // DoubleCellValue(item.price),
         // DoubleCellValue(itemTotal),
         TextCellValue(stockStatus),
+        TextCellValue(errorField),  // Errors/Issues column
         TextCellValue(notesField),
       ];
       
@@ -309,8 +361,12 @@ class ExcelService {
     
     // Create additional sheets if products data is available
     if (products != null) {
+      print('[EXCEL SERVICE] Products list has ${products.length} products');
       await _buildReservedStockSheet(excel, order, products);
       await _buildStockToOrderSheet(excel, order, products);
+      await _buildErrorsSheet(excel, order, products);
+    } else {
+      print('[EXCEL SERVICE] WARNING: Products list is null - Stock to Order sheet will not be created');
     }
     
     print('[EXCEL SERVICE] Excel document built successfully');
@@ -485,36 +541,55 @@ class ExcelService {
     // Filter items that need to be ordered (no reserve or failed reservation)
     // Exclude unlimited stock products (they're always available)
     print('[EXCEL SERVICE] Filtering items for Stock to Order...');
+    print('[EXCEL SERVICE] Order has ${order.items.length} items total');
+    print('[EXCEL SERVICE] Products list has ${products.length} products');
+    
     final itemsToOrder = order.items.where((item) {
-      print('[EXCEL SERVICE]   - ${item.product.name}: stockAction=${item.stockAction}, isNoReserve=${item.isNoReserve}, isFailed=${item.isStockReservationFailed}');
+      final stockActionStr = item.stockAction?.toString() ?? 'null';
+      final stockResultStr = item.stockResult?.toString() ?? 'null';
+      print('[EXCEL SERVICE]   - ${item.product.name}: stockAction=$stockActionStr, isNoReserve=${item.isNoReserve}, isFailed=${item.isStockReservationFailed}, stockResult=$stockResultStr');
       
-      // Only include items that need ordering (failed reservation or no reserve)
-      if (!item.isNoReserve && !item.isStockReservationFailed) {
-        return false;
-      }
-      
-      // Find corresponding product to check unlimited stock
+      // Find corresponding product to check unlimited stock first
       final product = products.firstWhere(
         (p) => p.id == item.product.id,
-        orElse: () => product_model.Product(
-          id: item.product.id,
-          name: item.product.name,
-          department: 'Other',
-          price: item.product.price,
-          unit: item.product.unit,
-          stockLevel: 0,
-          minimumStock: 0,
-        ),
+        orElse: () {
+          print('[EXCEL SERVICE]     -> WARNING: Product ${item.product.name} (ID: ${item.product.id}) not found in products list, creating fallback');
+          return product_model.Product(
+            id: item.product.id,
+            name: item.product.name,
+            department: 'Other',
+            price: item.product.price,
+            unit: item.product.unit,
+            stockLevel: 0,
+            minimumStock: 0,
+          );
+        },
       );
       
-      // Skip unlimited stock products
+      // Skip unlimited stock products (they're always available, no need to order)
       if (product.unlimitedStock) {
         print('[EXCEL SERVICE]     -> Skipping ${item.product.name} (unlimited stock)');
         return false;
       }
       
-      print('[EXCEL SERVICE]     -> Will add ${item.product.name} to Stock to Order sheet');
-      return true;
+      // Check if this item needs to be ordered:
+      // 1. Stock reservation failed (out of stock)
+      // 2. No reservation was made (intentional no-reserve for bulk items)
+      // Also check stockAction directly as fallback
+      final stockAction = item.stockAction;
+      final isNoReserve = item.isNoReserve || stockAction == 'no_reserve';
+      final isFailed = item.isStockReservationFailed || 
+          (stockAction == 'reserve' && item.stockResult != null && 
+           !(item.stockResult!['success'] as bool? ?? true));
+      final needsOrdering = isFailed || isNoReserve;
+      
+      if (needsOrdering) {
+        print('[EXCEL SERVICE]     -> ✅ WILL ADD ${item.product.name} to Stock to Order sheet (isNoReserve=$isNoReserve, isFailed=$isFailed, stockAction=$stockAction)');
+        return true;
+      } else {
+        print('[EXCEL SERVICE]     -> ❌ Skipping ${item.product.name} (stockAction=$stockAction, isNoReserve=${item.isNoReserve}, isFailed=${item.isStockReservationFailed})');
+        return false;
+      }
     }).toList();
     
     // Sort alphabetically
@@ -540,10 +615,16 @@ class ExcelService {
       
       final shortage = (item.quantity - product.stockLevel).clamp(0.0, double.infinity).toDouble();
       
+      // Use same fallback logic for status determination
+      final isNoReserve = item.isNoReserve || item.stockAction == 'no_reserve';
+      final isFailed = item.isStockReservationFailed || 
+          (item.stockAction == 'reserve' && item.stockResult != null && 
+           !(item.stockResult!['success'] as bool? ?? true));
+      
       String status = '';
-      if (item.isStockReservationFailed) {
+      if (isFailed) {
         status = '❌ Reservation Failed';
-      } else if (item.isNoReserve) {
+      } else if (isNoReserve) {
         status = '🔓 No Reservation';
       } else if (shortage > 0) {
         status = '📦 Insufficient Stock';
@@ -581,5 +662,137 @@ class ExcelService {
     }
     
     print('[EXCEL SERVICE] Stock to Order sheet built successfully');
+  }
+
+  /// Build the Errors sheet - lists all items with errors/issues
+  static Future<void> _buildErrorsSheet(Excel excel, Order order, List<product_model.Product> products) async {
+    print('[EXCEL SERVICE] Building Errors sheet');
+    
+    // Filter items with errors
+    final itemsWithErrors = order.items.where((item) {
+      // Check for stock reservation failures
+      if (item.isStockReservationFailed) return true;
+      
+      // Check for source product issues
+      if (item.sourceProductId != null && item.sourceProductStockLevel != null && item.sourceQuantity != null) {
+        if (item.sourceQuantity > item.sourceProductStockLevel!) return true;
+      }
+      
+      // Check for no reserve items with no stock
+      if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) return true;
+      
+      return false;
+    }).toList();
+    
+    // If no errors, skip creating the sheet
+    if (itemsWithErrors.isEmpty) {
+      print('[EXCEL SERVICE] No items with errors - skipping Errors sheet');
+      return;
+    }
+    
+    final sheet = excel['Errors'];
+    
+    // Sheet title
+    sheet.cell(CellIndex.indexByString('A1')).value = TextCellValue('ITEMS WITH ERRORS/ISSUES');
+    sheet.cell(CellIndex.indexByString('A1')).cellStyle = CellStyle(
+      bold: true,
+      fontSize: 16,
+    );
+    
+    // Order info
+    int currentRow = 3;
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('Order Number:');
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = TextCellValue(order.orderNumber);
+    currentRow++;
+    
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = TextCellValue('Restaurant:');
+    sheet.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = TextCellValue(order.restaurant.name);
+    currentRow += 2;
+    
+    // Table headers
+    final headers = ['Product', 'Quantity', 'Unit', 'Error Type', 'Error Details', 'Action Required'];
+    for (int i = 0; i < headers.length; i++) {
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = TextCellValue(headers[i]);
+      sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = CellStyle(
+        bold: true,
+        horizontalAlign: HorizontalAlign.Center,
+        backgroundColor: excel.Color.fromHex('#FFE6E6'), // Light red background
+      );
+    }
+    currentRow++;
+    
+    // Add error items
+    for (final item in itemsWithErrors) {
+      String errorType = 'Unknown';
+      String errorDetails = '';
+      String actionRequired = '';
+      
+      // Determine error type and details
+      if (item.isStockReservationFailed && item.stockResult != null) {
+        errorType = 'Stock Reservation Failed';
+        final message = item.stockResult!['message'] as String?;
+        if (message != null && message.isNotEmpty) {
+          errorDetails = message;
+        } else {
+          errorDetails = 'Insufficient stock available';
+        }
+        
+        // Add stock details
+        final availableStock = item.stockResult!['available_stock'];
+        final requiredQuantity = item.stockResult!['required_quantity'];
+        if (availableStock != null || requiredQuantity != null) {
+          errorDetails += '\n';
+          if (availableStock != null) {
+            errorDetails += 'Available: $availableStock ${item.product.unit}\n';
+          }
+          if (requiredQuantity != null) {
+            errorDetails += 'Required: $requiredQuantity ${item.product.unit}';
+          }
+        }
+        
+        actionRequired = 'Order stock or find alternative product';
+      } else if (item.sourceProductId != null && item.sourceProductStockLevel != null && item.sourceQuantity != null) {
+        if (item.sourceQuantity > item.sourceProductStockLevel!) {
+          errorType = 'Source Product Insufficient';
+          errorDetails = 'Source product ${item.sourceProductName} has insufficient stock.\n'
+              'Available: ${item.sourceProductStockLevel}${item.sourceProductUnit ?? ''}\n'
+              'Required: ${item.sourceQuantity}${item.sourceProductUnit ?? ''}';
+          actionRequired = 'Check source product stock or use different source';
+        }
+      } else if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
+        errorType = 'No Stock Available';
+        errorDetails = 'Product is out of stock and no reservation was made.\n'
+            'Current Stock: ${item.product.stockLevel} ${item.product.unit}';
+        actionRequired = 'Order stock or confirm customer wants to proceed without stock';
+      }
+      
+      final rowData = [
+        TextCellValue(item.product.name),
+        DoubleCellValue(item.quantity),
+        TextCellValue(item.product.unit ?? ''),
+        TextCellValue(errorType),
+        TextCellValue(errorDetails),
+        TextCellValue(actionRequired),
+      ];
+      
+      for (int i = 0; i < rowData.length; i++) {
+        final cell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow));
+        cell.value = rowData[i];
+        // Highlight error rows with light red background
+        if (i == 0) { // Only apply to first cell to avoid over-styling
+          cell.cellStyle = CellStyle(
+            backgroundColor: excel.Color.fromHex('#FFF0F0'),
+          );
+        }
+      }
+      currentRow++;
+    }
+    
+    // Auto-fit columns
+    for (int i = 0; i < headers.length; i++) {
+      sheet.setColumnAutoFit(i);
+    }
+    
+    print('[EXCEL SERVICE] Errors sheet built successfully with ${itemsWithErrors.length} items');
   }
 }

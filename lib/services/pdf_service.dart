@@ -118,9 +118,29 @@ class PdfService {
     
     // THEN: Add sectioned pages for reserved and to order items
     final reservedItems = items.where((item) => item.isStockReserved).toList();
-    final toOrderItems = items.where((item) => item.isNoReserve || item.isStockReservationFailed).toList();
+    
+    // Use same filtering logic as Excel - check stockAction directly as fallback
+    final toOrderItems = items.where((item) {
+      // Check if this item needs to be ordered:
+      // 1. Stock reservation failed (out of stock)
+      // 2. No reservation was made (intentional no-reserve for bulk items)
+      // Also check stockAction directly as fallback (same as Excel)
+      final isNoReserve = item.isNoReserve || item.stockAction == 'no_reserve';
+      final isFailed = item.isStockReservationFailed || 
+          (item.stockAction == 'reserve' && item.stockResult != null && 
+           !(item.stockResult!['success'] as bool? ?? true));
+      final needsOrdering = isFailed || isNoReserve;
+      
+      // Exclude items that are reserved (they're already handled)
+      if (item.isStockReserved) {
+        return false;
+      }
+      
+      return needsOrdering;
+    }).toList();
     
     print('[PDF SERVICE] Reserved: ${reservedItems.length}, To Order: ${toOrderItems.length}');
+    print('[PDF SERVICE] To Order items: ${toOrderItems.map((i) => '${i.product.name} (stockAction=${i.stockAction}, isNoReserve=${i.isNoReserve}, isFailed=${i.isStockReservationFailed})').join(', ')}');
     
     // Add reserved items page if there are any
     if (reservedItems.isNotEmpty) {

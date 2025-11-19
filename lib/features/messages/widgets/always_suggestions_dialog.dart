@@ -890,8 +890,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                             final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
                             final inStock = selectedSuggestion['in_stock'] as bool? ?? false;
                             final unlimitedStock = selectedSuggestion['unlimited_stock'] as bool? ?? false;
-                            if (!inStock && !unlimitedStock && availableQuantity <= 0) {
-                              // Auto-enable source product when out of stock
+                            final stockAction = _stockActions[originalText] ?? 'reserve';
+                            // Don't auto-enable source product if user chose 'no_reserve' (continue without alternatives)
+                            if (!inStock && !unlimitedStock && availableQuantity <= 0 && stockAction != 'no_reserve') {
+                              // Auto-enable source product when out of stock (unless user chose to continue)
                               if (_useSourceProduct[originalText] != true) {
                                 WidgetsBinding.instance.addPostFrameCallback((_) {
                                   if (mounted) {
@@ -1543,7 +1545,23 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         final unit = _units[originalText] ?? 'each';
         
         if (selectedSuggestion != null) {
-          final stockAction = _stockActions[originalText] ?? 'reserve';
+          // Check if product is out of stock
+          final stock = selectedSuggestion['stock'] as Map<String, dynamic>?;
+          final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+          final inStock = selectedSuggestion['in_stock'] as bool? ?? false;
+          final unlimitedStock = selectedSuggestion['unlimited_stock'] as bool? ?? false;
+          final isOutOfStock = !inStock && !unlimitedStock && availableQuantity <= 0;
+          
+          // Determine stock action - if out of stock and no source product selected, use 'no_reserve'
+          var stockAction = _stockActions[originalText] ?? 'reserve';
+          if (isOutOfStock && (_useSourceProduct[originalText] != true || _selectedSourceProducts[originalText] == null)) {
+            stockAction = 'no_reserve';
+            // Clear source product flags since we're proceeding without one
+            _useSourceProduct[originalText] = false;
+            _selectedSourceProducts.remove(originalText);
+            _sourceQuantities.remove(originalText);
+          }
+          
           final itemData = {
             'product_id': selectedSuggestion['product_id'],
             'product_name': selectedSuggestion['product_name'],
@@ -1555,7 +1573,9 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           };
           
           // Add source product data if using source product
-          if (_useSourceProduct[originalText] == true) {
+          // Skip source product requirement if stock action is 'no_reserve' (user chose to continue without alternatives)
+          // Only require source product if explicitly enabled AND user hasn't chosen to continue without alternatives
+          if (_useSourceProduct[originalText] == true && stockAction != 'no_reserve') {
             final sourceProduct = _selectedSourceProducts[originalText];
             final sourceQuantity = _sourceQuantities[originalText];
             
@@ -1567,7 +1587,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                 });
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('Please select a source product for "${selectedSuggestion['product_name']}"'),
+                    content: Text('Please select a source product for "${selectedSuggestion['product_name']}" or click "Continue" to order without stock'),
                     backgroundColor: Colors.red,
                     duration: const Duration(seconds: 4),
                   ),
@@ -1594,6 +1614,11 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             
             itemData['source_product_id'] = sourceProduct['id'];
             itemData['source_quantity'] = sourceQuantity;
+          } else if (_useSourceProduct[originalText] == true && stockAction == 'no_reserve') {
+            // User clicked Continue but _useSourceProduct is still true - clear it
+            _useSourceProduct[originalText] = false;
+            _selectedSourceProducts.remove(originalText);
+            _sourceQuantities.remove(originalText);
           }
           
           orderItems.add(itemData);

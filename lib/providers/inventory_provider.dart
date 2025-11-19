@@ -343,10 +343,10 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
         final isKgProduct = productUnit == 'kg';
         
         // For kg products: weight replaces quantity, weight is required
-        // For other products: quantity is required (count of packages)
+        // For other products: prefer weight if provided, otherwise quantity is required
         final hasValidData = isKgProduct 
             ? (weight > 0)  // Kg products require weight
-            : (countedQuantity > 0);  // Other products require quantity
+            : (weight > 0 || countedQuantity > 0);  // Other products: weight preferred, quantity fallback
         
         if (hasValidData) {
           final adjustmentType = adjustmentMode == 'set' ? 'finished_set' : 'finished_adjust';
@@ -355,8 +355,11 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
           try {
             // Build notes with comment if provided
             String notes;
+            final useWeight = isKgProduct ? weight > 0 : (weight > 0 || countedQuantity == 0);
             if (isKgProduct) {
               notes = 'Complete stock take: $actionText weight to ${weight}kg';
+            } else if (weight > 0) {
+              notes = 'Complete stock take: $actionText weight to ${weight}';
             } else {
               notes = 'Complete stock take: $actionText counted quantity to $countedQuantity';
             }
@@ -364,18 +367,20 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
               notes += '. $comment';
             }
             
-            // Always send both quantity and weight - backend will decide which to use based on unit
+            // Always send both quantity and weight - backend will prefer weight if provided
             await _apiService.adjustStock(productId, {
               'adjustment_type': adjustmentType,
               'quantity': countedQuantity,  // For non-kg products or reference
               'reason': adjustmentMode == 'set' ? 'complete_stock_take_set' : 'complete_stock_take_add',
               'notes': notes,
               'reference_number': referenceNumber,
-              if (weight > 0) 'weight': weight,  // Required for kg products
+              if (weight > 0) 'weight': weight,  // Backend will use weight if provided, even for non-kg products
             });
             adjustmentCount++;
             if (isKgProduct) {
               print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): ${weight}kg');
+            } else if (weight > 0) {
+              print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): ${weight} (using weight)');
             } else {
               print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): $countedQuantity');
             }
@@ -391,8 +396,8 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
           // Log warning for missing required data
           if (isKgProduct && weight == 0) {
             print('[INVENTORY] ⚠️ Skipping kg product $productName (ID: $productId) - weight is required but not provided');
-          } else if (!isKgProduct && countedQuantity == 0) {
-            print('[INVENTORY] ⚠️ Skipping $productName (ID: $productId) - quantity is required but not provided');
+          } else if (!isKgProduct && countedQuantity == 0 && weight == 0) {
+            print('[INVENTORY] ⚠️ Skipping $productName (ID: $productId) - quantity or weight is required but not provided');
           }
         }
       }

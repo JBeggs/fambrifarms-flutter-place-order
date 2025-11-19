@@ -652,8 +652,8 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
         );
         currentRow += 2;
         
-        // Table headers
-        final headers = ['Product', 'Quantity', 'Unit', 'Stock Status', 'Notes'];
+        // Table headers - add Errors/Issues column
+        final headers = ['Product', 'Quantity', 'Unit', 'Stock Status', 'Errors/Issues', 'Notes'];
         for (int i = 0; i < headers.length; i++) {
           sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
           sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
@@ -684,11 +684,54 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
             stockStatus = 'Reservation Failed';
           }
           
+          // Extract error information from stockResult
+          String errorField = '';
+          final List<String> errors = [];
+          
+          // Check for stock reservation failures
+          if (item.isStockReservationFailed && item.stockResult != null) {
+            final message = item.stockResult!['message'] as String?;
+            if (message != null && message.isNotEmpty) {
+              errors.add('Stock Reservation Failed: $message');
+            } else {
+              errors.add('Stock Reservation Failed: Insufficient stock available');
+            }
+            
+            // Check for available stock info
+            final availableStock = item.stockResult!['available_stock'];
+            if (availableStock != null) {
+              errors.add('Available Stock: $availableStock ${item.product.unit}');
+            }
+            
+            // Check for required quantity
+            final requiredQuantity = item.stockResult!['required_quantity'];
+            if (requiredQuantity != null) {
+              errors.add('Required: $requiredQuantity ${item.product.unit}');
+            }
+          }
+          
+          // Check for source product issues
+          if (item.sourceProductId != null && item.sourceProductName != null) {
+            if (item.sourceProductStockLevel != null && item.sourceQuantity != null) {
+              if (item.sourceQuantity > item.sourceProductStockLevel!) {
+                errors.add('Source Product Insufficient: ${item.sourceProductName} has ${item.sourceProductStockLevel}${item.sourceProductUnit ?? ''}, need ${item.sourceQuantity}${item.sourceProductUnit ?? ''}');
+              }
+            }
+          }
+          
+          // Check for no reserve items that might need attention
+          if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
+            errors.add('No Stock Available: Product is out of stock and no reservation was made');
+          }
+          
+          errorField = errors.join('\n');
+          
           final rowData = [
             excel.TextCellValue(productName),
             excel.DoubleCellValue(item.quantity),
             excel.TextCellValue(item.product.unit),
             excel.TextCellValue(stockStatus),
+            excel.TextCellValue(errorField),  // Errors/Issues column
             excel.TextCellValue(item.notes ?? ''),
           ];
           
@@ -713,6 +756,9 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
       
       // Add Stock to be Ordered sheet
       _addStockToOrderSheet(workbook, receivedOrders, products);
+      
+      // Add Errors sheet (if there are any errors)
+      _addErrorsSheet(workbook, receivedOrders, products);
       
       // Remove default Sheet1 AFTER creating all custom sheets
       if (workbook.sheets.containsKey('Sheet1')) {
@@ -979,14 +1025,6 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
         totalItems++;
         print('[MOBILE WORKBOOK]   - ${item.product.name}: stockAction=${item.stockAction}, isNoReserve=${item.isNoReserve}, isFailed=${item.isStockReservationFailed}');
         
-        // Only include items that need ordering (failed reservation or no reserve)
-        if (!item.isNoReserve && !item.isStockReservationFailed) {
-          continue;
-        }
-        
-        if (item.isNoReserve) noReserveCount++;
-        if (item.isStockReservationFailed) failedReserveCount++;
-        
         // Find corresponding product to check if it's unlimited stock
         final product = products.firstWhere(
           (p) => p.id == item.product.id,
@@ -1008,11 +1046,28 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
           continue;
         }
         
-        print('[MOBILE WORKBOOK]     -> Adding ${item.product.name} to Stock to Order sheet');
-        itemsToOrder.add({
-          'order': order,
-          'item': item,
-        });
+        // Check if this item needs to be ordered:
+        // 1. Stock reservation failed (out of stock)
+        // 2. No reservation was made (intentional no-reserve for bulk items)
+        // Also check stockAction directly as fallback
+        final isNoReserve = item.isNoReserve || item.stockAction == 'no_reserve';
+        final isFailed = item.isStockReservationFailed || 
+            (item.stockAction == 'reserve' && item.stockResult != null && 
+             !(item.stockResult!['success'] as bool? ?? true));
+        final needsOrdering = isFailed || isNoReserve;
+        
+        if (needsOrdering) {
+          if (isNoReserve) noReserveCount++;
+          if (isFailed) failedReserveCount++;
+          
+          print('[MOBILE WORKBOOK]     -> Adding ${item.product.name} to Stock to Order sheet (isNoReserve=$isNoReserve, isFailed=$isFailed, stockAction=${item.stockAction})');
+          itemsToOrder.add({
+            'order': order,
+            'item': item,
+          });
+        } else {
+          print('[MOBILE WORKBOOK]     -> Skipping ${item.product.name} (stockAction=${item.stockAction}, isNoReserve=${item.isNoReserve}, isFailed=${item.isStockReservationFailed})');
+        }
       }
     }
     
@@ -1059,6 +1114,151 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
     }
     
     print('[MOBILE WORKBOOK] Stock to Order sheet created successfully');
+  }
+
+  /// Add Errors sheet - lists all items with errors/issues across all orders
+  void _addErrorsSheet(excel.Excel workbook, List<Order> orders, List<product_model.Product> products) {
+    print('[MOBILE WORKBOOK] Building Errors sheet');
+    
+    // Collect all items with errors from all orders
+    final List<Map<String, dynamic>> itemsWithErrors = [];
+    
+    for (final order in orders) {
+      for (final item in order.items) {
+        // Check for stock reservation failures
+        if (item.isStockReservationFailed) {
+          itemsWithErrors.add({
+            'order': order,
+            'item': item,
+          });
+        }
+        // Check for source product issues
+        else if (item.sourceProductId != null && item.sourceProductStockLevel != null && item.sourceQuantity != null) {
+          if (item.sourceQuantity > item.sourceProductStockLevel!) {
+            itemsWithErrors.add({
+              'order': order,
+              'item': item,
+            });
+          }
+        }
+        // Check for no reserve items with no stock
+        else if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
+          itemsWithErrors.add({
+            'order': order,
+            'item': item,
+          });
+        }
+      }
+    }
+    
+    // If no errors, skip creating the sheet
+    if (itemsWithErrors.isEmpty) {
+      print('[MOBILE WORKBOOK] No items with errors - skipping Errors sheet');
+      return;
+    }
+    
+    final sheet = workbook['Errors'];
+    
+    // Sheet title
+    sheet.cell(excel.CellIndex.indexByString('A1')).value = excel.TextCellValue('ITEMS WITH ERRORS/ISSUES - ALL ORDERS');
+    sheet.cell(excel.CellIndex.indexByString('A1')).cellStyle = excel.CellStyle(
+      bold: true,
+      fontSize: 16,
+    );
+    
+    // Table headers
+    int currentRow = 3;
+    final headers = ['Order Number', 'Restaurant', 'Product', 'Quantity', 'Unit', 'Error Type', 'Error Details', 'Action Required'];
+    for (int i = 0; i < headers.length; i++) {
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+        horizontalAlign: excel.HorizontalAlign.Center,
+        backgroundColor: excel.Color.fromHex('#FFE6E6'), // Light red background
+      );
+    }
+    currentRow++;
+    
+    // Add error items
+    for (final errorData in itemsWithErrors) {
+      final order = errorData['order'] as Order;
+      final item = errorData['item'] as OrderItem;
+      
+      String errorType = 'Unknown';
+      String errorDetails = '';
+      String actionRequired = '';
+      
+      // Determine error type and details
+      if (item.isStockReservationFailed && item.stockResult != null) {
+        errorType = 'Stock Reservation Failed';
+        final message = item.stockResult!['message'] as String?;
+        if (message != null && message.isNotEmpty) {
+          errorDetails = message;
+        } else {
+          errorDetails = 'Insufficient stock available';
+        }
+        
+        // Add stock details
+        final availableStock = item.stockResult!['available_stock'];
+        final requiredQuantity = item.stockResult!['required_quantity'];
+        if (availableStock != null || requiredQuantity != null) {
+          errorDetails += '\n';
+          if (availableStock != null) {
+            errorDetails += 'Available: $availableStock ${item.product.unit}\n';
+          }
+          if (requiredQuantity != null) {
+            errorDetails += 'Required: $requiredQuantity ${item.product.unit}';
+          }
+        }
+        
+        actionRequired = 'Order stock or find alternative product';
+      } else if (item.sourceProductId != null && item.sourceProductStockLevel != null && item.sourceQuantity != null) {
+        if (item.sourceQuantity > item.sourceProductStockLevel!) {
+          errorType = 'Source Product Insufficient';
+          errorDetails = 'Source product ${item.sourceProductName} has insufficient stock.\n'
+              'Available: ${item.sourceProductStockLevel}${item.sourceProductUnit ?? ''}\n'
+              'Required: ${item.sourceQuantity}${item.sourceProductUnit ?? ''}';
+          actionRequired = 'Check source product stock or use different source';
+        }
+      } else if (item.isNoReserve && item.product.stockLevel != null && item.product.stockLevel! <= 0) {
+        errorType = 'No Stock Available';
+        errorDetails = 'Product is out of stock and no reservation was made.\n'
+            'Current Stock: ${item.product.stockLevel} ${item.product.unit}';
+        actionRequired = 'Order stock or confirm customer wants to proceed without stock';
+      }
+      
+      final restaurantName = order.restaurant.profile?.businessName ?? order.restaurant.name;
+      
+      final rowData = [
+        excel.TextCellValue(order.orderNumber),
+        excel.TextCellValue(restaurantName),
+        excel.TextCellValue(item.product.name),
+        excel.DoubleCellValue(item.quantity),
+        excel.TextCellValue(item.product.unit ?? ''),
+        excel.TextCellValue(errorType),
+        excel.TextCellValue(errorDetails),
+        excel.TextCellValue(actionRequired),
+      ];
+      
+      for (int i = 0; i < rowData.length; i++) {
+        final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow));
+        cell.value = rowData[i];
+        // Highlight error rows with light red background
+        if (i == 0) { // Only apply to first cell to avoid over-styling
+          cell.cellStyle = excel.CellStyle(
+            backgroundColor: excel.Color.fromHex('#FFF0F0'),
+          );
+        }
+      }
+      currentRow++;
+    }
+    
+    // Auto-fit columns
+    for (int i = 0; i < headers.length; i++) {
+      sheet.setColumnAutoFit(i);
+    }
+    
+    print('[MOBILE WORKBOOK] Errors sheet built successfully with ${itemsWithErrors.length} items');
   }
 
   Widget _buildFilterChip(String label, String value, String currentValue, Function(String) onSelected) {
