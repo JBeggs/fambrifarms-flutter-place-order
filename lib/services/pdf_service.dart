@@ -3,6 +3,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/order.dart';
+import '../utils/stock_formatter.dart';
 
 class PdfService {
   static const String _ordersSubfolder = 'Orders';
@@ -186,13 +187,13 @@ class PdfService {
                   decoration: const pw.BoxDecoration(
                     border: pw.Border(top: pw.BorderSide(color: PdfColors.grey300)),
                   ),
-                  child: pw.Row(
-                    children: [
-                      pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
-                      pw.Expanded(flex: 2, child: pw.Text('${item.quantity} ${item.unit ?? ''}', style: const pw.TextStyle(fontSize: 8))),
-                      pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
-                    ],
-                  ),
+                    child: pw.Row(
+                      children: [
+                        pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
+                        pw.Expanded(flex: 2, child: pw.Text('${_formatQuantityForUnit(item.quantity, item.unit ?? 'each')} ${item.unit ?? ''}', style: const pw.TextStyle(fontSize: 8))),
+                        pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
+                      ],
+                    ),
                 ),
               );
             }
@@ -295,13 +296,13 @@ class PdfService {
                   decoration: const pw.BoxDecoration(
                     border: pw.Border(top: pw.BorderSide(color: PdfColors.grey300)),
                   ),
-                  child: pw.Row(
-                    children: [
-                      pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
-                      pw.Expanded(flex: 2, child: pw.Text('${item.quantity} ${item.unit ?? ''}', style: const pw.TextStyle(fontSize: 8))),
-                      pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
-                    ],
-                  ),
+                    child: pw.Row(
+                      children: [
+                        pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
+                        pw.Expanded(flex: 2, child: pw.Text('${_formatQuantityForUnit(item.quantity, item.unit ?? 'each')} ${item.unit ?? ''}', style: const pw.TextStyle(fontSize: 8))),
+                        pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
+                      ],
+                    ),
                 ),
               );
             }
@@ -412,9 +413,12 @@ class PdfService {
     
     // Show source product info if applicable
     if (item.sourceProductName != null && item.sourceQuantity != null) {
+      final sourceUnit = item.sourceProductUnit ?? 'each';
+      // Format source quantity based on unit type
+      final sourceQtyDisplay = _formatQuantityForUnit(item.sourceQuantity!, sourceUnit);
       infoLines.add(
         pw.Text(
-          'Stock from: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''}) - ✅ RESERVED',
+          'Stock from: ${item.sourceProductName} ($sourceQtyDisplay $sourceUnit) - ✅ RESERVED',
           style: pw.TextStyle(fontSize: 6, color: PdfColors.orange700, fontStyle: pw.FontStyle.italic, fontWeight: pw.FontWeight.bold),
         ),
       );
@@ -478,5 +482,25 @@ class PdfService {
     if (item.isNoReserve) return 'No Reserve';
     if (item.isStockReservationFailed) return 'Failed Reserve';
     return 'Pending';
+  }
+
+  /// Format quantity based on unit type
+  /// For discrete units (punnet, each, box, etc.): show whole numbers
+  /// For continuous units (kg, g, ml, l): show decimals
+  static String _formatQuantityForUnit(double quantity, String unit) {
+    final unitLower = unit.toLowerCase();
+    
+    // For continuous units (kg, g, ml, l), show with decimals
+    if (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l') {
+      return quantity.toStringAsFixed(1);
+    }
+    
+    // For discrete units (punnet, each, box, etc.), show whole numbers
+    if (quantity % 1 == 0) {
+      return quantity.toInt().toString();
+    } else {
+      // If it's a decimal, round to nearest whole number for discrete units
+      return quantity.round().toString();
+    }
   }
 }

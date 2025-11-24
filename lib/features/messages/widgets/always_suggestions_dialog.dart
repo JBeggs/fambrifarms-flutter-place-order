@@ -8,6 +8,7 @@ import '../../../services/api_service.dart';
 import '../../../services/pdf_service.dart';
 import '../../../services/excel_service.dart';
 import '../../../utils/messages_provider.dart';
+import '../../../utils/stock_formatter.dart';
 import '../../../providers/products_provider.dart';
 import '../../../models/product.dart' as product_model;
 import '../utils/order_items_persistence.dart';
@@ -270,44 +271,17 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   }
 
   // Helper function to format stock quantity display
-  // For non-kg units: show both count (whole number) and weight (kg)
-  // For kg units: show kg with decimals
-  // Note: For non-kg products, stock is stored in kg and we convert to count using packaging_size
-  String _formatStockQuantity(double quantity, String unit, {String? packagingSize, double? weightKg}) {
-    final unitLower = unit.toLowerCase();
-    
-    // If unit is kg/g/ml/l, show with decimals
-    if (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l') {
-      return quantity.toStringAsFixed(1);
-    }
-    
-    // For non-kg units (punnet, each, box, etc.), stock is stored in kg
-    // Convert to count using packaging_size and show both count and kg
-    if (packagingSize != null && packagingSize.isNotEmpty) {
-      try {
-        final sizeLower = packagingSize.toLowerCase().trim();
-        double sizeKg = 0;
-        
-        // Parse packaging size (e.g., "200g" or "0.1kg")
-        if (sizeLower.endsWith('kg')) {
-          sizeKg = double.parse(sizeLower.replaceAll('kg', '').trim());
-        } else if (sizeLower.endsWith('g')) {
-          sizeKg = double.parse(sizeLower.replaceAll('g', '').trim()) / 1000.0;
-        }
-        
-        if (sizeKg > 0 && quantity > 0) {
-          // Quantity is in kg, convert to count (round to nearest whole number)
-          final count = (quantity / sizeKg).round();
-          // Show count and weight: "6 (0.6 kg)" for 6 punnets = 0.6 kg
-          return '$count (${quantity.toStringAsFixed(1)} kg)';
-        }
-      } catch (e) {
-        // If parsing fails, fall through to default behavior
-      }
-    }
-    
-    // Default: show as whole number for discrete units (if no packaging_size available)
-    return quantity.toInt().toString();
+  // Use shared utility for formatting stock quantities
+  String _formatStockQuantity({
+    required String unit,
+    int? count,
+    double? weightKg,
+  }) {
+    return formatStockQuantity(
+      unit: unit,
+      count: count,
+      weightKg: weightKg,
+    );
   }
 
   Widget _buildStockStatusBadge(Map<String, dynamic> suggestion) {
@@ -331,27 +305,51 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       );
     }
     
-    final available = (stock['available_quantity'] as num?)?.toDouble() ?? 0.0;
-    final reserved = (stock['reserved_quantity'] as num?)?.toDouble() ?? 0.0;
+    // Use backend-provided count and weight values
+    final availableCount = (stock['available_quantity_count'] as num?)?.toInt();
+    final availableWeightKg = (stock['available_quantity_kg'] as num?)?.toDouble();
+    final reservedCount = (stock['reserved_quantity_count'] as num?)?.toInt();
+    final reservedWeightKg = (stock['reserved_quantity_kg'] as num?)?.toDouble();
+    
+    // Fallback to original available_quantity if new fields not available (backward compatibility)
+    final available = availableCount != null || availableWeightKg != null
+        ? ((availableCount ?? 0) > 0 || (availableWeightKg ?? 0) > 0)
+        : ((stock['available_quantity'] as num?)?.toDouble() ?? 0.0) > 0;
+    
+    final reserved = reservedCount != null || reservedWeightKg != null
+        ? ((reservedCount ?? 0) > 0 || (reservedWeightKg ?? 0) > 0)
+        : ((stock['reserved_quantity'] as num?)?.toDouble() ?? 0.0) > 0;
+    
     final unit = suggestion['unit'] as String? ?? 'each';
-    final packagingSize = suggestion['packaging_size'] as String?;
-    final weightKg = stock['weight_kg'] as num?;
     
     String statusText;
     Color bgColor;
     Color textColor;
     
-    if (available > 0) {
-      final availableDisplay = _formatStockQuantity(available, unit, packagingSize: packagingSize, weightKg: weightKg?.toDouble());
+    if (available) {
+      // Use new format with count and weight
+      final availableDisplay = _formatStockQuantity(
+        unit: unit,
+        count: availableCount,
+        weightKg: availableWeightKg,
+      );
       statusText = '$availableDisplay $unit AVAIL';
       bgColor = Colors.green.withValues(alpha: 0.2);
       textColor = Colors.green.shade700;
-      if (reserved > 0) {
-        final reservedDisplay = _formatStockQuantity(reserved, unit, packagingSize: packagingSize);
+      if (reserved) {
+        final reservedDisplay = _formatStockQuantity(
+          unit: unit,
+          count: reservedCount,
+          weightKg: reservedWeightKg,
+        );
         statusText += ' ($reservedDisplay $unit res)';
       }
-    } else if (reserved > 0) {
-      final reservedDisplay = _formatStockQuantity(reserved, unit, packagingSize: packagingSize);
+    } else if (reserved) {
+      final reservedDisplay = _formatStockQuantity(
+        unit: unit,
+        count: reservedCount,
+        weightKg: reservedWeightKg,
+      );
       statusText = '$reservedDisplay $unit RES ONLY';
       bgColor = Colors.orange.withValues(alpha: 0.2);
       textColor = Colors.orange.shade700;
@@ -2209,20 +2207,28 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           
           // Show stock availability info
           const SizedBox(height: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: inStock ? Colors.green.withValues(alpha: 0.1) : Colors.orange.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              'Available: ${_formatStockQuantity(availableQuantity, unit, packagingSize: selectedSuggestion?['packaging_size'] as String?)} $unit',
-              style: TextStyle(
-                fontSize: 10,
-                color: inStock ? Colors.green.shade700 : Colors.orange.shade700,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+          Builder(
+            builder: (context) {
+              final stock = selectedSuggestion?['stock'] as Map<String, dynamic>?;
+              final availableCount = (stock?['available_quantity_count'] as num?)?.toInt();
+              final availableWeightKg = (stock?['available_quantity_kg'] as num?)?.toDouble();
+              
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: inStock ? Colors.green.withValues(alpha: 0.1) : Colors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'Available: ${_formatStockQuantity(unit: unit, count: availableCount, weightKg: availableWeightKg)} $unit',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: inStock ? Colors.green.shade700 : Colors.orange.shade700,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              );
+            },
           ),
           
           // Show explanation based on selected action
@@ -2708,10 +2714,15 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     Map<String, dynamic> suggestion,
   ) async {
     final stock = suggestion['stock'] as Map<String, dynamic>?;
-    final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+    final availableCount = (stock?['available_quantity_count'] as num?)?.toInt();
+    final availableWeightKg = (stock?['available_quantity_kg'] as num?)?.toDouble();
+    // Fallback to original available_quantity for backward compatibility
+    final availableQuantity = availableCount != null || availableWeightKg != null
+        ? ((availableCount ?? 0) > 0 || (availableWeightKg ?? 0) > 0)
+        : ((stock?['available_quantity'] as num?)?.toDouble() ?? 0.0) > 0;
     final inStock = suggestion['in_stock'] as bool? ?? false;
     final unlimitedStock = suggestion['unlimited_stock'] as bool? ?? false;
-    final hasStock = availableQuantity > 0 || inStock || unlimitedStock;
+    final hasStock = availableQuantity || inStock || unlimitedStock;
     
     // Check if there are in-stock alternatives if this product is out of stock
     final allSuggestions = _getSuggestionsForItem(originalText);
@@ -2781,7 +2792,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                               hasStock
                                   ? (unlimitedStock 
                                       ? '🌱 Always Available'
-                                      : 'In Stock: ${_formatStockQuantity(availableQuantity, suggestion['unit'] ?? 'each', packagingSize: suggestion['packaging_size'] as String?)} ${suggestion['unit'] ?? ''}')
+                                      : 'In Stock: ${_formatStockQuantity(unit: suggestion['unit'] ?? 'each', count: availableCount, weightKg: availableWeightKg)} ${suggestion['unit'] ?? ''}')
                                   : 'Out of Stock',
                               style: TextStyle(
                                 fontSize: 12,
@@ -3139,7 +3150,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                 const SizedBox(height: 8),
                 ...inStockAlternatives.map((alt) {
                   final altStock = alt['stock'] as Map<String, dynamic>?;
-                  final altAvailableQuantity = (altStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+                  final altAvailableCount = (altStock?['available_quantity_count'] as num?)?.toInt();
+                  final altAvailableWeightKg = (altStock?['available_quantity_kg'] as num?)?.toDouble();
                   final altInStock = alt['in_stock'] as bool? ?? false;
                   final altUnlimitedStock = alt['unlimited_stock'] as bool? ?? false;
                   
@@ -3190,7 +3202,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                   Text(
                                     altUnlimitedStock
                                         ? '🌱 Always Available'
-                                        : 'Stock: ${_formatStockQuantity(altAvailableQuantity, alt['unit'] ?? 'each', packagingSize: alt['packaging_size'] as String?)} ${alt['unit'] ?? ''}',
+                                        : 'Stock: ${_formatStockQuantity(unit: alt['unit'] ?? 'each', count: altAvailableCount, weightKg: altAvailableWeightKg)} ${alt['unit'] ?? ''}',
                                     style: TextStyle(
                                       fontSize: 10,
                                       color: Colors.grey[600],
@@ -3252,7 +3264,12 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                       itemBuilder: (context, index) {
                         final sourceSuggestion = productsWithStock[index];
                         final sourceStock = sourceSuggestion['stock'] as Map<String, dynamic>?;
-                        final sourceAvailableQuantity = (sourceStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+                        final sourceAvailableCount = (sourceStock?['available_quantity_count'] as num?)?.toInt();
+                        final sourceAvailableWeightKg = (sourceStock?['available_quantity_kg'] as num?)?.toDouble();
+                        // Fallback for backward compatibility
+                        final sourceAvailableQuantity = sourceAvailableCount != null || sourceAvailableWeightKg != null
+                            ? ((sourceAvailableCount ?? 0) > 0 || (sourceAvailableWeightKg ?? 0) > 0)
+                            : ((sourceStock?['available_quantity'] as num?)?.toDouble() ?? 0.0) > 0;
                         final sourceInStock = sourceSuggestion['in_stock'] as bool? ?? false;
                         final sourceUnlimitedStock = sourceSuggestion['unlimited_stock'] as bool? ?? false;
                         final sourceProductId = sourceSuggestion['product_id'] as int?;
@@ -3268,7 +3285,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                   'id': sourceProductId,
                                   'name': sourceSuggestion['product_name'] ?? '',
                                   'unit': sourceSuggestion['unit'] ?? '',
-                                  'stockLevel': sourceAvailableQuantity,
+                                  'stockLevel': (sourceAvailableCount ?? 0) > 0 ? sourceAvailableCount : (sourceAvailableWeightKg ?? 0.0),
                                 };
                                 _useSourceProduct[originalText] = true;
                               });
@@ -3309,7 +3326,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                         Text(
                                           sourceUnlimitedStock
                                               ? '🌱 Always Available'
-                                              : 'Stock: ${_formatStockQuantity(sourceAvailableQuantity, sourceSuggestion['unit'] ?? 'each', packagingSize: sourceSuggestion['packaging_size'] as String?)} ${sourceSuggestion['unit'] ?? ''}',
+                                              : 'Stock: ${_formatStockQuantity(unit: sourceSuggestion['unit'] ?? 'each', count: sourceAvailableCount, weightKg: sourceAvailableWeightKg)} ${sourceSuggestion['unit'] ?? ''}',
                                           style: TextStyle(
                                             fontSize: 9,
                                             color: Colors.grey[600],

@@ -197,10 +197,11 @@ class BulkStockTakePdfGenerator {
           ? '🌱 ${product.name}'
           : product.name;
       
-      // Standard display - always show count in Stock Counted column
-      final stockCountedDisplay = countedStock % 1 == 0 
-          ? countedStock.toInt().toString() 
-          : countedStock.toStringAsFixed(2);
+      // Format stock counted based on unit type
+      // For discrete units: show whole numbers
+      // For continuous units: show decimals
+      final productUnit = (product.unit ?? '').toLowerCase().trim();
+      final stockCountedDisplay = _formatStockCounted(countedStock, productUnit);
       
       final commentDisplay = comment.isNotEmpty ? comment : '-';
       
@@ -209,7 +210,6 @@ class BulkStockTakePdfGenerator {
       final List<String> errors = [];
       
       // Check for missing required data
-      final productUnit = (product.unit ?? '').toLowerCase().trim();
       final isKgProduct = productUnit == 'kg';
       
       if (isKgProduct && weight <= 0) {
@@ -404,8 +404,10 @@ class BulkStockTakePdfGenerator {
         ? '🌱 ${product.name}'
         : product.name;
     
-    // Standard values - always show count in Stock Counted column
-    final stockCountedValue = excel.DoubleCellValue(countedStock);
+    // Format stock counted based on unit type
+    final productUnit = (product.unit ?? '').toLowerCase().trim();
+    final stockCountedDisplay = _formatStockCounted(countedStock, productUnit);
+    final stockCountedValue = excel.TextCellValue(stockCountedDisplay);
     final commentValue = comment.isNotEmpty 
         ? excel.TextCellValue(comment)
         : excel.TextCellValue('-');
@@ -425,7 +427,6 @@ class BulkStockTakePdfGenerator {
     final List<String> errors = [];
     
     // Check for missing required data
-    final productUnit = (product.unit ?? '').toLowerCase().trim();
     final isKgProduct = productUnit == 'kg';
     
     if (isKgProduct && weight <= 0) {
@@ -609,6 +610,26 @@ class BulkStockTakePdfGenerator {
     }
     
     print('[STOCK_TAKE_EXCEL] Errors sheet built successfully with ${entriesWithErrors.length} entries');
+  }
+
+  /// Format stock counted based on unit type
+  /// For discrete units (punnet, each, box, etc.): show whole numbers
+  /// For continuous units (kg, g, ml, l): show decimals
+  static String _formatStockCounted(double countedStock, String unit) {
+    final unitLower = unit.toLowerCase();
+    
+    // For continuous units (kg, g, ml, l), show with decimals
+    if (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l') {
+      return countedStock.toStringAsFixed(1);
+    }
+    
+    // For discrete units (punnet, each, box, etc.), show whole numbers
+    if (countedStock % 1 == 0) {
+      return countedStock.toInt().toString();
+    } else {
+      // If it's a decimal, round to nearest whole number for discrete units
+      return countedStock.round().toString();
+    }
   }
 }
 

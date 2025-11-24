@@ -3,6 +3,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:excel/excel.dart';
 import '../models/order.dart';
 import '../models/product.dart' as product_model;
+import '../utils/stock_formatter.dart';
 
 class ExcelService {
   static const String _ordersSubfolder = 'Orders';
@@ -224,7 +225,10 @@ class ExcelService {
       // Product name with source product info and notes
       String productName = item.product.name;
       if (item.sourceProductName != null && item.sourceQuantity != null) {
-        productName += ' [Stock from: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''})]';
+        final sourceUnit = item.sourceProductUnit ?? 'each';
+        // Format source quantity based on unit type
+        final sourceQtyDisplay = _formatQuantityForUnit(item.sourceQuantity!, sourceUnit);
+        productName += ' [Stock from: ${item.sourceProductName} ($sourceQtyDisplay $sourceUnit)]';
       }
       if (item.notes?.isNotEmpty == true) {
         productName += ' (${item.notes})';
@@ -328,9 +332,12 @@ class ExcelService {
         notesField += 'Source Product Reserved: ${item.sourceProductName} (${item.sourceQuantity}${item.sourceProductUnit ?? ''})';
       }
       
+      // Format quantity based on unit type
+      final quantityDisplay = _formatQuantityForUnit(item.quantity, item.product.unit);
+      
       final rowData = [
         TextCellValue(productName),
-        DoubleCellValue(item.quantity),
+        TextCellValue(quantityDisplay),  // Use formatted quantity instead of raw number
         TextCellValue(item.product.unit),
         // DoubleCellValue(item.price),
         // DoubleCellValue(itemTotal),
@@ -429,12 +436,17 @@ class ExcelService {
         ),
       );
       
+      // Format quantities based on unit type
+      final quantityDisplay = _formatQuantityForUnit(item.quantity, item.product.unit);
+      final reservedQtyDisplay = _formatQuantityForUnit(item.quantity, item.product.unit);
+      final stockLevelDisplay = _formatQuantityForUnit(product.stockLevel, item.product.unit);
+      
       final rowData = [
         TextCellValue(item.product.name),
-        DoubleCellValue(item.quantity),
+        TextCellValue(quantityDisplay),  // Use formatted quantity
         TextCellValue(item.product.unit),
-        DoubleCellValue(item.quantity), // Assuming full quantity is reserved
-        DoubleCellValue(product.stockLevel),
+        TextCellValue(reservedQtyDisplay), // Use formatted reserved quantity
+        TextCellValue(stockLevelDisplay),  // Use formatted stock level
         TextCellValue('✅ Reserved'),
       ];
       
@@ -472,12 +484,17 @@ class ExcelService {
         ),
       );
       
+      final sourceUnit = item.sourceProductUnit ?? 'kg';
+      final sourceQty = item.sourceQuantity ?? 0;
+      final sourceQtyDisplay = _formatQuantityForUnit(sourceQty, sourceUnit);
+      final sourceStockDisplay = _formatQuantityForUnit(sourceProduct.stockLevel, sourceUnit);
+      
       final rowData = [
         TextCellValue('${item.sourceProductName} (Source)'),
-        DoubleCellValue(item.sourceQuantity ?? 0),
-        TextCellValue(item.sourceProductUnit ?? 'kg'),
-        DoubleCellValue(item.sourceQuantity ?? 0), // Reserved quantity from source
-        DoubleCellValue(sourceProduct.stockLevel),
+        TextCellValue(sourceQtyDisplay),  // Use formatted quantity
+        TextCellValue(sourceUnit),
+        TextCellValue(sourceQtyDisplay), // Reserved quantity from source (formatted)
+        TextCellValue(sourceStockDisplay),  // Use formatted stock level
         TextCellValue('✅ Reserved (for ${item.product.name})'),
       ];
       
@@ -630,13 +647,19 @@ class ExcelService {
         status = '📦 Insufficient Stock';
       }
       
+      // Format quantities based on unit type
+      final quantityDisplay = _formatQuantityForUnit(item.quantity, item.product.unit);
+      final stockLevelDisplay = _formatQuantityForUnit(product.stockLevel, item.product.unit);
+      final shortageDisplay = _formatQuantityForUnit(shortage, item.product.unit);
+      final needToOrderDisplay = _formatQuantityForUnit(shortage > 0 ? shortage : item.quantity, item.product.unit);
+      
       final rowData = [
         TextCellValue(item.product.name),
-        DoubleCellValue(item.quantity),
+        TextCellValue(quantityDisplay),  // Use formatted quantity
         TextCellValue(item.product.unit),
-        DoubleCellValue(product.stockLevel),
-        DoubleCellValue(shortage),
-        DoubleCellValue(shortage > 0 ? shortage : item.quantity),
+        TextCellValue(stockLevelDisplay),  // Use formatted stock level
+        TextCellValue(shortageDisplay),  // Use formatted shortage
+        TextCellValue(needToOrderDisplay),  // Use formatted need to order
         TextCellValue(status),
       ];
       
@@ -770,9 +793,12 @@ class ExcelService {
       // Note: Cannot check product.stockLevel here as Product in order.dart doesn't have stockLevel
       // Stock level checks are handled via stockResult and isStockReservationFailed
       
+      // Format quantity based on unit type
+      final quantityDisplay = _formatQuantityForUnit(item.quantity, item.product.unit ?? 'each');
+      
       final rowData = [
         TextCellValue(item.product.name),
-        DoubleCellValue(item.quantity),
+        TextCellValue(quantityDisplay),  // Use formatted quantity
         TextCellValue(item.product.unit ?? ''),
         TextCellValue(errorType),
         TextCellValue(errorDetails),
@@ -792,5 +818,25 @@ class ExcelService {
     }
     
     print('[EXCEL SERVICE] Errors sheet built successfully with ${itemsWithErrors.length} items');
+  }
+
+  /// Format quantity based on unit type
+  /// For discrete units (punnet, each, box, etc.): show whole numbers
+  /// For continuous units (kg, g, ml, l): show decimals
+  static String _formatQuantityForUnit(double quantity, String? unit) {
+    final unitLower = (unit ?? '').toLowerCase();
+    
+    // For continuous units (kg, g, ml, l), show with decimals
+    if (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l') {
+      return quantity.toStringAsFixed(1);
+    }
+    
+    // For discrete units (punnet, each, box, etc.), show whole numbers
+    if (quantity % 1 == 0) {
+      return quantity.toInt().toString();
+    } else {
+      // If it's a decimal, round to nearest whole number for discrete units
+      return quantity.round().toString();
+    }
   }
 }
