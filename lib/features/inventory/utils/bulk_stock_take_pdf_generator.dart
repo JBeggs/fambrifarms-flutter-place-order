@@ -4,6 +4,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
 import 'package:excel/excel.dart' as excel;
 import '../../../models/product.dart';
+import '../../../utils/stock_formatter.dart';
 
 /// Handles PDF and Excel generation for bulk stock take reports
 class BulkStockTakePdfGenerator {
@@ -154,14 +155,14 @@ class BulkStockTakePdfGenerator {
         children: [
           pw.Expanded(flex: 3, child: pw.Text('Product', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(
-            flex: 2, 
+            flex: 2,
             child: pw.Align(
               alignment: pw.Alignment.centerRight,
               child: pw.Text('Stock Counted', style: pw.TextStyle(fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
             ),
           ),
-          pw.Expanded(flex: 1, child: pw.Text('Unit', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Weight (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+          pw.Expanded(flex: 1, child: pw.Text('Unit', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Comment', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Wastage Qty', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
           pw.Expanded(flex: 2, child: pw.Text('Wastage Weight (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
@@ -197,11 +198,13 @@ class BulkStockTakePdfGenerator {
           ? '🌱 ${product.name}'
           : product.name;
       
-      // Format stock counted based on unit type
+      // Format stock counted - show count only (not combined with weight)
       // For discrete units: show whole numbers
       // For continuous units: show decimals
       final productUnit = (product.unit ?? '').toLowerCase().trim();
-      final stockCountedDisplay = _formatStockCounted(countedStock, productUnit);
+      final stockCountedDisplay = (productUnit == 'kg' || productUnit == 'g' || productUnit == 'ml' || productUnit == 'l')
+          ? (countedStock > 0 ? countedStock.toStringAsFixed(1) : '0.0')
+          : (countedStock > 0 ? countedStock.toInt().toString() : '0');
       
       final commentDisplay = comment.isNotEmpty ? comment : '-';
       
@@ -252,11 +255,6 @@ class BulkStockTakePdfGenerator {
                 ),
               ),
             ),
-            // Unit
-            pw.Expanded(
-              flex: 1,
-              child: pw.Text(product.unit, style: const pw.TextStyle(fontSize: 10)),
-            ),
             // Weight (kg)
             pw.Expanded(
               flex: 2,
@@ -264,12 +262,17 @@ class BulkStockTakePdfGenerator {
                 alignment: pw.Alignment.centerRight,
                 child: pw.Text(
                   weight > 0 
-                    ? (weight % 1 == 0 ? weight.toInt().toString() : weight.toStringAsFixed(2))
+                    ? weight.toStringAsFixed(1)
                     : '-',
                   style: const pw.TextStyle(fontSize: 10),
                   textAlign: pw.TextAlign.right,
                 ),
               ),
+            ),
+            // Unit
+            pw.Expanded(
+              flex: 1,
+              child: pw.Text(product.unit, style: const pw.TextStyle(fontSize: 10)),
             ),
             // Comment
             pw.Expanded(
@@ -286,7 +289,7 @@ class BulkStockTakePdfGenerator {
                 alignment: pw.Alignment.centerRight,
                 child: pw.Text(
                   wastageQuantity > 0 
-                    ? (wastageQuantity % 1 == 0 ? wastageQuantity.toInt().toString() : wastageQuantity.toStringAsFixed(2))
+                    ? (wastageQuantity % 1 == 0 ? wastageQuantity.toInt().toString() : wastageQuantity.toStringAsFixed(1))
                     : '-',
                   style: pw.TextStyle(
                     fontSize: 10,
@@ -303,7 +306,7 @@ class BulkStockTakePdfGenerator {
                 alignment: pw.Alignment.centerRight,
                 child: pw.Text(
                   wastageWeight > 0 
-                    ? (wastageWeight % 1 == 0 ? wastageWeight.toInt().toString() : wastageWeight.toStringAsFixed(2))
+                    ? wastageWeight.toStringAsFixed(1)
                     : '-',
                   style: pw.TextStyle(
                     fontSize: 10,
@@ -359,8 +362,8 @@ class BulkStockTakePdfGenerator {
     final headerRow = [
       excel.TextCellValue('Product'),
       excel.TextCellValue('Stock Counted'),
-      excel.TextCellValue('Unit'),
       excel.TextCellValue('Weight (kg)'),
+      excel.TextCellValue('Unit'),
       excel.TextCellValue('Comment'),
       excel.TextCellValue('Wastage Qty'),
       excel.TextCellValue('Wastage Weight (kg)'),
@@ -374,7 +377,7 @@ class BulkStockTakePdfGenerator {
       final cell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 0));
       cell.cellStyle = excel.CellStyle(
         bold: true,
-        horizontalAlign: (i == 1 || i == 3 || i == 5 || i == 6) ? excel.HorizontalAlign.Right : excel.HorizontalAlign.Center, // Right-align numeric columns: Stock Counted (1), Weight (3), Wastage Qty (5), Wastage Weight (6)
+        horizontalAlign: (i == 1 || i == 2 || i == 5 || i == 6) ? excel.HorizontalAlign.Right : excel.HorizontalAlign.Center, // Right-align numeric columns: Stock Counted (1), Weight (2), Wastage Qty (5), Wastage Weight (6)
       );
     }
   }
@@ -404,22 +407,28 @@ class BulkStockTakePdfGenerator {
         ? '🌱 ${product.name}'
         : product.name;
     
-    // Format stock counted based on unit type
+    // Format stock counted - show count only (not combined with weight)
+    // For discrete units: show whole numbers
+    // For continuous units: show decimals
     final productUnit = (product.unit ?? '').toLowerCase().trim();
-    final stockCountedDisplay = _formatStockCounted(countedStock, productUnit);
+    final stockCountedDisplay = (productUnit == 'kg' || productUnit == 'g' || productUnit == 'ml' || productUnit == 'l')
+        ? (countedStock > 0 ? countedStock.toStringAsFixed(1) : '0.0')
+        : (countedStock > 0 ? countedStock.toInt().toString() : '0');
     final stockCountedValue = excel.TextCellValue(stockCountedDisplay);
     final commentValue = comment.isNotEmpty 
         ? excel.TextCellValue(comment)
         : excel.TextCellValue('-');
     final weightValue = weight > 0 
-        ? excel.DoubleCellValue(weight)
+        ? excel.TextCellValue(weight.toStringAsFixed(1))
         : excel.TextCellValue('-');
     
     final wastageQtyValue = wastageQuantity > 0 
-        ? excel.DoubleCellValue(wastageQuantity) 
+        ? excel.TextCellValue(wastageQuantity % 1 == 0 
+            ? wastageQuantity.toInt().toString() 
+            : wastageQuantity.toStringAsFixed(1))
         : excel.TextCellValue('-');
     final wastageWeightValue = wastageWeight > 0 
-        ? excel.DoubleCellValue(wastageWeight) 
+        ? excel.TextCellValue(wastageWeight.toStringAsFixed(1))
         : excel.TextCellValue('-');
     
     // Extract error information
@@ -450,8 +459,8 @@ class BulkStockTakePdfGenerator {
     final dataRow = [
       excel.TextCellValue(productName),
       stockCountedValue,
-      excel.TextCellValue(product.unit),
       weightValue,
+      excel.TextCellValue(product.unit),
       commentValue,
       wastageQtyValue,
       wastageWeightValue,
@@ -461,13 +470,13 @@ class BulkStockTakePdfGenerator {
     
     sheet.appendRow(dataRow);
     
-    // Right-align numeric columns: Stock Counted (1), Weight (3), Wastage Qty (5), Wastage Weight (6)
+    // Right-align numeric columns: Stock Counted (1), Weight (2), Wastage Qty (5), Wastage Weight (6)
     final rowIndex = sheet.maxRows - 1;
     final stockCountedCell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIndex));
     stockCountedCell.cellStyle = excel.CellStyle(
       horizontalAlign: excel.HorizontalAlign.Right,
     );
-    final weightCell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIndex));
+    final weightCell = sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: rowIndex));
     weightCell.cellStyle = excel.CellStyle(
       horizontalAlign: excel.HorizontalAlign.Right,
     );
@@ -527,7 +536,7 @@ class BulkStockTakePdfGenerator {
     
     // Table headers
     int currentRow = 3;
-    final headers = ['Product', 'Unit', 'Stock Counted', 'Weight (kg)', 'Error Type', 'Error Details', 'Action Required'];
+    final headers = ['Product', 'Stock Counted', 'Weight (kg)', 'Unit', 'Error Type', 'Error Details', 'Action Required'];
     for (int i = 0; i < headers.length; i++) {
       sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = excel.TextCellValue(headers[i]);
       sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
@@ -589,9 +598,9 @@ class BulkStockTakePdfGenerator {
       
       final rowData = [
         excel.TextCellValue(product.name),
-        excel.TextCellValue(product.unit),
         excel.DoubleCellValue(countedStock),
         weight > 0 ? excel.DoubleCellValue(weight) : excel.TextCellValue('-'),
+        excel.TextCellValue(product.unit),
         excel.TextCellValue(errorType),
         excel.TextCellValue(errorDetails),
         excel.TextCellValue(actionRequired),
@@ -612,24 +621,5 @@ class BulkStockTakePdfGenerator {
     print('[STOCK_TAKE_EXCEL] Errors sheet built successfully with ${entriesWithErrors.length} entries');
   }
 
-  /// Format stock counted based on unit type
-  /// For discrete units (punnet, each, box, etc.): show whole numbers
-  /// For continuous units (kg, g, ml, l): show decimals
-  static String _formatStockCounted(double countedStock, String unit) {
-    final unitLower = unit.toLowerCase();
-    
-    // For continuous units (kg, g, ml, l), show with decimals
-    if (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l') {
-      return countedStock.toStringAsFixed(1);
-    }
-    
-    // For discrete units (punnet, each, box, etc.), show whole numbers
-    if (countedStock % 1 == 0) {
-      return countedStock.toInt().toString();
-    } else {
-      // If it's a decimal, round to nearest whole number for discrete units
-      return countedStock.round().toString();
-    }
-  }
 }
 

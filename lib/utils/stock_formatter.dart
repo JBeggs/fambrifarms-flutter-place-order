@@ -8,7 +8,7 @@ library;
 /// Format stock quantity using backend-provided count and weight values
 /// 
 /// For discrete units (punnet, each, box, etc.): show count and weight if available
-/// For continuous units (kg, g, ml, l): show weight with decimals
+/// For continuous units (kg, g, ml, l): show weight with decimals, or both if count provided
 /// 
 /// Parameters:
 /// - [unit]: The product unit (e.g., 'punnet', 'kg', 'each')
@@ -16,9 +16,10 @@ library;
 /// - [weightKg]: The stock weight in kg - optional
 /// 
 /// Returns formatted string:
-/// - For continuous units: "4.6" (weight only)
-/// - For discrete units with both: "6 (0.6 kg)" (count and weight)
-/// - For discrete units with count only: "6" (count only)
+/// - For continuous units with both: "12 (48.0) kg" (count and weight, e.g., 12 boxes = 48 kg)
+/// - For continuous units weight only: "48.0" (weight only)
+/// - For discrete units with both: "6 (0.6 kg)" (count and weight, weight in kg)
+/// - For discrete units count only: "6" (count only)
 /// - No stock: "0"
 String formatStockQuantity({
   required String unit,
@@ -27,8 +28,13 @@ String formatStockQuantity({
 }) {
   final unitLower = unit.toLowerCase();
   
-  // For continuous units (kg, g, ml, l), show weight with decimals
+  // For continuous units (kg, g, ml, l)
   if (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l') {
+    // If both count and weight are provided, show both (e.g., "12 (48.0) kg" for 12 boxes = 48 kg)
+    if (count != null && count > 0 && weightKg != null && weightKg > 0) {
+      return '$count (${weightKg.toStringAsFixed(1)}) $unitLower';
+    }
+    // Otherwise show weight only
     if (weightKg != null && weightKg > 0) {
       return weightKg.toStringAsFixed(1);
     }
@@ -39,6 +45,7 @@ String formatStockQuantity({
   if (count != null && count > 0) {
     if (weightKg != null && weightKg > 0) {
       // Show both count and weight: "6 (0.6 kg)" for 6 punnets = 0.6 kg
+      // Weight is always in kg, product unit will be appended separately
       return '$count (${weightKg.toStringAsFixed(1)} kg)';
     } else {
       // Only count available, show whole number

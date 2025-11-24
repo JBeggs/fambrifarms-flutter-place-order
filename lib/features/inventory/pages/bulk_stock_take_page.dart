@@ -34,6 +34,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
   final Map<int, double> _originalStock = {};
   final Map<int, DateTime> _addedTimestamps = {}; // Track when products were added
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
   final Set<int> _expandedProducts = {}; // Track which products are expanded
   
   // Dynamic list of products in stock take (can be added/removed)
@@ -103,6 +104,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     
     _scrollController.dispose();
     _searchController.dispose();
+    _searchFocusNode.dispose();
     for (final controller in _controllers.values) {
       controller.dispose();
     }
@@ -783,8 +785,12 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
       _searchQuery = '';
     });
     
-    // Hide keyboard and focus
-    FocusScope.of(context).unfocus();
+    // Focus search field after adding
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) {
+        _searchFocusNode.requestFocus();
+      }
+    });
     
     _scheduleAutoSave();
     
@@ -793,11 +799,11 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
 
   // Show modal for adding product to stock take - allows editing and moving to next
   Future<void> _showAddProductModal(Product product, int currentIndex) async {
-    final stockTextController = TextEditingController(text: product.stockLevel.toString());
+    final stockTextController = TextEditingController(); // Start empty instead of 0.0
     final wastageTextController = TextEditingController();
     final wastageWeightController = TextEditingController();
     final wastageReasonController = TextEditingController();
-    final weightController = TextEditingController();
+    final weightController = TextEditingController(); // Start empty instead of 0.0
     final commentController = TextEditingController();
     
     await showDialog(
@@ -1051,6 +1057,19 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                           
                           // Close modal - user will search for next product
                           Navigator.pop(context);
+                          
+                          // Clear search and focus search field
+                          setState(() {
+                            _searchController.clear();
+                            _searchQuery = '';
+                          });
+                          
+                          // Focus search field after a short delay to ensure modal is closed
+                          Future.delayed(const Duration(milliseconds: 100), () {
+                            if (mounted) {
+                              _searchFocusNode.requestFocus();
+                            }
+                          });
                           
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -1814,6 +1833,7 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                   height: 64,
                   child: TextField(
                     controller: _searchController,
+                    focusNode: _searchFocusNode,
                     style: const TextStyle(fontSize: 18),
                     textInputAction: TextInputAction.search,
                     textCapitalization: TextCapitalization.words,

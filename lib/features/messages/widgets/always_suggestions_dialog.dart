@@ -333,7 +333,15 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         count: availableCount,
         weightKg: availableWeightKg,
       );
-      statusText = '$availableDisplay $unit AVAIL';
+      // For kg products: add "kg" if not already in display
+      // For discrete products: formatStockQuantity includes "kg" for weight inside parentheses, append product unit
+      final unitLower = unit.toLowerCase();
+      final displayWithUnit = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
+          ? (availableDisplay.contains('kg') || availableDisplay.contains('g') || availableDisplay.contains('ml') || availableDisplay.contains('l')
+              ? '$availableDisplay AVAIL'
+              : '$availableDisplay $unit AVAIL')
+          : '$availableDisplay $unit AVAIL';
+      statusText = displayWithUnit;
       bgColor = Colors.green.withValues(alpha: 0.2);
       textColor = Colors.green.shade700;
       if (reserved) {
@@ -342,7 +350,12 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           count: reservedCount,
           weightKg: reservedWeightKg,
         );
-        statusText += ' ($reservedDisplay $unit res)';
+        final reservedWithUnit = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
+            ? (reservedDisplay.contains('kg') || reservedDisplay.contains('g') || reservedDisplay.contains('ml') || reservedDisplay.contains('l')
+                ? '$reservedDisplay res'
+                : '$reservedDisplay $unit res')
+            : '$reservedDisplay $unit res';
+        statusText += ' ($reservedWithUnit)';
       }
     } else if (reserved) {
       final reservedDisplay = _formatStockQuantity(
@@ -350,7 +363,13 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         count: reservedCount,
         weightKg: reservedWeightKg,
       );
-      statusText = '$reservedDisplay $unit RES ONLY';
+      final unitLower = unit.toLowerCase();
+      final reservedWithUnit = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
+          ? (reservedDisplay.contains('kg') || reservedDisplay.contains('g') || reservedDisplay.contains('ml') || reservedDisplay.contains('l')
+              ? '$reservedDisplay RES ONLY'
+              : '$reservedDisplay $unit RES ONLY')
+          : '$reservedDisplay $unit RES ONLY';
+      statusText = reservedWithUnit;
       bgColor = Colors.orange.withValues(alpha: 0.2);
       textColor = Colors.orange.shade700;
     } else {
@@ -2219,13 +2238,26 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                   color: inStock ? Colors.green.withValues(alpha: 0.1) : Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Text(
-                  'Available: ${_formatStockQuantity(unit: unit, count: availableCount, weightKg: availableWeightKg)} $unit',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: inStock ? Colors.green.shade700 : Colors.orange.shade700,
-                    fontWeight: FontWeight.w600,
-                  ),
+                child: Builder(
+                  builder: (context) {
+                    final formatted = _formatStockQuantity(unit: unit, count: availableCount, weightKg: availableWeightKg);
+                    final unitLower = unit.toLowerCase();
+                    // For kg products: add "kg" if not already in display
+                    // For discrete products: formatStockQuantity includes "kg" for weight, append product unit
+                    final displayText = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
+                        ? (formatted.contains('kg') || formatted.contains('g') || formatted.contains('ml') || formatted.contains('l')
+                            ? 'Available: $formatted'
+                            : 'Available: $formatted $unit')
+                        : 'Available: $formatted $unit';
+                    return Text(
+                      displayText,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: inStock ? Colors.green.shade700 : Colors.orange.shade700,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    );
+                  },
                 ),
               );
             },
@@ -2788,17 +2820,31 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                               ),
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              hasStock
-                                  ? (unlimitedStock 
-                                      ? '🌱 Always Available'
-                                      : 'In Stock: ${_formatStockQuantity(unit: suggestion['unit'] ?? 'each', count: availableCount, weightKg: availableWeightKg)} ${suggestion['unit'] ?? ''}')
-                                  : 'Out of Stock',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: hasStock ? Colors.green.shade700 : Colors.orange.shade700,
-                                fontWeight: FontWeight.w600,
-                              ),
+                            Builder(
+                              builder: (context) {
+                                if (!hasStock) {
+                                  return const Text('Out of Stock');
+                                }
+                                if (unlimitedStock) {
+                                  return const Text('🌱 Always Available');
+                                }
+                                final formatted = _formatStockQuantity(unit: suggestion['unit'] ?? 'each', count: availableCount, weightKg: availableWeightKg);
+                                final suggestionUnit = suggestion['unit'] ?? 'each';
+                                final unitLower = suggestionUnit.toLowerCase();
+                                final displayText = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
+                                    ? (formatted.contains('kg') || formatted.contains('g') || formatted.contains('ml') || formatted.contains('l')
+                                        ? 'In Stock: $formatted'
+                                        : 'In Stock: $formatted $suggestionUnit')
+                                    : 'In Stock: $formatted $suggestionUnit';
+                                return Text(
+                                  displayText,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: hasStock ? Colors.green.shade700 : Colors.orange.shade700,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                );
+                              },
                             ),
                           ],
                         ),
@@ -3199,14 +3245,27 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                     ),
                                   ),
                                   const SizedBox(height: 2),
-                                  Text(
-                                    altUnlimitedStock
-                                        ? '🌱 Always Available'
-                                        : 'Stock: ${_formatStockQuantity(unit: alt['unit'] ?? 'each', count: altAvailableCount, weightKg: altAvailableWeightKg)} ${alt['unit'] ?? ''}',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.grey[600],
-                                    ),
+                                  Builder(
+                                    builder: (context) {
+                                      if (altUnlimitedStock) {
+                                        return const Text('🌱 Always Available');
+                                      }
+                                      final formatted = _formatStockQuantity(unit: alt['unit'] ?? 'each', count: altAvailableCount, weightKg: altAvailableWeightKg);
+                                      final altUnit = alt['unit'] ?? 'each';
+                                      final unitLower = altUnit.toLowerCase();
+                                      final displayText = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
+                                          ? (formatted.contains('kg') || formatted.contains('g') || formatted.contains('ml') || formatted.contains('l')
+                                              ? 'Stock: $formatted'
+                                              : 'Stock: $formatted $altUnit')
+                                          : 'Stock: $formatted $altUnit';
+                                      return Text(
+                                        displayText,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.grey[600],
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ],
                               ),
@@ -3323,14 +3382,27 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                             fontWeight: isSourceSelected ? FontWeight.w600 : FontWeight.normal,
                                           ),
                                         ),
-                                        Text(
-                                          sourceUnlimitedStock
-                                              ? '🌱 Always Available'
-                                              : 'Stock: ${_formatStockQuantity(unit: sourceSuggestion['unit'] ?? 'each', count: sourceAvailableCount, weightKg: sourceAvailableWeightKg)} ${sourceSuggestion['unit'] ?? ''}',
-                                          style: TextStyle(
-                                            fontSize: 9,
-                                            color: Colors.grey[600],
-                                          ),
+                                        Builder(
+                                          builder: (context) {
+                                            if (sourceUnlimitedStock) {
+                                              return const Text('🌱 Always Available');
+                                            }
+                                            final formatted = _formatStockQuantity(unit: sourceSuggestion['unit'] ?? 'each', count: sourceAvailableCount, weightKg: sourceAvailableWeightKg);
+                                            final sourceUnit = sourceSuggestion['unit'] ?? 'each';
+                                            final unitLower = sourceUnit.toLowerCase();
+                                            final displayText = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
+                                                ? (formatted.contains('kg') || formatted.contains('g') || formatted.contains('ml') || formatted.contains('l')
+                                                    ? 'Stock: $formatted'
+                                                    : 'Stock: $formatted $sourceUnit')
+                                                : 'Stock: $formatted $sourceUnit';
+                                            return Text(
+                                              displayText,
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                color: Colors.grey[600],
+                                              ),
+                                            );
+                                          },
                                         ),
                                       ],
                                     ),
