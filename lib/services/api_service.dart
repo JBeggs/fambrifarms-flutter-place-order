@@ -1368,6 +1368,15 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> checkStockTakeStatus() async {
+    try {
+      final response = await _djangoDio.get('/inventory/stock-take-status/');
+      return Map<String, dynamic>.from(response.data);
+    } catch (e) {
+      throw ApiException('Failed to check stock take status: $e');
+    }
+  }
+
   Future<void> deleteMessage(String messageId) async {
     try {
       await _djangoDio.delete('/whatsapp/messages/$messageId/');

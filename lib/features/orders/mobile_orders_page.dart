@@ -10,6 +10,7 @@ import '../../models/product.dart' as product_model;
 import '../../providers/orders_provider.dart';
 import '../../providers/inventory_provider.dart';
 import '../../providers/products_provider.dart';
+import '../../services/api_service.dart';
 import '../../services/pdf_service.dart';
 import '../../services/excel_service.dart';
 import 'widgets/mobile_order_card.dart';
@@ -105,6 +106,16 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.list),
+            onPressed: _showHerbsAndLettucesList,
+            tooltip: 'Show Herbs and Lettuces List',
+          ),
+          IconButton(
+            icon: const Icon(Icons.eco),
+            onPressed: _generateLettuceWeeklyReport,
+            tooltip: 'Generate Lettuce & Herbs Weekly Report',
+          ),
           IconButton(
             icon: const Icon(Icons.table_chart),
             onPressed: _generateWorkbook,
@@ -1271,6 +1282,526 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
     }
     
     print('[MOBILE WORKBOOK] Errors sheet built successfully with ${itemsWithErrors.length} items');
+  }
+
+  /// Show list of herbs and lettuces found in products
+  Future<void> _showHerbsAndLettucesList() async {
+    try {
+      final productsState = ref.read(productsProvider);
+      final allProducts = productsState.products;
+      
+      // Common herb and lettuce keywords
+      final keywords = [
+        'lettuce', 'basil', 'rosemary', 'thyme', 'oregano', 'parsley', 
+        'mint', 'cilantro', 'coriander', 'sage', 'dill', 'chives',
+        'tarragon', 'marjoram', 'bay', 'fennel', 'chervil', 'iceberg',
+        'romaine', 'butter', 'arugula', 'rocket', 'spinach', 'kale',
+        'watercress', 'mizuna', 'endive', 'radicchio', 'frisée'
+      ];
+      
+      final matchingProducts = <String>[];
+      
+      for (final product in allProducts) {
+        final productName = product.name.toLowerCase();
+        for (final keyword in keywords) {
+          if (productName.contains(keyword.toLowerCase())) {
+            if (!matchingProducts.contains(product.name)) {
+              matchingProducts.add(product.name);
+            }
+            break;
+          }
+        }
+      }
+      
+      matchingProducts.sort();
+      
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Herbs and Lettuces Found'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: matchingProducts.isEmpty
+                  ? const Text('No herbs or lettuces found in products.')
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: matchingProducts.length,
+                      itemBuilder: (context, index) {
+                        return ListTile(
+                          title: Text(matchingProducts[index]),
+                          dense: true,
+                        );
+                      },
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+        );
+      }
+    } catch (e) {
+      print('[HERBS LIST] Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading products: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Generate weekly lettuce report from all delivered orders
+  Future<void> _generateLettuceWeeklyReport() async {
+    try {
+      print('[LETTUCE REPORT] Starting lettuce & herbs weekly report generation');
+      
+      // Show loading indicator
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                ),
+                const SizedBox(width: 12),
+                Text('Loading all delivered orders...'),
+              ],
+            ),
+            duration: const Duration(seconds: 60),
+          ),
+        );
+      }
+      
+      // Fetch ALL delivered orders from API (not just loaded ones)
+      final apiService = ref.read(apiServiceProvider);
+      final List<Order> allDeliveredOrders = [];
+      int currentPage = 1;
+      bool hasMore = true;
+      
+      while (hasMore) {
+        print('[LETTUCE REPORT] Fetching page $currentPage...');
+        final paginatedData = await apiService.getOrdersPaginated(page: currentPage, pageSize: 100);
+        final orders = paginatedData['orders'] as List<Order>;
+        final hasNext = paginatedData['hasNext'] as bool;
+        
+        // Filter for delivered orders only
+        final deliveredOnPage = orders.where((order) => order.status == 'delivered').toList();
+        allDeliveredOrders.addAll(deliveredOnPage);
+        
+        print('[LETTUCE REPORT] Page $currentPage: Found ${orders.length} orders, ${deliveredOnPage.length} delivered');
+        
+        hasMore = hasNext;
+        currentPage++;
+        
+        // Safety limit to prevent infinite loops
+        if (currentPage > 100) {
+          print('[LETTUCE REPORT] WARNING: Hit safety limit of 100 pages');
+          break;
+        }
+      }
+      
+      print('[LETTUCE REPORT] Total delivered orders found: ${allDeliveredOrders.length}');
+      
+      final deliveredOrders = allDeliveredOrders;
+      
+      if (deliveredOrders.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ No delivered orders found'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+      
+      print('[LETTUCE REPORT] Found ${deliveredOrders.length} delivered orders');
+      
+      // Collect all lettuce and herb items, aggregated by product name and week
+      final Map<String, Map<String, dynamic>> weeklyData = {};
+      
+      for (final order in deliveredOrders) {
+        // Parse delivery date
+        DateTime deliveryDate;
+        try {
+          deliveryDate = DateTime.parse(order.deliveryDate);
+        } catch (e) {
+          print('[LETTUCE REPORT] Error parsing delivery date for order ${order.orderNumber}: $e');
+          continue;
+        }
+        
+        // Get week key (year-week format)
+        final weekKey = _getWeekKey(deliveryDate);
+        
+        // Filter lettuce and herb items
+        for (final item in order.items) {
+          final productName = item.product.name.toLowerCase();
+          
+          // Exclude butternut (it's a squash, not lettuce)
+          if (productName.contains('butternut')) {
+            continue;
+          }
+          
+          // Check for lettuce or herbs
+          final isLettuce = productName.contains('lettuce') || 
+                           productName.contains('iceberg') ||
+                           productName.contains('romaine') ||
+                           (productName.contains('butter') && !productName.contains('butternut')) ||
+                           productName.contains('arugula') ||
+                           productName.contains('rocket') ||
+                           productName.contains('watercress') ||
+                           productName.contains('mizuna') ||
+                           productName.contains('endive') ||
+                           productName.contains('radicchio') ||
+                           productName.contains('frisée');
+          
+          final isHerb = productName.contains('basil') ||
+                         productName.contains('rosemary') ||
+                         productName.contains('thyme') ||
+                         productName.contains('oregano') ||
+                         productName.contains('parsley') ||
+                         productName.contains('mint') ||
+                         productName.contains('cilantro') ||
+                         productName.contains('coriander') ||
+                         productName.contains('sage') ||
+                         productName.contains('dill') ||
+                         productName.contains('chives') ||
+                         productName.contains('tarragon') ||
+                         productName.contains('marjoram') ||
+                         productName.contains('bay') ||
+                         productName.contains('fennel') ||
+                         productName.contains('chervil');
+          
+          if (isLettuce || isHerb) {
+            // Initialize week data if not exists
+            if (!weeklyData.containsKey(weekKey)) {
+              weeklyData[weekKey] = {
+                'weekStart': _getWeekStart(deliveryDate),
+                'weekEnd': _getWeekEnd(deliveryDate),
+                'products': <String, Map<String, dynamic>>{},
+              };
+            }
+            
+            final weekData = weeklyData[weekKey]!;
+            final products = weekData['products'] as Map<String, Map<String, dynamic>>;
+            
+            // Use product name as key (case-sensitive for display)
+            final displayProductName = item.product.name;
+            
+            // Aggregate by product name
+            if (!products.containsKey(displayProductName)) {
+              products[displayProductName] = {
+                'productName': displayProductName,
+                'totalQuantity': 0.0,
+                'unit': item.unit ?? item.product.unit,
+              };
+            }
+            
+            // Add quantity to product total
+            final productData = products[displayProductName]!;
+            productData['totalQuantity'] = (productData['totalQuantity'] as double) + item.quantity;
+          }
+        }
+      }
+      
+      if (weeklyData.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('❌ No lettuce or herb items found in delivered orders'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+      
+      // Show loading indicator
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                ),
+                const SizedBox(width: 12),
+                Text('Generating lettuce & herbs weekly report...'),
+              ],
+            ),
+            duration: const Duration(seconds: 60),
+          ),
+        );
+      }
+      
+      // Generate filename
+      final now = DateTime.now();
+      final dateStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+      final timeStr = '${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+      final filename = 'LettuceHerbsWeeklyReport_${dateStr}_$timeStr.xlsx';
+      
+      // Get temporary directory for mobile
+      final tempDir = await getTemporaryDirectory();
+      final filePath = '${tempDir.path}/$filename';
+      print('[LETTUCE REPORT] Saving to: $filePath');
+      
+      // Create Excel workbook
+      final workbook = excel.Excel.createExcel();
+      final sheet = workbook['Lettuce & Herbs Report'];
+      
+      // Remove default Sheet1
+      if (workbook.sheets.containsKey('Sheet1')) {
+        workbook.delete('Sheet1');
+      }
+      
+      int currentRow = 0;
+      
+      // Title
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue('LETTUCE & HERBS WEEKLY REPORT - ALL DELIVERED ORDERS');
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+        fontSize: 16,
+      );
+      currentRow += 2;
+      
+      // Summary header
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue('WEEKLY SUMMARY');
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+        fontSize: 14,
+      );
+      currentRow += 2;
+      
+      // Summary table headers
+      final summaryHeaders = ['Week', 'Week Start', 'Week End', 'Total Quantity', 'Unit'];
+      for (int i = 0; i < summaryHeaders.length; i++) {
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = 
+          excel.TextCellValue(summaryHeaders[i]);
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+          bold: true,
+          horizontalAlign: excel.HorizontalAlign.Center,
+        );
+      }
+      currentRow++;
+      
+      // Sort weeks by week key (chronological order)
+      final sortedWeeks = weeklyData.keys.toList()..sort();
+      
+      // Calculate weekly totals from aggregated products
+      double grandTotal = 0.0;
+      for (final weekKey in sortedWeeks) {
+        final weekData = weeklyData[weekKey]!;
+        final products = weekData['products'] as Map<String, Map<String, dynamic>>;
+        
+        // Calculate total for this week
+        double weekTotal = 0.0;
+        for (final productData in products.values) {
+          weekTotal += productData['totalQuantity'] as double;
+        }
+        
+        final weekStart = weekData['weekStart'] as DateTime;
+        final weekEnd = weekData['weekEnd'] as DateTime;
+        
+        grandTotal += weekTotal;
+        
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+          excel.TextCellValue(weekKey);
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = 
+          excel.TextCellValue('${weekStart.year}-${weekStart.month.toString().padLeft(2, '0')}-${weekStart.day.toString().padLeft(2, '0')}');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: currentRow)).value = 
+          excel.TextCellValue('${weekEnd.year}-${weekEnd.month.toString().padLeft(2, '0')}-${weekEnd.day.toString().padLeft(2, '0')}');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: currentRow)).value = 
+          excel.DoubleCellValue(weekTotal);
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: currentRow)).value = 
+          excel.TextCellValue('kg'); // Default unit
+        
+        currentRow++;
+      }
+      
+      // Grand total row
+      currentRow++;
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue('GRAND TOTAL');
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+      );
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: currentRow)).value = 
+        excel.DoubleCellValue(grandTotal);
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: currentRow)).value = 
+        excel.TextCellValue('kg');
+      
+      currentRow += 3;
+      
+      // Products breakdown by week header
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+        excel.TextCellValue('PRODUCTS BY WEEK (SORTED ALPHABETICALLY)');
+      sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+        bold: true,
+        fontSize: 14,
+      );
+      currentRow += 2;
+      
+      // Add products breakdown for each week
+      for (final weekKey in sortedWeeks) {
+        final weekData = weeklyData[weekKey]!;
+        final weekStart = weekData['weekStart'] as DateTime;
+        final weekEnd = weekData['weekEnd'] as DateTime;
+        final products = weekData['products'] as Map<String, Map<String, dynamic>>;
+        
+        // Week section header
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+          excel.TextCellValue('Week: $weekKey (${weekStart.year}-${weekStart.month.toString().padLeft(2, '0')}-${weekStart.day.toString().padLeft(2, '0')} to ${weekEnd.year}-${weekEnd.month.toString().padLeft(2, '0')}-${weekEnd.day.toString().padLeft(2, '0')})');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+          bold: true,
+          fontSize: 12,
+        );
+        currentRow++;
+        
+        // Table headers
+        final detailHeaders = ['Product Name', 'Quantity', 'Unit'];
+        for (int i = 0; i < detailHeaders.length; i++) {
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).value = 
+            excel.TextCellValue(detailHeaders[i]);
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: i, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+            bold: true,
+            horizontalAlign: excel.HorizontalAlign.Center,
+          );
+        }
+        currentRow++;
+        
+        // Sort products alphabetically by name
+        final sortedProducts = products.values.toList()
+          ..sort((a, b) => (a['productName'] as String).compareTo(b['productName'] as String));
+        
+        // Add product rows
+        double weekTotal = 0.0;
+        for (final productData in sortedProducts) {
+          final productName = productData['productName'] as String;
+          final quantity = productData['totalQuantity'] as double;
+          final unit = productData['unit'] as String? ?? 'kg';
+          
+          weekTotal += quantity;
+          
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+            excel.TextCellValue(productName);
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = 
+            excel.DoubleCellValue(quantity);
+          sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: currentRow)).value = 
+            excel.TextCellValue(unit);
+          currentRow++;
+        }
+        
+        // Week subtotal
+        currentRow++;
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).value = 
+          excel.TextCellValue('Week Total:');
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow)).cellStyle = excel.CellStyle(
+          bold: true,
+        );
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: currentRow)).value = 
+          excel.DoubleCellValue(weekTotal);
+        sheet.cell(excel.CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: currentRow)).value = 
+          excel.TextCellValue('kg');
+        currentRow += 2;
+      }
+      
+      // Auto-fit columns (5 columns: Week, Week Start, Week End, Total Quantity, Unit in summary; 3 columns in detail: Product Name, Quantity, Unit)
+      for (int i = 0; i < 5; i++) {
+        sheet.setColumnAutoFit(i);
+      }
+      
+      // Save workbook
+      final excelBytes = workbook.save();
+      if (excelBytes != null) {
+        final file = File(filePath);
+        await file.writeAsBytes(excelBytes);
+        
+        if (file.existsSync()) {
+          print('[LETTUCE REPORT] ✅ Excel saved successfully!');
+          print('[LETTUCE REPORT] File: $filePath');
+          
+          // Share the file
+          if (mounted) {
+            await Share.shareXFiles(
+              [XFile(filePath)],
+              text: 'Lettuce & Herbs Weekly Report',
+            );
+            
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('✅ Lettuce & herbs weekly report generated and shared!'),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
+        } else {
+          throw Exception('File was not created after write operation');
+        }
+      } else {
+        throw Exception('Failed to generate Excel bytes');
+      }
+      
+    } catch (e) {
+      print('[LETTUCE REPORT] Error generating report: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error generating report: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+  
+  /// Get week key in format "YYYY-WW" (e.g., "2024-15")
+  String _getWeekKey(DateTime date) {
+    // Get the first day of the year
+    final firstDayOfYear = DateTime(date.year, 1, 1);
+    // Calculate days since first day
+    final daysSince = date.difference(firstDayOfYear).inDays;
+    // Calculate week number (ISO week: Monday is first day of week)
+    // Adjust to start week from Monday
+    final weekday = date.weekday; // 1 = Monday, 7 = Sunday
+    final adjustedDays = daysSince + (weekday - 1);
+    final weekNumber = (adjustedDays / 7).floor() + 1;
+    
+    return '${date.year}-W${weekNumber.toString().padLeft(2, '0')}';
+  }
+  
+  /// Get the start of the week (Monday)
+  DateTime _getWeekStart(DateTime date) {
+    final weekday = date.weekday; // 1 = Monday, 7 = Sunday
+    final daysFromMonday = weekday - 1;
+    return DateTime(date.year, date.month, date.day).subtract(Duration(days: daysFromMonday));
+  }
+  
+  /// Get the end of the week (Sunday)
+  DateTime _getWeekEnd(DateTime date) {
+    final weekday = date.weekday; // 1 = Monday, 7 = Sunday
+    final daysToSunday = 7 - weekday;
+    return DateTime(date.year, date.month, date.day).add(Duration(days: daysToSunday));
   }
 
   Widget _buildFilterChip(String label, String value, String currentValue, Function(String) onSelected) {

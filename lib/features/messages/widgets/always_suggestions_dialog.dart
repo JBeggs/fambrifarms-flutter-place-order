@@ -45,23 +45,169 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   final Map<String, bool> _isSearching = {}; // Track if search is in progress per item
   final Map<String, List<dynamic>> _updatedSuggestions = {}; // Store updated suggestions per item
   bool _isProcessing = false;
+  late List<Map<String, dynamic>> _items; // Mutable list of items
 
   @override
   void initState() {
     super.initState();
+    // Initialize mutable items list from widget data
+    final rawItems = widget.suggestionsData['items'] as List<dynamic>? ?? [];
+    _items = rawItems.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     _initializeSelections();
     _initializeEditedText();
   }
 
   // Initialize edited original text map with original values
   void _initializeEditedText() {
-    for (var item in widget.suggestionsData['items']) {
+    for (var item in _items) {
       final originalText = item['original_text'] as String;
       _editedOriginalText[originalText] = originalText;
       // Initialize search controllers
       if (!_unitControllers.containsKey('${originalText}_search')) {
         _unitControllers['${originalText}_search'] = TextEditingController(text: originalText);
       }
+    }
+  }
+
+  // Add a new item after the specified index
+  Future<void> _addNewItem(int afterIndex) async {
+    final TextEditingController searchController = TextEditingController();
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add New Item'),
+        content: TextField(
+          controller: searchController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Search for product',
+            hintText: 'e.g., 2kg tomatoes',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (searchController.text.trim().isNotEmpty) {
+                Navigator.of(context).pop({
+                  'search_text': searchController.text.trim(),
+                });
+              }
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && result['search_text'] != null) {
+      final searchText = result['search_text'] as String;
+      
+      final newItem = {
+        'original_text': searchText,
+        'suggestions': <Map<String, dynamic>>[],
+        'is_parsing_failure': false,
+        'is_ambiguous_packaging': false,
+      };
+
+      setState(() {
+        _items.insert(afterIndex + 1, newItem);
+        _editedOriginalText[searchText] = searchText;
+        _quantities[searchText] = 1.0;
+        _units[searchText] = 'each';
+        _quantityControllers[searchText] = TextEditingController(text: '1');
+        _unitControllers[searchText] = TextEditingController(text: 'each');
+        _unitControllers['${searchText}_search'] = TextEditingController(text: searchText);
+        _sourceQuantityControllers[searchText] = TextEditingController();
+        _skippedItems[searchText] = false;
+      });
+
+      // Use existing search functionality
+      await _rerunSearch(searchText, searchText);
+    }
+  }
+
+  // Edit search criteria for an item
+  Future<void> _editSearchCriteria(String originalText, int index) async {
+    final controller = TextEditingController(text: _editedOriginalText[originalText] ?? originalText);
+    
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Search Criteria'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Search text',
+            hintText: 'Enter new search criteria',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (controller.text.trim().isNotEmpty) {
+                Navigator.of(context).pop({
+                  'new_search': controller.text.trim(),
+                });
+              }
+            },
+            child: const Text('Update'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && result['new_search'] != null) {
+      final newSearch = result['new_search'] as String;
+      
+      setState(() {
+        // Update the item's original text
+        final itemIndex = _items.indexWhere((item) => item['original_text'] == originalText);
+        if (itemIndex != -1) {
+          // Create new item with updated text
+          final updatedItem = Map<String, dynamic>.from(_items[itemIndex]);
+          updatedItem['original_text'] = newSearch;
+          
+          // Update all state maps with new key
+          if (originalText != newSearch) {
+            // Migrate state to new key
+            _selectedSuggestions[newSearch] = _selectedSuggestions.remove(originalText) ?? {};
+            _quantities[newSearch] = _quantities.remove(originalText) ?? 1.0;
+            _units[newSearch] = _units.remove(originalText) ?? 'each';
+            _stockActions[newSearch] = _stockActions.remove(originalText) ?? 'reserve';
+            _skippedItems[newSearch] = _skippedItems.remove(originalText) ?? false;
+            _useSourceProduct[newSearch] = _useSourceProduct.remove(originalText) ?? false;
+            _selectedSourceProducts[newSearch] = _selectedSourceProducts.remove(originalText) ?? {};
+            _sourceQuantities[newSearch] = _sourceQuantities.remove(originalText) ?? 0.0;
+            _updatedSuggestions[newSearch] = _updatedSuggestions.remove(originalText) ?? [];
+            _editedOriginalText[newSearch] = newSearch;
+            
+            // Update controllers
+            _quantityControllers[newSearch] = _quantityControllers.remove(originalText) ?? TextEditingController(text: '1');
+            _unitControllers[newSearch] = _unitControllers.remove(originalText) ?? TextEditingController(text: 'each');
+            _unitControllers['${newSearch}_search'] = _unitControllers.remove('${originalText}_search') ?? TextEditingController(text: newSearch);
+            _sourceQuantityControllers[newSearch] = _sourceQuantityControllers.remove(originalText) ?? TextEditingController();
+            
+            _items[itemIndex] = updatedItem;
+          } else {
+            _editedOriginalText[newSearch] = newSearch;
+            if (_unitControllers.containsKey('${originalText}_search')) {
+              _unitControllers['${originalText}_search']?.text = newSearch;
+            }
+          }
+        }
+      });
+
+      // Fetch new suggestions using existing search method
+      await _rerunSearch(newSearch, newSearch);
     }
   }
 
@@ -123,6 +269,47 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     return productName;
   }
 
+  // Helper function to format stock quantity display
+  // For non-kg units: show both count (whole number) and weight (kg)
+  // For kg units: show kg with decimals
+  // Note: For non-kg products, stock is stored in kg and we convert to count using packaging_size
+  String _formatStockQuantity(double quantity, String unit, {String? packagingSize, double? weightKg}) {
+    final unitLower = unit.toLowerCase();
+    
+    // If unit is kg/g/ml/l, show with decimals
+    if (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l') {
+      return quantity.toStringAsFixed(1);
+    }
+    
+    // For non-kg units (punnet, each, box, etc.), stock is stored in kg
+    // Convert to count using packaging_size and show both count and kg
+    if (packagingSize != null && packagingSize.isNotEmpty) {
+      try {
+        final sizeLower = packagingSize.toLowerCase().trim();
+        double sizeKg = 0;
+        
+        // Parse packaging size (e.g., "200g" or "0.1kg")
+        if (sizeLower.endsWith('kg')) {
+          sizeKg = double.parse(sizeLower.replaceAll('kg', '').trim());
+        } else if (sizeLower.endsWith('g')) {
+          sizeKg = double.parse(sizeLower.replaceAll('g', '').trim()) / 1000.0;
+        }
+        
+        if (sizeKg > 0 && quantity > 0) {
+          // Quantity is in kg, convert to count (round to nearest whole number)
+          final count = (quantity / sizeKg).round();
+          // Show count and weight: "6 (0.6 kg)" for 6 punnets = 0.6 kg
+          return '$count (${quantity.toStringAsFixed(1)} kg)';
+        }
+      } catch (e) {
+        // If parsing fails, fall through to default behavior
+      }
+    }
+    
+    // Default: show as whole number for discrete units (if no packaging_size available)
+    return quantity.toInt().toString();
+  }
+
   Widget _buildStockStatusBadge(Map<String, dynamic> suggestion) {
     final stock = suggestion['stock'] as Map<String, dynamic>?;
     
@@ -146,20 +333,26 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     
     final available = (stock['available_quantity'] as num?)?.toDouble() ?? 0.0;
     final reserved = (stock['reserved_quantity'] as num?)?.toDouble() ?? 0.0;
+    final unit = suggestion['unit'] as String? ?? 'each';
+    final packagingSize = suggestion['packaging_size'] as String?;
+    final weightKg = stock['weight_kg'] as num?;
     
     String statusText;
     Color bgColor;
     Color textColor;
     
     if (available > 0) {
-      statusText = '${available.toStringAsFixed(1)} AVAIL';
+      final availableDisplay = _formatStockQuantity(available, unit, packagingSize: packagingSize, weightKg: weightKg?.toDouble());
+      statusText = '$availableDisplay $unit AVAIL';
       bgColor = Colors.green.withValues(alpha: 0.2);
       textColor = Colors.green.shade700;
       if (reserved > 0) {
-        statusText += ' (${reserved.toStringAsFixed(1)} res)';
+        final reservedDisplay = _formatStockQuantity(reserved, unit, packagingSize: packagingSize);
+        statusText += ' ($reservedDisplay $unit res)';
       }
     } else if (reserved > 0) {
-      statusText = '${reserved.toStringAsFixed(1)} RES ONLY';
+      final reservedDisplay = _formatStockQuantity(reserved, unit, packagingSize: packagingSize);
+      statusText = '$reservedDisplay $unit RES ONLY';
       bgColor = Colors.orange.withValues(alpha: 0.2);
       textColor = Colors.orange.shade700;
     } else {
@@ -187,9 +380,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   }
 
   void _initializeSelections() {
-    final items = widget.suggestionsData['items'] as List<dynamic>? ?? [];
-    
-    for (var item in items) {
+    // Use _items which is initialized from widget.suggestionsData['items'] in initState
+    for (var item in _items) {
       final originalText = item['original_text'] as String;
       final parsed = item['parsed'] as Map<String, dynamic>;
       final suggestions = item['suggestions'] as List<dynamic>? ?? [];
@@ -347,10 +539,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
 
   @override
   Widget build(BuildContext context) {
-    final rawItems = widget.suggestionsData['items'] as List<dynamic>? ?? [];
-    
-    // Keep items in original message order (DO NOT SORT)
-    final items = List<dynamic>.from(rawItems);
+    // Use mutable items list
+    final items = _items;
     
     final customer = widget.suggestionsData['customer'] as Map<String, dynamic>? ?? {};
     
@@ -622,8 +812,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     if (_updatedSuggestions.containsKey(originalText)) {
       return _updatedSuggestions[originalText]!;
     }
-    // Otherwise, find the original item and return its suggestions
-    for (var item in widget.suggestionsData['items']) {
+    // Otherwise, find the item in our mutable list and return its suggestions
+    for (var item in _items) {
       if (item['original_text'] == originalText) {
         return item['suggestions'] as List<dynamic>? ?? [];
       }
@@ -698,6 +888,14 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                           : Theme.of(context).primaryColor,
                     ),
                   ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline, size: 18),
+                  onPressed: () => _addNewItem(index),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  tooltip: 'Add item below',
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -839,8 +1037,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                               // Find product with matching unit
                               final currentSuggestion = _selectedSuggestions[originalText];
                               if (currentSuggestion != null && value.trim().isNotEmpty) {
-                                final suggestions = widget.suggestionsData['items']
-                                    .firstWhere((item) => item['original_text'] == originalText)['suggestions'] as List<dynamic>;
+                                final suggestions = _getSuggestionsForItem(originalText);
                                 
                                 // Look for exact unit match
                                 for (var suggestion in suggestions) {
@@ -1340,7 +1537,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       // Collect all selected items (excluding skipped items)
       final List<Map<String, dynamic>> orderItems = [];
       
-      for (var item in widget.suggestionsData['items']) {
+      for (var item in _items) {
         final originalText = item['original_text'] as String;
         final isSkipped = _skippedItems[originalText] ?? false;
         
@@ -1373,6 +1570,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             if (sourceProduct != null) {
               itemData['source_product_name'] = sourceProduct['name'] ?? 'Unknown';
               itemData['source_quantity'] = sourceQuantity ?? 0.0;
+              itemData['source_unit'] = sourceProduct['unit'] ?? 'each';
             }
           }
           
@@ -1446,7 +1644,9 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         
         String notes = '';
         if (item['source_product_name'] != null) {
-          notes = 'Stock from: ${item['source_product_name']} (${item['source_quantity']})';
+          final sourceQuantity = item['source_quantity'] ?? 0.0;
+          final sourceUnit = item['source_unit'] ?? 'each';
+          notes = 'Stock from: ${item['source_product_name']} (${sourceQuantity.toStringAsFixed(1)} $sourceUnit)';
         }
         
         final rowData = [
@@ -1531,7 +1731,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       // Collect all selected items with their details (excluding skipped items)
       final List<Map<String, dynamic>> orderItems = [];
       
-      for (var item in widget.suggestionsData['items']) {
+      for (var item in _items) {
         final originalText = item['original_text'] as String;
         final isSkipped = _skippedItems[originalText] ?? false;
         
@@ -1614,6 +1814,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             
             itemData['source_product_id'] = sourceProduct['id'];
             itemData['source_quantity'] = sourceQuantity;
+            itemData['source_unit'] = sourceProduct['unit'] ?? 'each';
           } else if (_useSourceProduct[originalText] == true && stockAction == 'no_reserve') {
             // User clicked Continue but _useSourceProduct is still true - clear it
             _useSourceProduct[originalText] = false;
@@ -2015,7 +2216,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              'Available: ${availableQuantity.toStringAsFixed(1)} $unit',
+              'Available: ${_formatStockQuantity(availableQuantity, unit, packagingSize: selectedSuggestion?['packaging_size'] as String?)} $unit',
               style: TextStyle(
                 fontSize: 10,
                 color: inStock ? Colors.green.shade700 : Colors.orange.shade700,
@@ -2580,7 +2781,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                               hasStock
                                   ? (unlimitedStock 
                                       ? '🌱 Always Available'
-                                      : 'In Stock: ${availableQuantity.toStringAsFixed(1)} ${suggestion['unit'] ?? ''}')
+                                      : 'In Stock: ${_formatStockQuantity(availableQuantity, suggestion['unit'] ?? 'each', packagingSize: suggestion['packaging_size'] as String?)} ${suggestion['unit'] ?? ''}')
                                   : 'Out of Stock',
                               style: TextStyle(
                                 fontSize: 12,
@@ -2989,7 +3190,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                   Text(
                                     altUnlimitedStock
                                         ? '🌱 Always Available'
-                                        : 'Stock: ${altAvailableQuantity.toStringAsFixed(1)} ${alt['unit'] ?? ''}',
+                                        : 'Stock: ${_formatStockQuantity(altAvailableQuantity, alt['unit'] ?? 'each', packagingSize: alt['packaging_size'] as String?)} ${alt['unit'] ?? ''}',
                                     style: TextStyle(
                                       fontSize: 10,
                                       color: Colors.grey[600],
@@ -3108,7 +3309,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                         Text(
                                           sourceUnlimitedStock
                                               ? '🌱 Always Available'
-                                              : 'Stock: ${sourceAvailableQuantity.toStringAsFixed(1)} ${sourceSuggestion['unit'] ?? ''}',
+                                              : 'Stock: ${_formatStockQuantity(sourceAvailableQuantity, sourceSuggestion['unit'] ?? 'each', packagingSize: sourceSuggestion['packaging_size'] as String?)} ${sourceSuggestion['unit'] ?? ''}',
                                           style: TextStyle(
                                             fontSize: 9,
                                             color: Colors.grey[600],

@@ -20,6 +20,8 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
   String _searchQuery = '';
   String _filterType = 'all'; // all, order, stock
   bool _showProcessedOnly = false;
+  bool _stockTakeCompleted = false;
+  bool _isCheckingStockTake = true;
 
   @override
   void initState() {
@@ -27,7 +29,33 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
     // Load messages when page opens
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
+      _checkStockTakeStatus();
     });
+  }
+
+  Future<void> _checkStockTakeStatus() async {
+    try {
+      setState(() {
+        _isCheckingStockTake = true;
+      });
+      final apiService = ref.read(apiServiceProvider);
+      final status = await apiService.checkStockTakeStatus();
+      if (mounted) {
+        setState(() {
+          _stockTakeCompleted = status['completed'] == true;
+          _isCheckingStockTake = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error checking stock take status: $e');
+      if (mounted) {
+        setState(() {
+          _isCheckingStockTake = false;
+          // Default to false (not completed) if check fails
+          _stockTakeCompleted = false;
+        });
+      }
+    }
   }
 
   List<WhatsAppMessage> get filteredMessages {
@@ -214,6 +242,7 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
             icon: const Icon(Icons.refresh),
             onPressed: () {
               ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
+              _checkStockTakeStatus();
             },
             tooltip: 'Refresh Messages',
           ),
@@ -221,185 +250,238 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
       ),
       body: Column(
         children: [
-          // Search and Filters
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                // Search Bar
-                TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Search messages, customers...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    filled: true,
-                    fillColor: Colors.grey[50],
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                  ),
-                  onChanged: (value) {
-                    setState(() {
-                      _searchQuery = value;
-                    });
-                  },
-                  style: const TextStyle(fontSize: 16),
-                ),
-
-                const SizedBox(height: 12),
-
-                // Filter Chips
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildFilterChip('All', 'all'),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('Orders', 'order'),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('Stock', 'stock'),
-                      const SizedBox(width: 16),
-                      FilterChip(
-                        label: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _showProcessedOnly ? Icons.check_box : Icons.check_box_outline_blank,
-                              size: 16,
-                              color: _showProcessedOnly ? Colors.white : Colors.green,
-                            ),
-                            const SizedBox(width: 4),
-                            const Text('Processed Only'),
-                          ],
-                        ),
-                        selected: _showProcessedOnly,
-                        onSelected: (selected) {
-                          setState(() {
-                            _showProcessedOnly = selected;
-                          });
-                        },
-                        selectedColor: Colors.green,
-                        backgroundColor: Colors.grey[100],
-                        labelStyle: TextStyle(
-                          color: _showProcessedOnly ? Colors.white : Colors.grey[700],
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Messages List
-          Expanded(
-            child: messagesState.isLoading && messagesState.messages.isEmpty
-                ? const Center(
-                    child: CircularProgressIndicator(),
-                  )
-                : messagesState.error != null
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.error_outline,
-                              size: 64,
-                              color: Colors.red,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Error loading messages',
-                              style: Theme.of(context).textTheme.headlineSmall,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              messagesState.error!,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: Colors.grey[600]),
-                            ),
-                            const SizedBox(height: 24),
-                            ElevatedButton.icon(
-                              onPressed: () {
-                                ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
-                              },
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Retry'),
-                            ),
-                          ],
-                        ),
-                      )
-                    : filteredList.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.message_outlined,
-                                  size: 64,
-                                  color: Colors.grey[300],
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'No messages found',
-                                  style: Theme.of(context).textTheme.headlineSmall,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Try adjusting your filters',
-                                  style: TextStyle(color: Colors.grey[600]),
-                                ),
-                              ],
-                            ),
-                          )
-                        : RefreshIndicator(
-                            onRefresh: () async {
-                              await ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
-                            },
-                            child: ListView.builder(
-                              padding: EdgeInsets.only(
-                                left: 16,
-                                right: 16,
-                                top: 16,
-                                bottom: filteredList.isNotEmpty ? 100 : 16, // Extra padding for footer and buttons
-                              ),
-                              itemCount: filteredList.length,
-                              itemBuilder: (context, index) {
-                                final message = filteredList[index];
-                                return _buildMobileMessageCard(message);
-                              },
-                            ),
-                          ),
-          ),
-
-          // Summary Footer
-          if (filteredList.isNotEmpty)
+          // Warning banner if stock take not completed
+          if (!_isCheckingStockTake && !_stockTakeCompleted)
             Container(
-              color: Colors.white,
-              padding: const EdgeInsets.all(16),
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: Colors.orange,
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    '${filteredList.length} messages',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey,
-                    ),
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    color: Colors.white,
+                    size: 24,
                   ),
-                  Text(
-                    '${filteredList.where((m) => !m.processed).length} unprocessed',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.orange,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '⚠️ Stock take has not been completed for today. Please complete stock take before placing orders.',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
+          // Main content
+          Expanded(
+            child: _buildBody(context, messagesState, filteredList),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildBody(BuildContext context, dynamic messagesState, List<WhatsAppMessage> filteredList) {
+    final children = <Widget>[
+      // Search and Filters
+      Container(
+        color: Colors.white,
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // Search Bar
+            TextField(
+              decoration: InputDecoration(
+                hintText: 'Search messages, customers...',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                filled: true,
+                fillColor: Colors.grey[50],
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value;
+                });
+              },
+              style: const TextStyle(fontSize: 16),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Filter Chips
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _buildFilterChip('All', 'all'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('Orders', 'order'),
+                  const SizedBox(width: 8),
+                  _buildFilterChip('Stock', 'stock'),
+                  const SizedBox(width: 16),
+                  FilterChip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _showProcessedOnly ? Icons.check_box : Icons.check_box_outline_blank,
+                          size: 16,
+                          color: _showProcessedOnly ? Colors.white : Colors.green,
+                        ),
+                        const SizedBox(width: 4),
+                        const Text('Processed Only'),
+                      ],
+                    ),
+                    selected: _showProcessedOnly,
+                    onSelected: (selected) {
+                      setState(() {
+                        _showProcessedOnly = selected;
+                      });
+                    },
+                    selectedColor: Colors.green,
+                    backgroundColor: Colors.grey[100],
+                    labelStyle: TextStyle(
+                      color: _showProcessedOnly ? Colors.white : Colors.grey[700],
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+
+      // Messages List
+      Expanded(
+        child: _buildMessagesContent(context, messagesState, filteredList),
+      ),
+    ];
+
+    // Add Summary Footer if needed
+    if (filteredList.isNotEmpty) {
+      children.add(
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${filteredList.length} messages',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey,
+                ),
+              ),
+              Text(
+                '${filteredList.where((m) => !m.processed).length} unprocessed',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.orange,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: children,
+    );
+  }
+
+  Widget _buildMessagesContent(BuildContext context, dynamic messagesState, List<WhatsAppMessage> filteredList) {
+    if (messagesState.isLoading && messagesState.messages.isEmpty) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+    
+    if (messagesState.error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.error_outline,
+              size: 64,
+              color: Colors.red,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Error loading messages',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              messagesState.error!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () {
+                ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
+              },
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    if (filteredList.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.message_outlined,
+              size: 64,
+              color: Colors.grey[300],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No messages found',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Try adjusting your filters',
+              style: TextStyle(color: Colors.grey[600]),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    return RefreshIndicator(
+      onRefresh: () async {
+        await ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
+      },
+      child: ListView.builder(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          top: 16,
+          bottom: filteredList.isNotEmpty ? 100 : 16, // Extra padding for footer and buttons
+        ),
+        itemCount: filteredList.length,
+        itemBuilder: (context, index) {
+          final message = filteredList[index];
+          return _buildMobileMessageCard(message);
+        },
       ),
     );
   }
@@ -518,13 +600,15 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
                     // Place Order Button
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: () => _processMessage(message),
+                        onPressed: _stockTakeCompleted ? () => _processMessage(message) : null,
                         icon: const Icon(Icons.shopping_cart, size: 16),
                         label: const Text('Place Order'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
+                          backgroundColor: _stockTakeCompleted ? Colors.green : Colors.grey,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(vertical: 12),
+                          disabledBackgroundColor: Colors.grey,
+                          disabledForegroundColor: Colors.white70,
                         ),
                       ),
                     ),
