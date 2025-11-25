@@ -355,11 +355,11 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
           try {
             // Build notes with comment if provided
             String notes;
-            final useWeight = isKgProduct ? weight > 0 : (weight > 0 || countedQuantity == 0);
             if (isKgProduct) {
               notes = 'Complete stock take: $actionText weight to ${weight}kg';
             } else if (weight > 0) {
-              notes = 'Complete stock take: $actionText weight to ${weight}';
+              // For discrete units: store count, weight is for audit trail
+              notes = 'Complete stock take: $actionText counted quantity to $countedQuantity ${productUnit} (weight: ${weight} kg)';
             } else {
               notes = 'Complete stock take: $actionText counted quantity to $countedQuantity';
             }
@@ -367,14 +367,15 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
               notes += '. $comment';
             }
             
-            // Always send both quantity and weight - backend will prefer weight if provided
+            // For discrete units: Always send quantity (count) as primary value
+            // Weight is sent for audit trail but backend will use quantity (count) for available_quantity
             await _apiService.adjustStock(productId, {
               'adjustment_type': adjustmentType,
-              'quantity': countedQuantity,  // For non-kg products or reference
+              'quantity': countedQuantity,  // For discrete units: this is count (e.g., 12 bags)
               'reason': adjustmentMode == 'set' ? 'complete_stock_take_set' : 'complete_stock_take_add',
               'notes': notes,
               'reference_number': referenceNumber,
-              if (weight > 0) 'weight': weight,  // Backend will use weight if provided, even for non-kg products
+              if (weight > 0) 'weight': weight,  // Stored in movement for audit trail, but doesn't replace count
             });
             adjustmentCount++;
             if (isKgProduct) {

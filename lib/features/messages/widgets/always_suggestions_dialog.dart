@@ -9,6 +9,7 @@ import '../../../services/pdf_service.dart';
 import '../../../services/excel_service.dart';
 import '../../../utils/messages_provider.dart';
 import '../../../utils/stock_formatter.dart';
+import '../../../utils/packaging_size_parser.dart';
 import '../../../providers/products_provider.dart';
 import '../../../models/product.dart' as product_model;
 import '../utils/order_items_persistence.dart';
@@ -1023,6 +1024,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                             border: OutlineInputBorder(),
                             contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                           ),
+                          onTap: () {
+                            // Ensure keyboard appears when tapping the field
+                            FocusScope.of(context).requestFocus(FocusNode());
+                          },
                           onChanged: (value) {
                             final newQuantity = double.tryParse(value) ?? 1.0;
                             setState(() {
@@ -1047,6 +1052,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                             border: OutlineInputBorder(),
                             contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                           ),
+                          onTap: () {
+                            // Ensure keyboard appears when tapping the field
+                            FocusScope.of(context).requestFocus(FocusNode());
+                          },
                           onChanged: (value) {
                             setState(() {
                               _units[originalText] = value;
@@ -2233,24 +2242,29 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               final availableWeightKg = (stock?['available_quantity_kg'] as num?)?.toDouble();
               
               return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: inStock ? Colors.green.withValues(alpha: 0.1) : Colors.orange.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(4),
-                ),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: inStock ? Colors.green.withValues(alpha: 0.1) : Colors.orange.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(4),
+            ),
                 child: Builder(
                   builder: (context) {
-                    final formatted = _formatStockQuantity(unit: unit, count: availableCount, weightKg: availableWeightKg);
-                    final unitLower = unit.toLowerCase();
-                    // For kg products: add "kg" if not already in display
-                    // For discrete products: formatStockQuantity includes "kg" for weight, append product unit
-                    final displayText = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
-                        ? (formatted.contains('kg') || formatted.contains('g') || formatted.contains('ml') || formatted.contains('l')
-                            ? 'Available: $formatted'
-                            : 'Available: $formatted $unit')
-                        : 'Available: $formatted $unit';
+                    // Build stock display - always show both count and weight if available
+                    String stockDisplay = '';
+                    if (availableCount != null && availableCount > 0) {
+                      stockDisplay = availableCount.toString();
+                      if (availableWeightKg != null && availableWeightKg > 0) {
+                        stockDisplay += ' (${availableWeightKg.toStringAsFixed(1)} kg)';
+                      }
+                      stockDisplay += ' $unit';
+                    } else if (availableWeightKg != null && availableWeightKg > 0) {
+                      stockDisplay = '${availableWeightKg.toStringAsFixed(1)} kg';
+                    } else {
+                      stockDisplay = '0 $unit';
+                    }
+                    
                     return Text(
-                      displayText,
+                      'Available: $stockDisplay',
                       style: TextStyle(
                         fontSize: 10,
                         color: inStock ? Colors.green.shade700 : Colors.orange.shade700,
@@ -2258,7 +2272,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                       ),
                     );
                   },
-                ),
+            ),
               );
             },
           ),
@@ -2344,6 +2358,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               helperMaxLines: 2,
             ),
             style: TextStyle(fontSize: 11),
+            onTap: () {
+              // Ensure keyboard appears when tapping the field
+              FocusScope.of(context).requestFocus(FocusNode());
+            },
             onChanged: (value) {
               setState(() {
                 final quantity = double.tryParse(value);
@@ -2760,12 +2778,78 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     final allSuggestions = _getSuggestionsForItem(originalText);
     final inStockAlternatives = allSuggestions.where((s) {
       final sStock = s['stock'] as Map<String, dynamic>?;
+      // Check all stock fields: count, weight, and legacy available_quantity
+      final sAvailableCount = (sStock?['available_quantity_count'] as num?)?.toInt();
+      final sAvailableWeightKg = (sStock?['available_quantity_kg'] as num?)?.toDouble();
       final sAvailableQuantity = (sStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
       final sInStock = s['in_stock'] as bool? ?? false;
       final sUnlimitedStock = s['unlimited_stock'] as bool? ?? false;
-      return (sInStock || sUnlimitedStock || sAvailableQuantity > 0) && 
-             s['product_id'] != suggestion['product_id'];
+      
+      // Product has stock if any of these conditions are true:
+      final hasStock = sInStock || 
+                      sUnlimitedStock || 
+                      (sAvailableCount != null && sAvailableCount > 0) ||
+                      (sAvailableWeightKg != null && sAvailableWeightKg > 0) ||
+                      sAvailableQuantity > 0;
+      
+      return hasStock && s['product_id'] != suggestion['product_id'];
     }).toList();
+    
+    // Check if this is a kg product with no stock, but has bag/packet variants available
+    final productUnit = (suggestion['unit'] as String? ?? '').toLowerCase();
+    final isKgProduct = productUnit == 'kg';
+    
+    if (!hasStock && isKgProduct) {
+      // Look for bag/packet variants of the same product with stock
+      final packageVariants = allSuggestions.where((s) {
+        final sUnit = (s['unit'] as String? ?? '').toLowerCase();
+        final sProductName = (s['product_name'] as String? ?? '').toLowerCase();
+        final kgProductName = (suggestion['product_name'] as String? ?? '').toLowerCase();
+        
+        // Check if it's a package variant (bag, packet, box, etc.) of the same product
+        final isPackageUnit = sUnit == 'bag' || sUnit == 'packet' || sUnit == 'box' || 
+                             sUnit == 'punnet' || sUnit == 'each';
+        
+        // Check if product names match (remove packaging info for comparison)
+        final baseProductName = kgProductName.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim();
+        final sBaseProductName = sProductName.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim();
+        final isSameProduct = baseProductName == sBaseProductName || 
+                             sProductName.contains(baseProductName) ||
+                             baseProductName.contains(sBaseProductName);
+        
+        if (!isPackageUnit || !isSameProduct) return false;
+        
+        // Check if this variant has stock
+        final sStock = s['stock'] as Map<String, dynamic>?;
+        final sAvailableCount = (sStock?['available_quantity_count'] as num?)?.toInt() ?? 0;
+        final sAvailableWeightKg = (sStock?['available_quantity_kg'] as num?)?.toDouble() ?? 0.0;
+        final sAvailableQuantity = (sStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+        final sInStock = s['in_stock'] as bool? ?? false;
+        final sUnlimitedStock = s['unlimited_stock'] as bool? ?? false;
+        
+        final sHasStock = sInStock || 
+                         sUnlimitedStock || 
+                         sAvailableCount > 0 ||
+                         sAvailableWeightKg > 0 ||
+                         sAvailableQuantity > 0;
+        
+        // Check if it has packaging_size set (needed for breakdown)
+        final sPackagingSize = s['packaging_size'] as String?;
+        final hasPackagingSize = sPackagingSize != null && sPackagingSize.isNotEmpty;
+        
+        return sHasStock && hasPackagingSize;
+      }).toList();
+      
+      if (packageVariants.isNotEmpty) {
+        // Show breakdown confirmation dialog
+        await _showBreakdownConfirmationDialog(
+          originalText,
+          suggestion,
+          packageVariants.first,
+        );
+        return;
+      }
+    }
     
     // If out of stock and has alternatives, show the out-of-stock options modal
     if (!hasStock && inStockAlternatives.isNotEmpty) {
@@ -2776,6 +2860,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     // Otherwise show the product selection modal
     await showDialog(
       context: context,
+      barrierDismissible: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => Dialog(
           insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
@@ -2828,16 +2913,24 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                 if (unlimitedStock) {
                                   return const Text('🌱 Always Available');
                                 }
-                                final formatted = _formatStockQuantity(unit: suggestion['unit'] ?? 'each', count: availableCount, weightKg: availableWeightKg);
                                 final suggestionUnit = suggestion['unit'] ?? 'each';
-                                final unitLower = suggestionUnit.toLowerCase();
-                                final displayText = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
-                                    ? (formatted.contains('kg') || formatted.contains('g') || formatted.contains('ml') || formatted.contains('l')
-                                        ? 'In Stock: $formatted'
-                                        : 'In Stock: $formatted $suggestionUnit')
-                                    : 'In Stock: $formatted $suggestionUnit';
+                                
+                                // Build stock display - always show both count and weight if available
+                                String stockDisplay = '';
+                                if (availableCount != null && availableCount > 0) {
+                                  stockDisplay = availableCount.toString();
+                                  if (availableWeightKg != null && availableWeightKg > 0) {
+                                    stockDisplay += ' (${availableWeightKg.toStringAsFixed(1)} kg)';
+                                  }
+                                  stockDisplay += ' $suggestionUnit';
+                                } else if (availableWeightKg != null && availableWeightKg > 0) {
+                                  stockDisplay = '${availableWeightKg.toStringAsFixed(1)} kg';
+                                } else {
+                                  stockDisplay = '0 $suggestionUnit';
+                                }
+                                
                                 return Text(
-                                  displayText,
+                                  'In Stock: $stockDisplay',
                                   style: TextStyle(
                                     fontSize: 12,
                                     color: hasStock ? Colors.green.shade700 : Colors.orange.shade700,
@@ -2905,6 +2998,15 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                   border: OutlineInputBorder(),
                                   contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                                 ),
+                                onTap: () {
+                                  // Ensure keyboard appears when tapping the field
+                                  FocusScope.of(context).requestFocus(FocusNode());
+                                  Future.delayed(const Duration(milliseconds: 100), () {
+                                    _quantityControllers[originalText]?.selection = TextSelection.fromPosition(
+                                      TextPosition(offset: _quantityControllers[originalText]!.text.length),
+                                    );
+                                  });
+                                },
                                 onChanged: (value) {
                                   final qty = double.tryParse(value);
                                   if (qty != null && qty > 0) {
@@ -2949,6 +3051,15 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                       border: OutlineInputBorder(),
                                       contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                                     ),
+                                    onTap: () {
+                                      // Ensure keyboard appears when tapping the field
+                                      FocusScope.of(context).requestFocus(FocusNode());
+                                      Future.delayed(const Duration(milliseconds: 100), () {
+                                        _unitControllers[originalText]?.selection = TextSelection.fromPosition(
+                                          TextPosition(offset: _unitControllers[originalText]!.text.length),
+                                        );
+                                      });
+                                    },
                                     onChanged: (value) {
                                       setModalState(() {
                                         _units[originalText] = value.trim();
@@ -3130,6 +3241,142 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     );
   }
 
+  // Show confirmation dialog for breaking down a bag/packet into kg
+  Future<void> _showBreakdownConfirmationDialog(
+    String originalText,
+    Map<String, dynamic> kgProduct,
+    Map<String, dynamic> packageProduct,
+  ) async {
+    final packageProductName = packageProduct['product_name'] as String? ?? 'Unknown';
+    final packageUnit = packageProduct['unit'] as String? ?? '';
+    final packageStock = packageProduct['stock'] as Map<String, dynamic>?;
+    final packageAvailableCount = (packageStock?['available_quantity_count'] as num?)?.toInt() ?? 0;
+    final packagePackagingSize = packageProduct['packaging_size'] as String?;
+    
+    // Calculate weight per package
+    final weightPerPackageKg = PackagingSizeParser.parseToKg(packagePackagingSize);
+    
+    if (weightPerPackageKg == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot break down package: packaging size not set'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
+    final kgProductName = kgProduct['product_name'] as String? ?? 'Unknown';
+    final kgProductId = kgProduct['product_id'] as int?;
+    final packageProductId = packageProduct['product_id'] as int?;
+    
+    if (kgProductId == null || packageProductId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Invalid product IDs'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('Break Down Package?'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'You need kg stock for "$kgProductName", but only $packageProductName ($packageUnit) is available.',
+              style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Would you like to break down 1 $packageUnit to add ${weightPerPackageKg.toStringAsFixed(1)} kg to "$kgProductName"?',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Available: $packageAvailableCount $packageUnit',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Break Down'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+      
+      try {
+        final apiService = ref.read(apiServiceProvider);
+        final result = await apiService.breakDownPackageToKg(
+          packageProductId: packageProductId,
+          kgProductId: kgProductId,
+          quantity: 1,
+        );
+        
+        // Close loading dialog
+        if (mounted) Navigator.of(context).pop();
+        
+        if (result['status'] == 'success' && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message'] as String? ?? 'Package broken down successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          
+          // Reload suggestions for this item
+          await _rerunSearch(originalText, _editedOriginalText[originalText] ?? originalText);
+        } else {
+          throw Exception(result['error'] as String? ?? 'Unknown error');
+        }
+      } catch (e) {
+        // Close loading dialog if still open
+        if (mounted) Navigator.of(context).pop();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to break down package: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
   // Show modal with in-stock alternatives and source product option
   Future<void> _showOutOfStockOptionsModal(
     String originalText,
@@ -3250,16 +3497,25 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                       if (altUnlimitedStock) {
                                         return const Text('🌱 Always Available');
                                       }
-                                      final formatted = _formatStockQuantity(unit: alt['unit'] ?? 'each', count: altAvailableCount, weightKg: altAvailableWeightKg);
                                       final altUnit = alt['unit'] ?? 'each';
                                       final unitLower = altUnit.toLowerCase();
-                                      final displayText = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
-                                          ? (formatted.contains('kg') || formatted.contains('g') || formatted.contains('ml') || formatted.contains('l')
-                                              ? 'Stock: $formatted'
-                                              : 'Stock: $formatted $altUnit')
-                                          : 'Stock: $formatted $altUnit';
+                                      
+                                      // Build stock display - always show both count and weight if available
+                                      String stockDisplay = '';
+                                      if (altAvailableCount != null && altAvailableCount > 0) {
+                                        stockDisplay = altAvailableCount.toString();
+                                        if (altAvailableWeightKg != null && altAvailableWeightKg > 0) {
+                                          stockDisplay += ' (${altAvailableWeightKg.toStringAsFixed(1)} kg)';
+                                        }
+                                        stockDisplay += ' $altUnit';
+                                      } else if (altAvailableWeightKg != null && altAvailableWeightKg > 0) {
+                                        stockDisplay = '${altAvailableWeightKg.toStringAsFixed(1)} kg';
+                                      } else {
+                                        stockDisplay = '0 $altUnit';
+                                      }
+                                      
                                       return Text(
-                                        displayText,
+                                        'Stock: $stockDisplay',
                                         style: TextStyle(
                                           fontSize: 10,
                                           color: Colors.grey[600],
@@ -3309,10 +3565,19 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                   final allSuggestions = _getSuggestionsForItem(originalText);
                   final productsWithStock = allSuggestions.where((s) {
                     final sStock = s['stock'] as Map<String, dynamic>?;
+                    // Check all stock fields: count, weight, and legacy available_quantity
+                    final sAvailableCount = (sStock?['available_quantity_count'] as num?)?.toInt();
+                    final sAvailableWeightKg = (sStock?['available_quantity_kg'] as num?)?.toDouble();
                     final sAvailableQuantity = (sStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
                     final sInStock = s['in_stock'] as bool? ?? false;
                     final sUnlimitedStock = s['unlimited_stock'] as bool? ?? false;
-                    return sInStock || sUnlimitedStock || sAvailableQuantity > 0;
+                    
+                    // Product has stock if any of these conditions are true:
+                    return sInStock || 
+                           sUnlimitedStock || 
+                           (sAvailableCount != null && sAvailableCount > 0) ||
+                           (sAvailableWeightKg != null && sAvailableWeightKg > 0) ||
+                           sAvailableQuantity > 0;
                   }).toList();
                   
                   return ConstrainedBox(
@@ -3387,20 +3652,29 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                             if (sourceUnlimitedStock) {
                                               return const Text('🌱 Always Available');
                                             }
-                                            final formatted = _formatStockQuantity(unit: sourceSuggestion['unit'] ?? 'each', count: sourceAvailableCount, weightKg: sourceAvailableWeightKg);
                                             final sourceUnit = sourceSuggestion['unit'] ?? 'each';
                                             final unitLower = sourceUnit.toLowerCase();
-                                            final displayText = (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l')
-                                                ? (formatted.contains('kg') || formatted.contains('g') || formatted.contains('ml') || formatted.contains('l')
-                                                    ? 'Stock: $formatted'
-                                                    : 'Stock: $formatted $sourceUnit')
-                                                : 'Stock: $formatted $sourceUnit';
+                                            
+                                            // Build stock display - always show both count and weight if available
+                                            String stockDisplay = '';
+                                            if (sourceAvailableCount != null && sourceAvailableCount > 0) {
+                                              stockDisplay = sourceAvailableCount.toString();
+                                              if (sourceAvailableWeightKg != null && sourceAvailableWeightKg > 0) {
+                                                stockDisplay += ' (${sourceAvailableWeightKg.toStringAsFixed(1)} kg)';
+                                              }
+                                              stockDisplay += ' $sourceUnit';
+                                            } else if (sourceAvailableWeightKg != null && sourceAvailableWeightKg > 0) {
+                                              stockDisplay = '${sourceAvailableWeightKg.toStringAsFixed(1)} kg';
+                                            } else {
+                                              stockDisplay = '0 $sourceUnit';
+                                            }
+                                            
                                             return Text(
-                                              displayText,
-                                              style: TextStyle(
-                                                fontSize: 9,
-                                                color: Colors.grey[600],
-                                              ),
+                                              'Stock: $stockDisplay',
+                                          style: TextStyle(
+                                            fontSize: 9,
+                                            color: Colors.grey[600],
+                                          ),
                                             );
                                           },
                                         ),

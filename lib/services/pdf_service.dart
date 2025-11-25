@@ -187,13 +187,13 @@ class PdfService {
                   decoration: const pw.BoxDecoration(
                     border: pw.Border(top: pw.BorderSide(color: PdfColors.grey300)),
                   ),
-                    child: pw.Row(
-                      children: [
-                        pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
+                  child: pw.Row(
+                    children: [
+                      pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
                         pw.Expanded(flex: 2, child: pw.Text('${_formatQuantityForUnit(item.quantity, item.unit ?? 'each')} ${item.unit ?? ''}', style: const pw.TextStyle(fontSize: 8))),
-                        pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
-                      ],
-                    ),
+                      pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
+                    ],
+                  ),
                 ),
               );
             }
@@ -296,13 +296,13 @@ class PdfService {
                   decoration: const pw.BoxDecoration(
                     border: pw.Border(top: pw.BorderSide(color: PdfColors.grey300)),
                   ),
-                    child: pw.Row(
-                      children: [
-                        pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
+                  child: pw.Row(
+                    children: [
+                      pw.Expanded(flex: 4, child: _buildProductNameWithNotes(item)),
                         pw.Expanded(flex: 2, child: pw.Text('${_formatQuantityForUnit(item.quantity, item.unit ?? 'each')} ${item.unit ?? ''}', style: const pw.TextStyle(fontSize: 8))),
-                        pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
-                      ],
-                    ),
+                      pw.Expanded(flex: 2, child: pw.Text(_getStockStatusText(item), style: const pw.TextStyle(fontSize: 7))),
+                    ],
+                  ),
                 ),
               );
             }

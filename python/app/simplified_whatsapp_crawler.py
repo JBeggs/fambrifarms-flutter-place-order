@@ -333,8 +333,15 @@ class SimplifiedWhatsAppCrawler:
             print(f"Full traceback: {traceback.format_exc()}")
             return False
 
-    def is_message_in_date_range(self, timestamp_str):
-        """Check if message timestamp is within current day or previous day"""
+    def is_message_in_date_range(self, timestamp_str, days_back=1):
+        """
+        Check if message timestamp is within the specified date range
+        
+        Args:
+            timestamp_str: Message timestamp string
+            days_back: Number of days back to include (default: 1 = today + yesterday)
+                       Set to 7 to fetch last week, etc.
+        """
         try:
             # Parse the timestamp
             if isinstance(timestamp_str, str):
@@ -342,19 +349,20 @@ class SimplifiedWhatsAppCrawler:
             else:
                 return False
             
-            # Get current date and previous date (in UTC)
+            # Get current date and calculate cutoff date (in UTC)
             now = datetime.now(timezone.utc)
             current_date = now.date()
-            previous_date = (now - timedelta(days=1)).date()
+            cutoff_date = (now - timedelta(days=days_back)).date()
             
             # Get message date
             msg_date = msg_datetime.date()
             
-            # Check if message is from current day or previous day
-            is_in_range = msg_date == current_date or msg_date == previous_date
+            # Check if message is within the date range
+            # Include messages from cutoff_date up to current_date (inclusive)
+            is_in_range = cutoff_date <= msg_date <= current_date
             
             if not is_in_range:
-                print(f"📅 [DATE_FILTER] Skipping message from {msg_date} (current: {current_date}, previous: {previous_date})")
+                print(f"📅 [DATE_FILTER] Skipping message from {msg_date} (range: {cutoff_date} to {current_date}, days_back={days_back})")
             
             return is_in_range
             
@@ -459,20 +467,29 @@ class SimplifiedWhatsAppCrawler:
         
         return cleaned
 
-    def get_current_messages(self, scroll_to_load_more=False):
+    def get_current_messages(self, scroll_to_load_more=False, days_back=1):
         """
-        Get current messages from the chat - ONLY current day + previous day
+        Get current messages from the chat
         
         Args:
             scroll_to_load_more: If True, scroll up with date-aware stopping
+            days_back: Number of days back to include (default: 1 = today + yesterday)
+                       Use 7 for last week, 30 for last month, etc.
+                       Set to None to disable date filtering entirely
         """
         try:
             # Calculate date range
             now = datetime.now(timezone.utc)
             current_date = now.date()
-            previous_date = (now - timedelta(days=1)).date()
-            cutoff_date = (now - timedelta(days=2)).date()
-            print(f"📅 [DATE_RANGE] Collecting messages from {previous_date} and {current_date}")
+            
+            if days_back is None:
+                # Disable date filtering - fetch all messages
+                cutoff_date = None
+                print(f"📅 [DATE_RANGE] Collecting ALL messages (date filtering disabled)")
+            else:
+                previous_date = (now - timedelta(days=1)).date()
+                cutoff_date = (now - timedelta(days=days_back + 1)).date()  # +1 for buffer
+                print(f"📅 [DATE_RANGE] Collecting messages from last {days_back} days (since {cutoff_date})")
             
             # Find message container first for scrolling
             scroll_container = None
@@ -497,8 +514,8 @@ class SimplifiedWhatsAppCrawler:
                         
                         print(f"📊 Scroll {scroll_attempts + 1}: {current_count} messages")
                         
-                        # Check oldest visible messages for date cutoff
-                        if scroll_attempts > 0 and current_count > 0:
+                        # Check oldest visible messages for date cutoff (only if date filtering enabled)
+                        if cutoff_date and scroll_attempts > 0 and current_count > 0:
                             for i in range(min(5, len(current_messages))):
                                 try:
                                     msg_elem = current_messages[i]
@@ -565,8 +582,8 @@ class SimplifiedWhatsAppCrawler:
                     # Extract timestamp first for date filtering
                     timestamp, ts_source = self.extract_timestamp_from_element(msg_elem)
                     
-                    # DATE FILTER: Only include current + previous day
-                    if not self.is_message_in_date_range(timestamp):
+                    # DATE FILTER: Apply date filtering if enabled
+                    if days_back is not None and not self.is_message_in_date_range(timestamp, days_back=days_back):
                         messages_filtered += 1
                         continue
                     
@@ -814,9 +831,9 @@ class SimplifiedWhatsAppCrawler:
         """
         print(f"🔄 Starting periodic message checking (every {check_interval}s)")
         
-        # Initial full scan
-        print("🚀 Performing initial message scan...")
-        messages = self.get_current_messages(scroll_to_load_more=True)
+        # Initial full scan - use 7 days back to catch any missed messages
+        print("🚀 Performing initial message scan (fetching last 7 days to catch missed messages)...")
+        messages = self.get_current_messages(scroll_to_load_more=True, days_back=7)
         if messages:
             self.send_to_django(messages)
             self.last_message_count = len(messages)

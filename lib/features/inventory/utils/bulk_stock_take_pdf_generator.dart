@@ -26,14 +26,14 @@ class BulkStockTakePdfGenerator {
       
       pdf.addPage(
         pw.MultiPage(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(32),
+          pageFormat: PdfPageFormat.a4.landscape,
+          margin: const pw.EdgeInsets.symmetric(horizontal: 20, vertical: 24),
           build: (context) => [
             _buildPdfHeader(now),
-            pw.SizedBox(height: 20),
+            pw.SizedBox(height: 16),
             _buildPdfTableHeader(),
             ..._buildPdfTableRows(sortedEntries, stockTakeProducts),
-            pw.SizedBox(height: 20),
+            pw.SizedBox(height: 16),
             _buildPdfSummary(entries),
           ],
         ),
@@ -135,39 +135,171 @@ class BulkStockTakePdfGenerator {
   // ========== PDF BUILDERS ==========
   
   static pw.Widget _buildPdfHeader(DateTime now) {
-    return pw.Header(
-      level: 0,
-      child: pw.Text(
-        'Stock Report',
-        style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold),
+    final dateStr = '${now.day}/${now.month}/${now.year}';
+    final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    
+    return pw.Container(
+      padding: const pw.EdgeInsets.only(bottom: 12),
+      decoration: const pw.BoxDecoration(
+        border: pw.Border(bottom: pw.BorderSide(width: 2, color: PdfColors.blue700)),
+      ),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: pw.CrossAxisAlignment.end,
+        children: [
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'Stock Take Report',
+                style: pw.TextStyle(
+                  fontSize: 28,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.blue900,
+                ),
+              ),
+              pw.SizedBox(height: 4),
+              pw.Text(
+                'Generated: $dateStr at $timeStr',
+                style: pw.TextStyle(
+                  fontSize: 11,
+                  color: PdfColors.grey700,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
   
   static pw.Widget _buildPdfTableHeader() {
     return pw.Container(
-      padding: const pw.EdgeInsets.all(8),
+      padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: const pw.BoxDecoration(
-        color: PdfColors.grey300,
-        border: pw.Border(bottom: pw.BorderSide(width: 2)),
+        color: PdfColors.blue100,
+        border: pw.Border(
+          bottom: pw.BorderSide(width: 2, color: PdfColors.blue700),
+          top: pw.BorderSide(width: 1, color: PdfColors.blue300),
+        ),
       ),
       child: pw.Row(
         children: [
-          pw.Expanded(flex: 3, child: pw.Text('Product', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
+          pw.Expanded(
+            flex: 4,
+            child: pw.Text(
+              'Product',
+              style: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+                fontSize: 11,
+                color: PdfColors.blue900,
+              ),
+            ),
+          ),
           pw.Expanded(
             flex: 2,
             child: pw.Align(
               alignment: pw.Alignment.centerRight,
-              child: pw.Text('Stock Counted', style: pw.TextStyle(fontWeight: pw.FontWeight.bold), textAlign: pw.TextAlign.right),
+              child: pw.Text(
+                'Stock Counted',
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 11,
+                  color: PdfColors.blue900,
+                ),
+                textAlign: pw.TextAlign.right,
+              ),
             ),
           ),
-          pw.Expanded(flex: 2, child: pw.Text('Weight (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-          pw.Expanded(flex: 1, child: pw.Text('Unit', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-          pw.Expanded(flex: 2, child: pw.Text('Comment', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-          pw.Expanded(flex: 2, child: pw.Text('Wastage Qty', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-          pw.Expanded(flex: 2, child: pw.Text('Wastage Weight (kg)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-          pw.Expanded(flex: 2, child: pw.Text('Reason', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),
-          pw.Expanded(flex: 2, child: pw.Text('Errors/Issues', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))),  // Add Errors/Issues column
+          pw.Expanded(
+            flex: 2,
+            child: pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                'Weight (kg)',
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 11,
+                  color: PdfColors.blue900,
+                ),
+                textAlign: pw.TextAlign.right,
+              ),
+            ),
+          ),
+          pw.Expanded(
+            flex: 1,
+            child: pw.Text(
+              'Unit',
+              style: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+                fontSize: 11,
+                color: PdfColors.blue900,
+              ),
+            ),
+          ),
+          pw.Expanded(
+            flex: 3,
+            child: pw.Text(
+              'Comment',
+              style: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+                fontSize: 11,
+                color: PdfColors.blue900,
+              ),
+            ),
+          ),
+          pw.Expanded(
+            flex: 2,
+            child: pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                'Wastage Qty',
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 11,
+                  color: PdfColors.blue900,
+                ),
+                textAlign: pw.TextAlign.right,
+              ),
+            ),
+          ),
+          pw.Expanded(
+            flex: 2, 
+            child: pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                'Wastage Weight (kg)',
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 11,
+                  color: PdfColors.blue900,
+                ),
+                textAlign: pw.TextAlign.right,
+              ),
+            ),
+          ),
+          pw.Expanded(
+            flex: 3,
+            child: pw.Text(
+              'Reason',
+              style: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+                fontSize: 11,
+                color: PdfColors.blue900,
+              ),
+            ),
+          ),
+          pw.Expanded(
+            flex: 3,
+            child: pw.Text(
+              'Errors/Issues',
+              style: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+                fontSize: 11,
+                color: PdfColors.blue900,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -177,7 +309,9 @@ class BulkStockTakePdfGenerator {
     List<Map<String, dynamic>> entries,
     List<Product> stockTakeProducts,
   ) {
-    return entries.map((entry) {
+    return entries.asMap().entries.map((entryWithIndex) {
+      final entry = entryWithIndex.value;
+      final rowIndex = entryWithIndex.key;
       final productId = entry['product_id'] as int;
       final product = stockTakeProducts.where((p) => p.id == productId).firstOrNull;
       
@@ -217,8 +351,9 @@ class BulkStockTakePdfGenerator {
       
       if (isKgProduct && weight <= 0) {
         errors.add('Missing Required Data: Weight is required for kg products');
-      } else if (!isKgProduct && countedStock <= 0 && weight <= 0) {
-        errors.add('Missing Required Data: Quantity or weight is required');
+      } else if (!isKgProduct && countedStock <= 0) {
+        // For discrete units: count is required, weight is optional (for audit trail)
+        errors.add('Missing Required Data: Quantity (count) is required for ${productUnit} products');
       }
       
       // Check for wastage without reason
@@ -228,29 +363,44 @@ class BulkStockTakePdfGenerator {
       
       errorField = errors.join('; ');
       
+      // Alternate row colors for better readability
+      final isEvenRow = rowIndex % 2 == 0;
+      
       return pw.Container(
-        padding: const pw.EdgeInsets.all(8),
-        decoration: const pw.BoxDecoration(
-          border: pw.Border(bottom: pw.BorderSide(width: 0.5, color: PdfColors.grey)),
+        padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: pw.BoxDecoration(
+          color: isEvenRow ? PdfColors.white : PdfColors.grey50,
+          border: const pw.Border(
+            bottom: pw.BorderSide(width: 0.5, color: PdfColors.grey300),
+          ),
         ),
         child: pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
             // Product name
             pw.Expanded(
-              flex: 3,
+              flex: 4,
               child: pw.Text(
                 productName, 
-                style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+                style: pw.TextStyle(
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 11,
+                  color: PdfColors.grey900,
+                ),
               ),
             ),
-            // Stock Counted (kg) - always shows count (right-aligned)
+            // Stock Counted - shows count for discrete units, weight for continuous units (right-aligned)
             pw.Expanded(
               flex: 2,
               child: pw.Align(
                 alignment: pw.Alignment.centerRight,
                 child: pw.Text(
                   stockCountedDisplay,
-                  style: const pw.TextStyle(fontSize: 10),
+                  style: pw.TextStyle(
+                    fontSize: 11,
+                    fontWeight: pw.FontWeight.normal,
+                    color: PdfColors.grey900,
+                  ),
                   textAlign: pw.TextAlign.right,
                 ),
               ),
@@ -264,7 +414,11 @@ class BulkStockTakePdfGenerator {
                   weight > 0 
                     ? weight.toStringAsFixed(1)
                     : '-',
-                  style: const pw.TextStyle(fontSize: 10),
+                  style: pw.TextStyle(
+                    fontSize: 11,
+                    fontWeight: pw.FontWeight.normal,
+                    color: weight > 0 ? PdfColors.grey900 : PdfColors.grey500,
+                  ),
                   textAlign: pw.TextAlign.right,
                 ),
               ),
@@ -272,14 +426,24 @@ class BulkStockTakePdfGenerator {
             // Unit
             pw.Expanded(
               flex: 1,
-              child: pw.Text(product.unit, style: const pw.TextStyle(fontSize: 10)),
+              child: pw.Text(
+                product.unit,
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: PdfColors.grey700,
+                ),
+              ),
             ),
             // Comment
             pw.Expanded(
-              flex: 2,
+              flex: 3,
               child: pw.Text(
                 commentDisplay,
-                style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: comment.isNotEmpty ? PdfColors.grey800 : PdfColors.grey400,
+                ),
+                maxLines: 2,
               ),
             ),
             // Wastage Quantity
@@ -292,8 +456,9 @@ class BulkStockTakePdfGenerator {
                     ? (wastageQuantity % 1 == 0 ? wastageQuantity.toInt().toString() : wastageQuantity.toStringAsFixed(1))
                     : '-',
                   style: pw.TextStyle(
-                    fontSize: 10,
-                    color: wastageQuantity > 0 ? PdfColors.red : PdfColors.black,
+                    fontSize: 11,
+                    fontWeight: wastageQuantity > 0 ? pw.FontWeight.bold : pw.FontWeight.normal,
+                    color: wastageQuantity > 0 ? PdfColors.red700 : PdfColors.grey400,
                   ),
                   textAlign: pw.TextAlign.right,
                 ),
@@ -309,8 +474,9 @@ class BulkStockTakePdfGenerator {
                     ? wastageWeight.toStringAsFixed(1)
                     : '-',
                   style: pw.TextStyle(
-                    fontSize: 10,
-                    color: wastageWeight > 0 ? PdfColors.red : PdfColors.black,
+                    fontSize: 11,
+                    fontWeight: wastageWeight > 0 ? pw.FontWeight.bold : pw.FontWeight.normal,
+                    color: wastageWeight > 0 ? PdfColors.red700 : PdfColors.grey400,
                   ),
                   textAlign: pw.TextAlign.right,
                 ),
@@ -318,21 +484,27 @@ class BulkStockTakePdfGenerator {
             ),
             // Wastage Reason
             pw.Expanded(
-              flex: 2,
+              flex: 3,
               child: pw.Text(
                 wastageReason.isNotEmpty ? wastageReason : '-',
-                style: const pw.TextStyle(fontSize: 9),
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: wastageReason.isNotEmpty ? PdfColors.grey800 : PdfColors.grey400,
+                ),
+                maxLines: 2,
               ),
             ),
             // Errors/Issues
             pw.Expanded(
-              flex: 2,
+              flex: 3,
               child: pw.Text(
                 errorField.isNotEmpty ? errorField : '-',
                 style: pw.TextStyle(
-                  fontSize: 8,
-                  color: errorField.isNotEmpty ? PdfColors.red : PdfColors.black,
+                  fontSize: 9,
+                  fontWeight: errorField.isNotEmpty ? pw.FontWeight.bold : pw.FontWeight.normal,
+                  color: errorField.isNotEmpty ? PdfColors.red700 : PdfColors.grey400,
                 ),
+                maxLines: 3,
               ),
             ),
           ],
@@ -347,12 +519,92 @@ class BulkStockTakePdfGenerator {
       (e['wastage_weight'] as double? ?? 0.0) > 0
     ).length;
     
-    return pw.Column(
+    final totalWastageWeight = entries.fold<double>(
+      0.0,
+      (sum, e) => sum + (e['wastage_weight'] as double? ?? 0.0),
+    );
+    
+    final productsWithErrors = entries.where((e) {
+      final productId = e['product_id'] as int;
+      // This is a simplified check - actual error detection happens in _buildPdfTableRows
+      return false; // Will be calculated properly if needed
+    }).length;
+    
+    return pw.Container(
+      padding: const pw.EdgeInsets.all(12),
+      decoration: pw.BoxDecoration(
+        color: PdfColors.blue50,
+        border: pw.Border.all(color: PdfColors.blue300, width: 1),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+      ),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
+        children: [
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'Total Products',
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: PdfColors.grey700,
+                ),
+              ),
+              pw.SizedBox(height: 2),
+              pw.Text(
+                '${entries.length}',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.blue900,
+                ),
+              ),
+            ],
+          ),
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text(
+                'Products with Wastage',
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: PdfColors.grey700,
+                ),
+              ),
+              pw.SizedBox(height: 2),
+              pw.Text(
+                '$productsWithWastage',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                  color: productsWithWastage > 0 ? PdfColors.red700 : PdfColors.blue900,
+                ),
+              ),
+            ],
+          ),
+          pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        pw.Text('Total Products: ${entries.length}', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-        pw.Text('Products with Wastage: $productsWithWastage', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+              pw.Text(
+                'Total Wastage Weight',
+                style: pw.TextStyle(
+                  fontSize: 10,
+                  color: PdfColors.grey700,
+                ),
+              ),
+              pw.SizedBox(height: 2),
+              pw.Text(
+                '${totalWastageWeight.toStringAsFixed(1)} kg',
+                style: pw.TextStyle(
+                  fontSize: 16,
+                  fontWeight: pw.FontWeight.bold,
+                  color: totalWastageWeight > 0 ? PdfColors.red700 : PdfColors.blue900,
+                ),
+              ),
       ],
+          ),
+        ],
+      ),
     );
   }
   
@@ -440,8 +692,9 @@ class BulkStockTakePdfGenerator {
     
     if (isKgProduct && weight <= 0) {
       errors.add('Missing Required Data: Weight is required for kg products');
-    } else if (!isKgProduct && countedStock <= 0 && weight <= 0) {
-      errors.add('Missing Required Data: Quantity or weight is required');
+    } else if (!isKgProduct && countedStock <= 0) {
+      // For discrete units: count is required, weight is optional (for audit trail)
+      errors.add('Missing Required Data: Quantity (count) is required for ${productUnit} products');
     }
     
     // Check for wastage without reason
@@ -511,7 +764,7 @@ class BulkStockTakePdfGenerator {
       
       // Check for missing required data
       if (isKgProduct && weight <= 0) return true;
-      if (!isKgProduct && countedStock <= 0 && weight <= 0) return true;
+      if (!isKgProduct && countedStock <= 0) return true;  // Count is required for discrete units
       
       // Check for wastage without reason
       if ((wastageQuantity > 0 || wastageWeight > 0) && wastageReason.isEmpty) return true;
@@ -582,12 +835,12 @@ class BulkStockTakePdfGenerator {
         errorDetails = 'Weight is required for kg products but was not provided.\n'
             'Current Weight: ${weight > 0 ? weight : 0} kg';
         actionRequired = 'Enter weight for this kg product';
-      } else if (!isKgProduct && countedStock <= 0 && weight <= 0) {
+      } else if (!isKgProduct && countedStock <= 0) {
         errorType = 'Missing Required Data';
-        errorDetails = 'Quantity or weight is required but neither was provided.\n'
+        errorDetails = 'Quantity (count) is required for ${productUnit} products but was not provided.\n'
             'Current Counted: $countedStock\n'
-            'Current Weight: ${weight > 0 ? weight : 0}';
-        actionRequired = 'Enter quantity or weight for this product';
+            'Current Weight: ${weight > 0 ? weight : 0} kg (optional)';
+        actionRequired = 'Enter quantity (count) for this ${productUnit} product';
       } else if ((wastageQuantity > 0 || wastageWeight > 0) && wastageReason.isEmpty) {
         errorType = 'Wastage Without Reason';
         errorDetails = 'Wastage was recorded but no reason was provided.\n'

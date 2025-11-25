@@ -288,80 +288,80 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
 
   Widget _buildBody(BuildContext context, dynamic messagesState, List<WhatsAppMessage> filteredList) {
     final children = <Widget>[
-      // Search and Filters
-      Container(
-        color: Colors.white,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Search Bar
-            TextField(
-              decoration: InputDecoration(
-                hintText: 'Search messages, customers...',
-                prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                filled: true,
-                fillColor: Colors.grey[50],
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
-              style: const TextStyle(fontSize: 16),
-            ),
-
-            const SizedBox(height: 12),
-
-            // Filter Chips
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  _buildFilterChip('All', 'all'),
-                  const SizedBox(width: 8),
-                  _buildFilterChip('Orders', 'order'),
-                  const SizedBox(width: 8),
-                  _buildFilterChip('Stock', 'stock'),
-                  const SizedBox(width: 16),
-                  FilterChip(
-                    label: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _showProcessedOnly ? Icons.check_box : Icons.check_box_outline_blank,
-                          size: 16,
-                          color: _showProcessedOnly ? Colors.white : Colors.green,
-                        ),
-                        const SizedBox(width: 4),
-                        const Text('Processed Only'),
-                      ],
+          // Search and Filters
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                // Search Bar
+                TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Search messages, customers...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    selected: _showProcessedOnly,
-                    onSelected: (selected) {
-                      setState(() {
-                        _showProcessedOnly = selected;
-                      });
-                    },
-                    selectedColor: Colors.green,
-                    backgroundColor: Colors.grey[100],
-                    labelStyle: TextStyle(
-                      color: _showProcessedOnly ? Colors.white : Colors.grey[700],
-                      fontWeight: FontWeight.w600,
-                    ),
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+                  onChanged: (value) {
+                    setState(() {
+                      _searchQuery = value;
+                    });
+                  },
+                  style: const TextStyle(fontSize: 16),
+                ),
 
-      // Messages List
-      Expanded(
+                const SizedBox(height: 12),
+
+                // Filter Chips
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _buildFilterChip('All', 'all'),
+                      const SizedBox(width: 8),
+                      _buildFilterChip('Orders', 'order'),
+                      const SizedBox(width: 8),
+                      _buildFilterChip('Stock', 'stock'),
+                      const SizedBox(width: 16),
+                      FilterChip(
+                        label: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _showProcessedOnly ? Icons.check_box : Icons.check_box_outline_blank,
+                              size: 16,
+                              color: _showProcessedOnly ? Colors.white : Colors.green,
+                            ),
+                            const SizedBox(width: 4),
+                            const Text('Processed Only'),
+                          ],
+                        ),
+                        selected: _showProcessedOnly,
+                        onSelected: (selected) {
+                          setState(() {
+                            _showProcessedOnly = selected;
+                          });
+                        },
+                        selectedColor: Colors.green,
+                        backgroundColor: Colors.grey[100],
+                        labelStyle: TextStyle(
+                          color: _showProcessedOnly ? Colors.white : Colors.grey[700],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Messages List
+          Expanded(
         child: _buildMessagesContent(context, messagesState, filteredList),
       ),
     ];
@@ -403,85 +403,85 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
   Widget _buildMessagesContent(BuildContext context, dynamic messagesState, List<WhatsAppMessage> filteredList) {
     if (messagesState.isLoading && messagesState.messages.isEmpty) {
       return const Center(
-        child: CircularProgressIndicator(),
+                    child: CircularProgressIndicator(),
       );
     }
     
     if (messagesState.error != null) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.error_outline,
-              size: 64,
-              color: Colors.red,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Error loading messages',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              messagesState.error!,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: () {
-                ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
-            ),
-          ],
-        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              size: 64,
+                              color: Colors.red,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Error loading messages',
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              messagesState.error!,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.grey[600]),
+                            ),
+                            const SizedBox(height: 24),
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
+                              },
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Retry'),
+                            ),
+                          ],
+                        ),
       );
     }
     
     if (filteredList.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.message_outlined,
-              size: 64,
-              color: Colors.grey[300],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No messages found',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Try adjusting your filters',
-              style: TextStyle(color: Colors.grey[600]),
-            ),
-          ],
-        ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.message_outlined,
+                                  size: 64,
+                                  color: Colors.grey[300],
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'No messages found',
+                                  style: Theme.of(context).textTheme.headlineSmall,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Try adjusting your filters',
+                                  style: TextStyle(color: Colors.grey[600]),
+                                ),
+                              ],
+                            ),
       );
     }
     
     return RefreshIndicator(
-      onRefresh: () async {
-        await ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
-      },
-      child: ListView.builder(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: 16,
-          bottom: filteredList.isNotEmpty ? 100 : 16, // Extra padding for footer and buttons
-        ),
-        itemCount: filteredList.length,
-        itemBuilder: (context, index) {
-          final message = filteredList[index];
-          return _buildMobileMessageCard(message);
-        },
+                            onRefresh: () async {
+                              await ref.read(messagesProvider.notifier).loadMessages(page: 1, pageSize: 50);
+                            },
+                            child: ListView.builder(
+                              padding: EdgeInsets.only(
+                                left: 16,
+                                right: 16,
+                                top: 16,
+                                bottom: filteredList.isNotEmpty ? 100 : 16, // Extra padding for footer and buttons
+                              ),
+                              itemCount: filteredList.length,
+                              itemBuilder: (context, index) {
+                                final message = filteredList[index];
+                                return _buildMobileMessageCard(message);
+                              },
       ),
     );
   }

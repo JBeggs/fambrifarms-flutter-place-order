@@ -12,6 +12,7 @@ class Product {
   final double stockLevel;
   final double minimumStock;
   final bool unlimitedStock;
+  final String? packagingSize;  // Packaging size (e.g., "100g", "1kg", "0.5kg")
   final DateTime? lastUpdated;
   final ProductPricing? pricing;
   final List<String>? aliases;
@@ -28,6 +29,7 @@ class Product {
     this.stockLevel = 0.0,
     this.minimumStock = 0.0,
     this.unlimitedStock = false,
+    this.packagingSize,
     this.lastUpdated,
     this.pricing,
     this.aliases,
@@ -78,6 +80,7 @@ class Product {
       stockLevel: _parseDouble(json['stock_level'] ?? 0.0),
       minimumStock: _parseDouble(json['minimum_stock'] ?? 0.0),
       unlimitedStock: json['unlimited_stock'] ?? false,
+      packagingSize: _parseString(json['packaging_size']),
       lastUpdated: json['last_updated'] != null 
           ? DateTime.parse(json['last_updated']) 
           : null,

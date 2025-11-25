@@ -11,6 +11,7 @@ import '../../../services/api_service.dart';
 import '../utils/bulk_stock_take_logic.dart';
 import '../utils/bulk_stock_take_pdf_generator.dart';
 import '../utils/bulk_stock_take_persistence.dart';
+import '../../../utils/packaging_size_parser.dart';
 
 class BulkStockTakePage extends ConsumerStatefulWidget {
   final List<Product> products;
@@ -953,10 +954,16 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                           decoration: InputDecoration(
                             labelText: 'Additional Notes',
                             hintText: 'Optional comment',
-                            border: OutlineInputBorder(),
+                            filled: true,
+                            fillColor: Colors.grey[200],
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide(color: Colors.grey[400]!, width: 1),
+                            ),
                             contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                           ),
                           maxLines: 2,
+                          style: TextStyle(color: Colors.black87),
                         ),
                         
                         const SizedBox(height: 16),
@@ -1006,9 +1013,15 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                           decoration: InputDecoration(
                             labelText: 'Wastage Reason',
                             hintText: 'e.g., Spoilage, Damaged, Expired',
-                            border: OutlineInputBorder(),
+                            filled: true,
+                            fillColor: Colors.grey[200],
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide(color: Colors.grey[400]!, width: 1),
+                            ),
                             contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                           ),
+                          style: TextStyle(color: Colors.black87),
                         ),
                       ],
                     ),
@@ -1456,10 +1469,126 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
     }
   }
 
+  /// Calculate and populate weight fields from packaging size for products that have count but no weight
+  void _calculateAndPopulateWeights() {
+    for (final product in _stockTakeProducts) {
+      final productId = product.id;
+      final controller = _controllers[productId];
+      final weightController = _weightControllers[productId];
+      
+      if (controller == null || weightController == null) continue;
+      
+      final productUnit = (product.unit ?? '').toLowerCase().trim();
+      final isKgProduct = productUnit == 'kg';
+      
+      // Only process non-kg products
+      if (isKgProduct) continue;
+      
+      // Check if count is entered but weight is empty
+      final countText = controller.text.trim();
+      final weightText = weightController.text.trim();
+      
+      if (countText.isNotEmpty && weightText.isEmpty) {
+        final countedQuantity = double.tryParse(countText);
+        if (countedQuantity != null && countedQuantity > 0) {
+          // Try to calculate weight from packaging size
+          final calculatedWeight = PackagingSizeParser.calculateWeightFromPackaging(
+            count: countedQuantity.toInt(),
+            packagingSize: product.packagingSize,
+          );
+          
+          if (calculatedWeight != null && calculatedWeight > 0) {
+            // Populate the weight field
+            weightController.text = calculatedWeight.toStringAsFixed(3);
+            print('[BULK_STOCK_TAKE] Auto-calculated weight for ${product.name}: $countedQuantity ${productUnit} × ${product.packagingSize} = ${calculatedWeight.toStringAsFixed(3)} kg');
+          }
+        }
+      }
+    }
+  }
+
   Future<void> _submitBulkStockTake({String adjustmentMode = 'set'}) async {
     _autoSaveTimer?.cancel();
 
     try {
+      // Calculate and populate weight fields from packaging size before validation
+      _calculateAndPopulateWeights();
+      
+      // Validate entries before building
+      final validationErrors = BulkStockTakeLogic.validateStockTakeEntries(
+        stockTakeProducts: _stockTakeProducts,
+        controllers: _controllers,
+        weightControllers: _weightControllers,
+        wastageControllers: _wastageControllers,
+        wastageWeightControllers: _wastageWeightControllers,
+      );
+      
+      if (validationErrors.isNotEmpty) {
+        // Extract product IDs from validation errors and expand them
+        final productsWithErrors = <int>{};
+        for (final error in validationErrors) {
+          // Error format: "Product Name: Error message"
+          // Extract product name and find matching product ID
+          final productName = error.split(':').first.trim();
+          for (final product in _stockTakeProducts) {
+            if (product.name == productName) {
+              productsWithErrors.add(product.id);
+              break;
+            }
+          }
+        }
+        
+        // Expand products with errors
+        setState(() {
+          _expandedProducts.addAll(productsWithErrors);
+        });
+        
+        // Scroll to first error product if possible
+        if (productsWithErrors.isNotEmpty) {
+          final firstErrorProductId = productsWithErrors.first;
+          final errorIndex = _stockTakeProducts.indexWhere((p) => p.id == firstErrorProductId);
+          if (errorIndex >= 0 && _scrollController.hasClients) {
+            // Scroll to the error product
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final itemHeight = 200.0; // Approximate height per item
+              final scrollOffset = errorIndex * itemHeight;
+              _scrollController.animateTo(
+                scrollOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.easeInOut,
+              );
+            });
+          }
+        }
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Validation Errors:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                ...validationErrors.take(5).map((error) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('• $error', style: const TextStyle(fontSize: 12)),
+                )),
+                if (validationErrors.length > 5)
+                  Text('... and ${validationErrors.length - 5} more', style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                const SizedBox(height: 8),
+                Text(
+                  'Products with errors have been expanded for easy editing',
+                  style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.white.withOpacity(0.9)),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 8),
+          ),
+        );
+        return;
+      }
+
       // Build entries using shared logic utility
       final entries = BulkStockTakeLogic.buildStockTakeEntries(
         stockTakeProducts: _stockTakeProducts,
@@ -2304,13 +2433,13 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
                                   color: commentController.text.isNotEmpty 
-                                    ? Colors.blue[50] 
-                                    : Colors.grey[50],
+                                    ? Colors.blue[100] 
+                                    : Colors.grey[200],
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                     color: commentController.text.isNotEmpty 
-                                      ? Colors.blue[300]! 
-                                      : Colors.grey[300]!,
+                                      ? Colors.blue[400]! 
+                                      : Colors.grey[400]!,
                                     width: commentController.text.isNotEmpty ? 2 : 1,
                                   ),
                                 ),
@@ -2453,13 +2582,13 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
                                   color: wastageReasonController.text.isNotEmpty 
-                                    ? Colors.orange[50] 
-                                    : Colors.grey[50],
+                                    ? Colors.orange[100] 
+                                    : Colors.grey[200],
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                     color: wastageReasonController.text.isNotEmpty 
-                                      ? Colors.orange[300]! 
-                                      : Colors.grey[300]!,
+                                      ? Colors.orange[400]! 
+                                      : Colors.grey[400]!,
                                     width: wastageReasonController.text.isNotEmpty ? 2 : 1,
                                   ),
                                 ),
@@ -2511,15 +2640,15 @@ class _BulkStockTakePageState extends ConsumerState<BulkStockTakePage> {
                                       textInputAction: TextInputAction.next,
                                       textCapitalization: TextCapitalization.words,
                                       enableInteractiveSelection: true,
-                                      style: const TextStyle(fontSize: 16, color: Colors.black),
+                                      style: const TextStyle(fontSize: 16, color: Colors.black87),
                                       decoration: InputDecoration(
                                         hintText: 'e.g., Spoilage, Damaged, Expired',
-                                        hintStyle: TextStyle(color: Colors.grey[400]),
+                                        hintStyle: TextStyle(color: Colors.grey[500]),
                                         filled: true,
-                                        fillColor: Colors.transparent,
+                                        fillColor: Colors.white,
                                         border: OutlineInputBorder(
                                           borderRadius: BorderRadius.circular(8),
-                                          borderSide: BorderSide.none,
+                                          borderSide: BorderSide(color: Colors.grey[300]!, width: 1),
                                         ),
                                         contentPadding: const EdgeInsets.all(14),
                                       ),

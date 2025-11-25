@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../models/product.dart';
+import '../../../utils/packaging_size_parser.dart';
 
 /// Business logic for bulk stock take operations
 /// Handles entry building, validation, and data processing
@@ -46,17 +47,57 @@ class BulkStockTakeLogic {
       final productUnit = (product?.unit ?? '').toLowerCase().trim();
       final isKgProduct = productUnit == 'kg';
       
-      // For kg products: weight is required (replaces quantity)
-      // For other products: quantity is required (count of packages)
-      // Skip products with NO data at all
-      final hasRequiredData = isKgProduct 
-          ? hasWeight  // Kg products require weight
-          : hasCountedQuantity;  // Other products require quantity
+      // Parse counted quantity and weight
+      final countedQuantity = double.tryParse(controller?.text ?? '') ?? 0.0;
+      final weightText = weightController?.text.trim() ?? '';
+      final cleanWeightText = weightText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
+      final weight = double.tryParse(cleanWeightText) ?? 0.0;
+      
+      // For non-kg products: must have both count AND weight
+      // UNLESS weight can be calculated from packaging_size
+      // Check if packaging size exists and can be parsed (independent of count)
+      bool weightCanBeCalculated = false;
+      if (!isKgProduct) {
+        // Check if packaging size can be parsed (regardless of count)
+        weightCanBeCalculated = PackagingSizeParser.canCalculateWeight(product?.packagingSize);
+      }
+      
+      // Validation: For non-kg products, need count AND (weight OR can calculate from packaging_size)
+      bool hasRequiredData;
+      if (isKgProduct) {
+        // Kg products: weight is required (replaces quantity)
+        hasRequiredData = hasWeight;
+      } else {
+        // Non-kg products: count is required, AND (weight OR can calculate from packaging_size)
+        hasRequiredData = hasCountedQuantity && (hasWeight || weightCanBeCalculated);
+      }
       
       // Skip if no required data AND no optional data (comment, wastage, wastage reason)
+      // Allow entries with only wastage data (no stock count/weight update)
       if (!hasRequiredData && !hasComment && !hasWastage && !hasWastageWeight && !hasWastageReason) continue;
       
-      final countedQuantity = double.tryParse(controller?.text ?? '') ?? 0.0;
+      // Initialize finalWeight - will be set based on conditions below
+      double finalWeight = weight;
+      
+      // If only wastage data exists (no count/weight), allow it
+      if (!hasRequiredData && (hasWastage || hasWastageWeight)) {
+        // Entry is valid - only recording wastage, no stock update needed
+        // Set defaults for count/weight to 0
+        finalWeight = 0.0;
+      }
+      
+      // If weight can be calculated but not provided, calculate it
+      if (!isKgProduct && countedQuantity > 0 && weight <= 0 && weightCanBeCalculated) {
+        final calculatedWeight = PackagingSizeParser.calculateWeightFromPackaging(
+          count: countedQuantity.toInt(),
+          packagingSize: product?.packagingSize,
+        );
+        if (calculatedWeight != null) {
+          finalWeight = calculatedWeight;
+          print('[STOCK_TAKE_LOGIC] Calculated weight for ${product?.name}: $countedQuantity ${productUnit} × ${product?.packagingSize} = ${calculatedWeight.toStringAsFixed(3)} kg');
+        }
+      }
+      
       final currentStock = originalStock[productId] ?? 0.0;
       final comment = commentController?.text.trim() ?? '';
       final wastageText = wastageController?.text?.trim() ?? '';
@@ -66,9 +107,6 @@ class BulkStockTakeLogic {
       final cleanWastageWeightText = wastageWeightText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
       final wastageWeight = double.tryParse(cleanWastageWeightText) ?? 0.0;
       final wastageReason = wastageReasonController?.text.trim() ?? '';
-      final weightText = weightController?.text.trim() ?? '';
-      final cleanWeightText = weightText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
-      final weight = double.tryParse(cleanWeightText) ?? 0.0;
       
       final productName = product?.name ?? 'Unknown Product';
       
@@ -82,12 +120,77 @@ class BulkStockTakeLogic {
         'wastage_quantity': wastageQuantity,
         'wastage_weight': wastageWeight,
         'wastage_reason': wastageReason,
-        'weight': weight,
+        'weight': finalWeight,  // Use calculated weight if available
         'comment': comment,
       });
     }
     
     return entries;
+  }
+  
+  /// Validate stock take entries and return validation errors
+  /// Returns list of error messages, empty if valid
+  /// 
+  /// Note: If both count and weight are empty, entry is allowed if it has wastage data
+  static List<String> validateStockTakeEntries({
+    required List<Product> stockTakeProducts,
+    required Map<int, TextEditingController> controllers,
+    required Map<int, TextEditingController> weightControllers,
+    required Map<int, TextEditingController> wastageControllers,
+    required Map<int, TextEditingController> wastageWeightControllers,
+  }) {
+    final errors = <String>[];
+    
+    for (final product in stockTakeProducts) {
+      final controller = controllers[product.id];
+      final weightController = weightControllers[product.id];
+      final wastageController = wastageControllers[product.id];
+      final wastageWeightController = wastageWeightControllers[product.id];
+      
+      final productUnit = (product.unit ?? '').toLowerCase().trim();
+      final isKgProduct = productUnit == 'kg';
+      
+      final hasCountedQuantity = controller != null && controller.text.trim().isNotEmpty;
+      final hasWeight = weightController != null && weightController.text.trim().isNotEmpty;
+      final hasWastageQuantity = wastageController != null && wastageController.text.trim().isNotEmpty;
+      final hasWastageWeight = wastageWeightController != null && wastageWeightController.text.trim().isNotEmpty;
+      
+      final countedQuantity = double.tryParse(controller?.text ?? '') ?? 0.0;
+      final weightText = weightController?.text.trim() ?? '';
+      final cleanWeightText = weightText.replaceAll(RegExp(r'[a-zA-Z]'), '').trim();
+      final weight = double.tryParse(cleanWeightText) ?? 0.0;
+      
+      // If both count and weight are empty, allow if wastage data exists
+      if (!hasCountedQuantity && !hasWeight) {
+        if (hasWastageQuantity || hasWastageWeight) {
+          // Entry is valid - only recording wastage, no stock update needed
+          continue;
+        }
+        // No data at all - skip validation (will be filtered out in buildStockTakeEntries)
+        continue;
+      }
+      
+      // Validate only if product count/weight data exists
+      if (isKgProduct) {
+        // Kg products: weight is required
+        if (!hasWeight || weight <= 0) {
+          errors.add('${product.name}: Weight is required for kg products');
+        }
+      } else {
+        // Non-kg products: count is required
+        if (!hasCountedQuantity || countedQuantity <= 0) {
+          errors.add('${product.name}: Count is required for ${productUnit} products');
+        } else {
+          // Check if weight is provided OR can be calculated from packaging_size
+          final weightCanBeCalculated = PackagingSizeParser.canCalculateWeight(product.packagingSize);
+          if (!hasWeight && !weightCanBeCalculated) {
+            errors.add('${product.name}: Weight is required for ${productUnit} products (or set packaging_size to calculate automatically)');
+          }
+        }
+      }
+    }
+    
+    return errors;
   }
   
   /// Validate that at least some data has been entered

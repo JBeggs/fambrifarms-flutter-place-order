@@ -2370,6 +2370,26 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> breakDownPackageToKg({
+    required int packageProductId,
+    required int kgProductId,
+    int quantity = 1,
+  }) async {
+    try {
+      final response = await _djangoDio.post(
+        '/api/inventory/actions/break-down-package/',
+        data: {
+          'package_product_id': packageProductId,
+          'kg_product_id': kgProductId,
+          'quantity': quantity,
+        },
+      );
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to break down package: ${_extractErrorMessage(e, "Network error")}');
+    }
+  }
+
   // ===== WHATSAPP PROCESSING LOGS =====
   
   Future<List<Map<String, dynamic>>> getProcessingLogs({int? limit}) async {

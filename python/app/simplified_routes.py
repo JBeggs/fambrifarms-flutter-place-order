@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 import threading
 import time
+import os
 from .simplified_whatsapp_crawler import SimplifiedWhatsAppCrawler
 
 app = Flask(__name__)
@@ -30,9 +31,13 @@ def start_whatsapp():
                 'message': 'WhatsApp crawler is already running'
             })
         
-        # Get Django URL from request or use default
+        # Get Django URL from request, environment variable, or use default
         data = request.get_json() or {}
-        django_url = data.get('django_url', 'http://localhost:8000')
+        django_url = data.get('django_url') or os.environ.get('DJANGO_BASE_URL') or os.environ.get('DJANGO_URL') or os.environ.get('PROD_DJANGO_URL') or 'http://localhost:8000'
+        
+        # Strip trailing /api if present (crawler adds /api/whatsapp/receive-html/)
+        if django_url.endswith('/api'):
+            django_url = django_url[:-4]
         check_interval = data.get('check_interval', 30)
         
         print(f"🚀 Starting simplified WhatsApp crawler...")
@@ -140,11 +145,12 @@ def manual_scan():
         
         data = request.get_json() or {}
         scroll_to_load_more = data.get('scroll_to_load_more', True)
+        days_back = data.get('days_back', 1)  # Default: 1 day (today + yesterday)
         
-        print(f"🔍 Manual scan triggered (scroll={scroll_to_load_more})")
+        print(f"🔍 Manual scan triggered (scroll={scroll_to_load_more}, days_back={days_back})")
         
         # Get messages
-        messages = crawler.get_current_messages(scroll_to_load_more=scroll_to_load_more)
+        messages = crawler.get_current_messages(scroll_to_load_more=scroll_to_load_more, days_back=days_back)
         
         if messages:
             # Send to Django
@@ -183,7 +189,7 @@ def test_django_connection():
     """Test connection to Django backend"""
     try:
         data = request.get_json() or {}
-        django_url = data.get('django_url', 'http://localhost:8000')
+        django_url = data.get('django_url') or os.environ.get('DJANGO_BASE_URL') or os.environ.get('DJANGO_URL') or 'http://localhost:8000'
         
         # Test with a dummy message
         test_message = {
