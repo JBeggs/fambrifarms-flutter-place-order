@@ -48,6 +48,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   final Map<String, List<dynamic>> _updatedSuggestions = {}; // Store updated suggestions per item
   bool _isProcessing = false;
   late List<Map<String, dynamic>> _items; // Mutable list of items
+  final ScrollController _scrollController = ScrollController();
+  bool _showCustomerInfo = true; // Show initially
 
   @override
   void initState() {
@@ -57,6 +59,19 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     _items = rawItems.map((item) => Map<String, dynamic>.from(item as Map)).toList();
     _initializeSelections();
     _initializeEditedText();
+    
+    // Listen to scroll to hide customer info after scrolling
+    _scrollController.addListener(() {
+      if (_scrollController.offset > 100 && _showCustomerInfo) {
+        setState(() {
+          _showCustomerInfo = false;
+        });
+      } else if (_scrollController.offset <= 100 && !_showCustomerInfo) {
+        setState(() {
+          _showCustomerInfo = true;
+        });
+      }
+    });
   }
 
   // Initialize edited original text map with original values
@@ -215,7 +230,9 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
 
   @override
   void dispose() {
-    // Dispose all controllers
+    // Dispose scroll controller
+    _scrollController.dispose();
+    // Dispose all text controllers
     for (var controller in _unitControllers.values) {
       controller.dispose();
     }
@@ -610,46 +627,47 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           ),
         ],
             
-            // Customer info
-            if (customer.isNotEmpty) ...[
+            // Customer info - only show after scrolling a bit
+            if (customer.isNotEmpty && _showCustomerInfo) ...[
               const SizedBox(height: 8),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: Colors.blue.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.business, size: 16, color: Colors.blue),
-                    const SizedBox(width: 8),
+                    const Icon(Icons.business, size: 14, color: Colors.blue),
+                    const SizedBox(width: 6),
                     Text(
                       'Customer: ${customer['name'] ?? 'Unknown'}',
-                      style: const TextStyle(fontWeight: FontWeight.w500),
+                      style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
                     ),
                   ],
                 ),
               ),
             ],
             
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             
             // Items list with confirm button at the end
             Expanded(
               child: ListView.builder(
-                itemCount: items.length + (allItemsCompleted ? 1 : 0), // Add 1 for button if all completed
+                controller: _scrollController,
+                itemCount: items.length + (allItemsCompleted ? 1 : 0) + (!allItemsCompleted ? 1 : 0), // Add 1 for button if all completed, add 1 for "complete all items" message if not completed
                 itemBuilder: (context, index) {
                   // If this is the last item and all items are completed, show confirm button
                   if (allItemsCompleted && index == items.length) {
                     return Padding(
-                      padding: const EdgeInsets.all(16.0),
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 12.0),
                       child: SafeArea(
                         top: false,
                         child: Column(
                           children: [
                             // Progress indicator showing completion
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                               decoration: BoxDecoration(
                                 color: Colors.green.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(8),
@@ -657,30 +675,30 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.check_circle, color: Colors.green.shade700, size: 18),
-                                  const SizedBox(width: 8),
+                                  Icon(Icons.check_circle, color: Colors.green.shade700, size: 16),
+                                  const SizedBox(width: 6),
                                   Text(
                                     'All items completed ($completedItemsCount/$includedItemsCount)',
                                     style: TextStyle(
                                       color: Colors.green.shade700,
                                       fontWeight: FontWeight.w500,
-                                      fontSize: 12,
+                                      fontSize: 11,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 12),
                             // Save Progress button
                             SizedBox(
                               width: double.infinity,
-                              height: 48,
+                              height: 44,
                               child: OutlinedButton.icon(
                                 onPressed: _isProcessing ? null : _saveProgress,
-                                icon: const Icon(Icons.save, size: 20),
+                                icon: const Icon(Icons.save, size: 18),
                                 label: const Text(
                                   'Save Progress',
-                                  style: TextStyle(fontSize: 16),
+                                  style: TextStyle(fontSize: 15),
                                 ),
                                 style: OutlinedButton.styleFrom(
                                   side: BorderSide(color: Colors.blue),
@@ -688,17 +706,17 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 10),
                             // Preview button - shows Excel preview
                             SizedBox(
                               width: double.infinity,
-                              height: 48,
+                              height: 44,
                               child: OutlinedButton.icon(
                                 onPressed: _isProcessing ? null : _previewOrderExcel,
-                                icon: const Icon(Icons.preview, size: 20),
+                                icon: const Icon(Icons.preview, size: 18),
                                 label: const Text(
                                   'Preview Excel',
-                                  style: TextStyle(fontSize: 16),
+                                  style: TextStyle(fontSize: 15),
                                 ),
                                 style: OutlinedButton.styleFrom(
                                   side: BorderSide(color: Theme.of(context).primaryColor),
@@ -706,11 +724,11 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 10),
                             // Confirm Order button - bigger and prominent
                             SizedBox(
                               width: double.infinity,
-                              height: 56, // Bigger button
+                              height: 52,
                               child: ElevatedButton(
                                 onPressed: _isProcessing ? null : _confirmOrder,
                                 style: ElevatedButton.styleFrom(
@@ -733,12 +751,12 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                     : Row(
                                         mainAxisAlignment: MainAxisAlignment.center,
                                         children: [
-                                          const Icon(Icons.check_circle, size: 24),
-                                          const SizedBox(width: 12),
+                                          const Icon(Icons.check_circle, size: 22),
+                                          const SizedBox(width: 10),
                                           Text(
                                             'Confirm Order ($includedItemsCount items)',
                                             style: const TextStyle(
-                                              fontSize: 18,
+                                              fontSize: 17,
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
@@ -746,13 +764,45 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                       ),
                               ),
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 6),
                             // Cancel button - smaller, less prominent
                             TextButton(
                               onPressed: _isProcessing ? null : () => Navigator.of(context).pop(),
                               child: const Text(
                                 'Cancel',
-                                style: TextStyle(fontSize: 14),
+                                style: TextStyle(fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+                  
+                  // Show "Complete all items" message at the end of items (before buttons) if not all completed
+                  if (!allItemsCompleted && index == items.length) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 12.0),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.info_outline, color: Colors.orange.shade700, size: 16),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                'Complete all items to confirm order ($completedItemsCount/$includedItemsCount)',
+                                style: TextStyle(
+                                  color: Colors.orange.shade700,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 11,
+                                ),
+                                textAlign: TextAlign.center,
                               ),
                             ),
                           ],
@@ -767,40 +817,6 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                 },
               ),
             ),
-            
-            // Show progress indicator at bottom when not all items completed (non-scrollable footer)
-            if (!allItemsCompleted)
-              SafeArea(
-                top: false,
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.withValues(alpha: 0.1),
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(12),
-                      topRight: Radius.circular(12),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.info_outline, color: Colors.orange.shade700, size: 18),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: Text(
-                          'Complete all items to confirm order ($completedItemsCount/$includedItemsCount)',
-                          style: TextStyle(
-                            color: Colors.orange.shade700,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 12,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
           ],
     );
 
@@ -808,7 +824,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     if (isInScaffold) {
       // Mobile: return content directly (already in Scaffold with AppBar)
       return Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: content,
       );
     } else {
@@ -1195,10 +1211,15 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           ],
         ],
         // All suggestions - compact display (including selected one so user can switch)
+        // Two-column grid layout for better navigation
         if (suggestions.length > 1)
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+          GridView.count(
+            crossAxisCount: 2,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            childAspectRatio: 1.2, // Adjust based on content height/width ratio
             children: suggestions.map<Widget>((suggestion) {
               return _buildCompactSuggestion(suggestion, originalText);
             }).toList(),
@@ -1265,33 +1286,59 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: useSource && isSourceSelected
-                        ? Colors.amber
-                        : useSource && !hasStock
-                            ? Colors.grey
-                            : isSelected 
-                                ? Colors.green 
-                                : Colors.blue,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    useSource && isSourceSelected
-                        ? 'SOURCE'
-                        : useSource && !hasStock
-                            ? 'NO STOCK'
-                            : isSelected 
-                                ? 'SELECTED' 
-                                : 'RECOMMENDED',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
+                // RECOMMENDED badge commented out - two-column layout makes it unnecessary
+                // Container(
+                //   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                //   decoration: BoxDecoration(
+                //     color: useSource && isSourceSelected
+                //         ? Colors.amber
+                //         : useSource && !hasStock
+                //             ? Colors.grey
+                //             : isSelected 
+                //                 ? Colors.green 
+                //                 : Colors.blue,
+                //     borderRadius: BorderRadius.circular(10),
+                //   ),
+                //   child: Text(
+                //     useSource && isSourceSelected
+                //         ? 'SOURCE'
+                //         : useSource && !hasStock
+                //             ? 'NO STOCK'
+                //             : isSelected 
+                //                 ? 'SELECTED' 
+                //                 : 'RECOMMENDED',
+                //     style: const TextStyle(
+                //       color: Colors.white,
+                //       fontSize: 9,
+                //       fontWeight: FontWeight.bold,
+                //     ),
+                //   ),
+                // ),
+                // Show badges only for non-recommended states
+                if (useSource && isSourceSelected || useSource && !hasStock || isSelected)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: useSource && isSourceSelected
+                          ? Colors.amber
+                          : useSource && !hasStock
+                              ? Colors.grey
+                              : Colors.green,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      useSource && isSourceSelected
+                          ? 'SOURCE'
+                          : useSource && !hasStock
+                              ? 'NO STOCK'
+                              : 'SELECTED',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -2634,8 +2681,327 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               ],
             ),
           ),
+        // Show suggested missing descriptors button
+        _buildMissingDescriptorSuggestions(originalText, currentSearchTerm),
       ],
     );
+  }
+
+  // Get suggested missing descriptors from product names (using database data)
+  // Extracts descriptors from the FRONT of product names (supports 1-2 word descriptors)
+  List<String> _getMissingDescriptors(String searchTerm, List<dynamic> suggestions) {
+    // Validate input
+    if (searchTerm.trim().isEmpty) return [];
+    
+    // Get all products from database to analyze common descriptors
+    final productsState = ref.read(productsProvider);
+    final allProducts = productsState.products;
+    
+    if (allProducts.isEmpty) return [];
+    
+    // Build set of common quantity/unit words from actual product units in database
+    final unitWords = <String>{};
+    final quantityPattern = RegExp(r'^\d+(\.\d+)?$');
+    for (final product in allProducts) {
+      if (product.unit != null) {
+        unitWords.add(product.unit!.toLowerCase());
+      }
+    }
+    // Add common quantity patterns
+    unitWords.addAll({'kg', 'g', 'ml', 'l', 'box', 'bag', 'bunch', 'head', 
+                      'each', 'packet', 'punnet', 'x', '×', '*', 'pcs', 'pieces'});
+    
+    // Extract words from search term (excluding quantity/unit words)
+    final searchWords = searchTerm.toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty && !unitWords.contains(w.toLowerCase()) && !quantityPattern.hasMatch(w))
+        .map((w) => w.toLowerCase())
+        .toList();
+    
+    // Get the base product name (everything except potential descriptor words at front)
+    // Try 1-word and 2-word descriptors
+    final baseProductWords = searchWords.length > 2 ? searchWords.sublist(2) : 
+                            searchWords.length > 1 ? searchWords.sublist(1) : searchWords;
+    final baseProductName = baseProductWords.join(' ');
+    
+    // Common stop words (not product descriptors)
+    final stopWords = {'the', 'and', 'or', 'for', 'with', 'from', 'that', 'this', 'of', 'in', 'on', 'at'};
+    
+    // Collect descriptors from the FRONT of product names (1-2 words)
+    final descriptorCounts = <String, int>{};
+    
+    // Analyze suggestions first (most relevant)
+    for (final suggestion in suggestions) {
+      final productName = (suggestion['product_name'] as String? ?? '').toLowerCase();
+      final productWords = productName
+          .split(RegExp(r'\s+'))
+          .where((w) => w.isNotEmpty && 
+                       !unitWords.contains(w.toLowerCase()) && 
+                       !quantityPattern.hasMatch(w) &&
+                       !stopWords.contains(w.toLowerCase()))
+          .map((w) => w.toLowerCase().trim())
+          .where((w) => w.isNotEmpty)
+          .toList();
+      
+      if (productWords.isEmpty) continue;
+      
+      // Try 2-word descriptor first (e.g., "sun dried")
+      if (productWords.length >= 3) {
+        final twoWordDescriptor = '${productWords[0]} ${productWords[1]}';
+        final productBaseWords = productWords.sublist(2);
+        final productBaseName = productBaseWords.join(' ');
+        
+        // Check if base names match
+        final baseMatches = baseProductName.isNotEmpty && 
+            (productBaseName.contains(baseProductName) || baseProductName.contains(productBaseName));
+        final hasSearchWord = baseProductWords.isEmpty || 
+            productWords.any((pw) => baseProductWords.contains(pw));
+        
+        if ((baseMatches || hasSearchWord) && 
+            !searchWords.contains(productWords[0]) && 
+            !searchWords.contains(productWords[1])) {
+          descriptorCounts[twoWordDescriptor] = (descriptorCounts[twoWordDescriptor] ?? 0) + 1;
+        }
+      }
+      
+      // Also try 1-word descriptor
+      if (productWords.length >= 2) {
+        final frontDescriptor = productWords.first;
+        final productBaseWords = productWords.sublist(1);
+        final productBaseName = productBaseWords.join(' ');
+        
+        // Check if base names match
+        final baseMatches = baseProductName.isNotEmpty && 
+            (productBaseName.contains(baseProductName) || baseProductName.contains(productBaseName));
+        final hasSearchWord = baseProductWords.isEmpty || 
+            productWords.any((pw) => baseProductWords.contains(pw));
+        
+        if ((baseMatches || hasSearchWord) && 
+            frontDescriptor.length > 2 && 
+            !searchWords.contains(frontDescriptor)) {
+          descriptorCounts[frontDescriptor] = (descriptorCounts[frontDescriptor] ?? 0) + 1;
+        }
+      }
+    }
+    
+    // Also analyze all products in database to find common front descriptors
+    for (final product in allProducts) {
+      final productName = product.name.toLowerCase();
+      final productWords = productName
+          .split(RegExp(r'\s+'))
+          .where((w) => w.isNotEmpty && 
+                       !unitWords.contains(w.toLowerCase()) && 
+                       !quantityPattern.hasMatch(w) &&
+                       !stopWords.contains(w.toLowerCase()))
+          .map((w) => w.toLowerCase().trim())
+          .where((w) => w.isNotEmpty)
+          .toList();
+      
+      if (productWords.isEmpty) continue;
+      
+      // Try 2-word descriptor first
+      if (productWords.length >= 3) {
+        final twoWordDescriptor = '${productWords[0]} ${productWords[1]}';
+        final productBaseWords = productWords.sublist(2);
+        
+        // Check if product contains at least one search word (partial match)
+        final hasSearchWord = baseProductWords.isEmpty || 
+            productWords.any((pw) => baseProductWords.contains(pw));
+        
+        if (hasSearchWord && 
+            !searchWords.contains(productWords[0]) && 
+            !searchWords.contains(productWords[1])) {
+          descriptorCounts[twoWordDescriptor] = (descriptorCounts[twoWordDescriptor] ?? 0) + 1;
+        }
+      }
+      
+      // Also try 1-word descriptor
+      if (productWords.length >= 2) {
+        final frontDescriptor = productWords.first;
+        
+        // Check if product contains at least one search word (partial match)
+        final hasSearchWord = baseProductWords.isEmpty || 
+            productWords.any((pw) => baseProductWords.contains(pw));
+        
+        if (hasSearchWord && 
+            frontDescriptor.length > 2 && 
+            !searchWords.contains(frontDescriptor)) {
+          descriptorCounts[frontDescriptor] = (descriptorCounts[frontDescriptor] ?? 0) + 1;
+        }
+      }
+    }
+    
+    // Return most common descriptors (appearing in at least 2 products)
+    // Prioritize 2-word descriptors over 1-word
+    final commonDescriptors = descriptorCounts.entries
+        .where((e) => e.value >= 2)
+        .toList()
+      ..sort((a, b) {
+        // Sort by: 2-word descriptors first, then by frequency
+        final aIsTwoWord = a.key.contains(' ');
+        final bIsTwoWord = b.key.contains(' ');
+        if (aIsTwoWord != bIsTwoWord) {
+          return aIsTwoWord ? -1 : 1;
+        }
+        return b.value.compareTo(a.value);
+      });
+    
+    return commonDescriptors.take(3).map((e) => e.key).toList();
+  }
+
+  // Build missing descriptor suggestions widget
+  Widget _buildMissingDescriptorSuggestions(String originalText, String currentSearchTerm) {
+    final suggestions = _updatedSuggestions[originalText] ?? [];
+    final missingDescriptors = _getMissingDescriptors(currentSearchTerm, suggestions);
+    
+    // Show if we have missing descriptors (even if no suggestions, we might find partial matches in DB)
+    if (missingDescriptors.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          ...missingDescriptors.map((descriptor) {
+            return ActionChip(
+              avatar: const Icon(Icons.add, size: 14),
+              label: Text('Add "$descriptor"'),
+              onPressed: () => _addDescriptorToSearch(originalText, currentSearchTerm, descriptor),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              labelStyle: const TextStyle(fontSize: 11),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // Add descriptor to search term and re-run search
+  // Replaces any existing front descriptor, or adds if none exists
+  // Preserves all quantities and amounts (e.g., "3 5kg mushrooms" -> "3 5kg brown mushrooms")
+  Future<void> _addDescriptorToSearch(String originalText, String currentSearchTerm, String descriptor) async {
+    // Get all products from database to determine common units
+    final productsState = ref.read(productsProvider);
+    final allProducts = productsState.products;
+    
+    // Build set of unit words from actual product units in database
+    final unitWords = <String>{};
+    final quantityPattern = RegExp(r'^\d+(\.\d+)?$');
+    final weightPattern = RegExp(r'^\d+(\.\d+)?(kg|g|ml|l)$', caseSensitive: false);
+    
+    for (final product in allProducts) {
+      if (product.unit != null) {
+        unitWords.add(product.unit!.toLowerCase());
+      }
+    }
+    // Add common quantity patterns
+    unitWords.addAll({'kg', 'g', 'ml', 'l', 'box', 'bag', 'bunch', 'head', 
+                      'each', 'packet', 'punnet', 'x', '×', '*', 'pcs', 'pieces'});
+    
+    final words = currentSearchTerm.split(RegExp(r'\s+'));
+    final prefixParts = <String>[]; // Quantities, amounts, units (all preserved at front)
+    final productParts = <String>[]; // Product name words (descriptors + base name)
+    
+    // Separate quantity/unit/weight words from product name words
+    // Keep going until we hit a non-quantity/unit word
+    bool foundProductStart = false;
+    for (final word in words) {
+      if (!foundProductStart) {
+        // Check if it's a quantity, weight, or unit
+        if (quantityPattern.hasMatch(word) || 
+            weightPattern.hasMatch(word) || 
+            unitWords.contains(word.toLowerCase())) {
+          prefixParts.add(word);
+        } else {
+          // First non-quantity word - this starts the product name
+          foundProductStart = true;
+          productParts.add(word);
+        }
+      } else {
+        // Already found product start, add to product parts
+        productParts.add(word);
+      }
+    }
+    
+    // Extract base product name (everything except potential descriptor words at front)
+    // Smart detection: check if first 1-2 words match known descriptors from database
+    String baseProductName;
+    if (productParts.isNotEmpty) {
+      // Get all known descriptors from database to check against
+      final allDescriptors = <String>{};
+      for (final product in allProducts) {
+        final productName = product.name.toLowerCase();
+        final productWords = productName
+            .split(RegExp(r'\s+'))
+            .where((w) => w.isNotEmpty && 
+                         !unitWords.contains(w.toLowerCase()) && 
+                         !quantityPattern.hasMatch(w))
+            .toList();
+        
+        if (productWords.length >= 2) {
+          // Add 1-word descriptor
+          allDescriptors.add(productWords.first);
+        }
+        if (productWords.length >= 3) {
+          // Add 2-word descriptor
+          allDescriptors.add('${productWords[0]} ${productWords[1]}');
+        }
+      }
+      
+      // Check if first 2 words form a known descriptor
+      if (productParts.length >= 3) {
+        final twoWordDescriptor = '${productParts[0]} ${productParts[1]}'.toLowerCase();
+        if (allDescriptors.contains(twoWordDescriptor)) {
+          // First 2 words are a descriptor, remove them
+          baseProductName = productParts.sublist(2).join(' ');
+        } else {
+          // Check if first word is a descriptor
+          final oneWordDescriptor = productParts[0].toLowerCase();
+          if (allDescriptors.contains(oneWordDescriptor)) {
+            // First word is a descriptor, remove it
+            baseProductName = productParts.sublist(1).join(' ');
+          } else {
+            // No known descriptor, assume first word might still be one (conservative)
+            baseProductName = productParts.sublist(1).join(' ');
+          }
+        }
+      } else if (productParts.length == 2) {
+        // Two words: check if first is a known descriptor
+        final oneWordDescriptor = productParts[0].toLowerCase();
+        if (allDescriptors.contains(oneWordDescriptor)) {
+          baseProductName = productParts.last;
+        } else {
+          // Might still be a descriptor, but be conservative - keep both
+          baseProductName = productParts.join(' ');
+        }
+      } else {
+        // Only one word: it's the base product name (no descriptor)
+        baseProductName = productParts.first;
+      }
+    } else {
+      baseProductName = '';
+    }
+    
+    // Build updated search term: preserved quantities/amounts + new descriptor + base product name
+    final updatedSearchTerm = [
+      ...prefixParts, // All quantities, amounts, units preserved at front
+      descriptor,     // New descriptor (replaces old one if exists)
+      baseProductName, // Base product name
+    ].where((w) => w.isNotEmpty).join(' ');
+    
+    // Update the search controller
+    final searchController = _unitControllers['${originalText}_search'];
+    if (searchController != null) {
+      searchController.text = updatedSearchTerm;
+    }
+    
+    // Re-run search with updated term
+    await _rerunSearch(originalText, updatedSearchTerm);
   }
 
   // Rerun search for a specific item
@@ -2735,7 +3101,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Found ${suggestions.length} suggestions for "$newSearchTerm"'),
-            backgroundColor: Colors.green,
+            backgroundColor: suggestions.isNotEmpty ? Colors.green : Colors.orange,
             duration: const Duration(seconds: 2),
           ),
         );

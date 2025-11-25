@@ -2377,7 +2377,7 @@ class ApiService {
   }) async {
     try {
       final response = await _djangoDio.post(
-        '/api/inventory/actions/break-down-package/',
+        '/inventory/actions/break-down-package/',
         data: {
           'package_product_id': packageProductId,
           'kg_product_id': kgProductId,
