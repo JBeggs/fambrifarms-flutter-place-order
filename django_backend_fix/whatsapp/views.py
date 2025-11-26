@@ -95,18 +95,72 @@ def get_product_suggestions(request):
         stock_data = {}
         if hasattr(product, 'stock'):
             stock = product.stock
+            available_quantity_count = getattr(stock, 'available_quantity_count', 0)
+            available_quantity_kg = getattr(stock, 'available_quantity_kg', 0.0)
+            
+            # Calculate available_quantity_kg for box/packaged products if missing
+            # This is needed for products like "1 lemon box" where we need kg stock
+            if available_quantity_kg == 0.0 and available_quantity_count > 0:
+                product_unit = getattr(product, 'unit', '').lower()
+                packaging_size = getattr(product, 'packaging_size', None)
+                
+                # Check if this is a packaged product (box, bag, packet, punnet, etc.)
+                is_packaged = product_unit in ['box', 'bag', 'packet', 'punnet', 'bunch', 'head', 'each']
+                
+                if is_packaged and packaging_size:
+                    # Parse packaging size (e.g., "5kg", "2kg", "500g", "100g")
+                    import re
+                    packaging_size_lower = str(packaging_size).lower().strip().replace(' ', '')
+                    
+                    # Try to match kg pattern (e.g., "5kg", "2.5kg")
+                    kg_match = re.match(r'^(\d+(?:\.\d+)?)\s*kg$', packaging_size_lower)
+                    if kg_match:
+                        weight_per_unit = float(kg_match.group(1))
+                        available_quantity_kg = available_quantity_count * weight_per_unit
+                    else:
+                        # Try to match gram pattern (e.g., "500g", "100g")
+                        g_match = re.match(r'^(\d+(?:\.\d+)?)\s*g$', packaging_size_lower)
+                        if g_match:
+                            weight_per_unit_grams = float(g_match.group(1))
+                            weight_per_unit_kg = weight_per_unit_grams / 1000.0
+                            available_quantity_kg = available_quantity_count * weight_per_unit_kg
+            
             stock_data = {
                 'available_quantity': getattr(stock, 'available_quantity', 0),
-                'available_quantity_count': getattr(stock, 'available_quantity_count', 0),
-                'available_quantity_kg': getattr(stock, 'available_quantity_kg', 0.0),
+                'available_quantity_count': available_quantity_count,
+                'available_quantity_kg': available_quantity_kg,
                 'in_stock': getattr(stock, 'available_quantity', 0) > 0,
             }
         elif hasattr(product, 'current_inventory'):
+            current_inventory = product.current_inventory or 0
+            product_unit = getattr(product, 'unit', '').lower()
+            packaging_size = getattr(product, 'packaging_size', None)
+            
+            # Calculate kg for packaged products
+            available_quantity_kg = 0.0
+            if current_inventory > 0:
+                is_packaged = product_unit in ['box', 'bag', 'packet', 'punnet', 'bunch', 'head', 'each']
+                if is_packaged and packaging_size:
+                    import re
+                    packaging_size_lower = str(packaging_size).lower().strip().replace(' ', '')
+                    kg_match = re.match(r'^(\d+(?:\.\d+)?)\s*kg$', packaging_size_lower)
+                    if kg_match:
+                        weight_per_unit = float(kg_match.group(1))
+                        available_quantity_kg = current_inventory * weight_per_unit
+                    else:
+                        g_match = re.match(r'^(\d+(?:\.\d+)?)\s*g$', packaging_size_lower)
+                        if g_match:
+                            weight_per_unit_grams = float(g_match.group(1))
+                            weight_per_unit_kg = weight_per_unit_grams / 1000.0
+                            available_quantity_kg = current_inventory * weight_per_unit_kg
+                elif product_unit == 'kg':
+                    available_quantity_kg = float(current_inventory)
+            
             stock_data = {
-                'available_quantity': product.current_inventory or 0,
-                'available_quantity_count': product.current_inventory or 0,
-                'available_quantity_kg': product.current_inventory or 0.0,
-                'in_stock': (product.current_inventory or 0) > 0,
+                'available_quantity': current_inventory,
+                'available_quantity_count': current_inventory,
+                'available_quantity_kg': available_quantity_kg,
+                'in_stock': current_inventory > 0,
             }
         else:
             stock_data = {
@@ -118,6 +172,7 @@ def get_product_suggestions(request):
         
         # Build suggestion object
         suggestion = {
+            'product_id': product.id,
             'product': {
                 'id': product.id,
                 'name': product.name,
@@ -127,6 +182,8 @@ def get_product_suggestions(request):
                 'sku': getattr(product, 'sku', ''),
             },
             'product_name': product.name,
+            'unit': getattr(product, 'unit', 'each'),
+            'packaging_size': getattr(product, 'packaging_size', None),
             'confidence_score': confidence,
             'stock': stock_data,
             'in_stock': stock_data.get('in_stock', False),

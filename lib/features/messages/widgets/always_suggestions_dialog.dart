@@ -1191,12 +1191,15 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   }
 
   Widget _buildSuggestionsList(List<dynamic> suggestions, String originalText) {
+    // Ensure kg products are always included and prioritized
+    final sortedSuggestions = _ensureKgProductsIncluded(suggestions);
+    
     return Column(
       children: [
         // Selected suggestion - prominent display (shows the actually selected item)
-        if (suggestions.isNotEmpty) ...[
-          _buildProminentSuggestion(_selectedSuggestions[originalText] ?? suggestions.first, originalText, 0),
-          if (suggestions.length > 1) ...[
+        if (sortedSuggestions.isNotEmpty) ...[
+          _buildProminentSuggestion(_selectedSuggestions[originalText] ?? sortedSuggestions.first, originalText, 0),
+          if (sortedSuggestions.length > 1) ...[
             const SizedBox(height: 12),
             const Divider(),
             const SizedBox(height: 8),
@@ -1212,7 +1215,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         ],
         // All suggestions - compact display (including selected one so user can switch)
         // Two-column grid layout for better navigation
-        if (suggestions.length > 1)
+        if (sortedSuggestions.length > 1)
           GridView.count(
             crossAxisCount: 2,
             crossAxisSpacing: 8,
@@ -1220,12 +1223,95 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             childAspectRatio: 1.2, // Adjust based on content height/width ratio
-            children: suggestions.map<Widget>((suggestion) {
+            children: sortedSuggestions.map<Widget>((suggestion) {
               return _buildCompactSuggestion(suggestion, originalText);
             }).toList(),
           ),
       ],
     );
+  }
+  
+  // Ensure kg products are always included in suggestions, even if bag/packet/box versions exist
+  List<dynamic> _ensureKgProductsIncluded(List<dynamic> suggestions) {
+    if (suggestions.isEmpty) return suggestions;
+    
+    // Group suggestions by base product name (without packaging info)
+    final Map<String, List<Map<String, dynamic>>> productGroups = {};
+    final kgProducts = <Map<String, dynamic>>[];
+    
+    for (final suggestion in suggestions) {
+      final productName = (suggestion['product_name'] as String? ?? '').toLowerCase();
+      final unit = (suggestion['unit'] as String? ?? '').toLowerCase();
+      
+      // Extract base product name (remove packaging info)
+      final baseName = productName
+          .replaceAll(RegExp(r'\s*\([^)]*\)'), '')
+          .replaceAll(RegExp(r'\b(bag|packet|box|punnet|bunch|head|each)\b'), '')
+          .trim();
+      
+      // Track kg products separately
+      if (unit == 'kg') {
+        kgProducts.add(Map<String, dynamic>.from(suggestion));
+      }
+      
+      if (!productGroups.containsKey(baseName)) {
+        productGroups[baseName] = [];
+      }
+      productGroups[baseName]!.add(Map<String, dynamic>.from(suggestion));
+    }
+    
+    // Build final list ensuring kg products are included
+    final result = <Map<String, dynamic>>[];
+    final addedProductIds = <int>{};
+    
+    // First, add all kg products (they should always be shown)
+    for (final kgProduct in kgProducts) {
+      final productId = kgProduct['product_id'] as int?;
+      if (productId != null && !addedProductIds.contains(productId)) {
+        result.add(kgProduct);
+        addedProductIds.add(productId);
+      }
+    }
+    
+    // Then add all other suggestions
+    for (final suggestion in suggestions) {
+      final productId = suggestion['product_id'] as int?;
+      if (productId != null && !addedProductIds.contains(productId)) {
+        result.add(Map<String, dynamic>.from(suggestion));
+        addedProductIds.add(productId);
+      }
+    }
+    
+    // Sort to prioritize kg products at the top
+    result.sort((a, b) {
+      final aUnit = (a['unit'] as String? ?? '').toLowerCase();
+      final bUnit = (b['unit'] as String? ?? '').toLowerCase();
+      final aIsKg = aUnit == 'kg';
+      final bIsKg = bUnit == 'kg';
+      
+      // Kg products first
+      if (aIsKg != bIsKg) {
+        return aIsKg ? -1 : 1;
+      }
+      
+      // Then by confidence score
+      final aScore = (a['confidence_score'] as num?)?.toDouble() ?? 0.0;
+      final bScore = (b['confidence_score'] as num?)?.toDouble() ?? 0.0;
+      if (aScore != bScore) {
+        return bScore.compareTo(aScore);
+      }
+      
+      // Finally by stock availability
+      final aInStock = a['in_stock'] as bool? ?? false;
+      final bInStock = b['in_stock'] as bool? ?? false;
+      if (aInStock != bInStock) {
+        return bInStock ? 1 : -1;
+      }
+      
+      return 0;
+    });
+    
+    return result;
   }
 
   Widget _buildProminentSuggestion(Map<String, dynamic> suggestion, String originalText, int index) {
@@ -2933,6 +3019,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     String baseProductName;
     if (productParts.isNotEmpty) {
       // Get all known descriptors from database to check against
+      // Only consider words that appear as descriptors in products with 2+ words
       final allDescriptors = <String>{};
       for (final product in allProducts) {
         final productName = product.name.toLowerCase();
@@ -2943,45 +3030,50 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                          !quantityPattern.hasMatch(w))
             .toList();
         
+        // Only add as descriptor if product has 2+ words (descriptor + base name)
         if (productWords.length >= 2) {
-          // Add 1-word descriptor
+          // Add 1-word descriptor (first word when there are 2+ words total)
           allDescriptors.add(productWords.first);
         }
         if (productWords.length >= 3) {
-          // Add 2-word descriptor
+          // Add 2-word descriptor (first 2 words when there are 3+ words total)
           allDescriptors.add('${productWords[0]} ${productWords[1]}');
         }
       }
       
-      // Check if first 2 words form a known descriptor
-      if (productParts.length >= 3) {
+      // CRITICAL: If there's only one word, it's ALWAYS the base product name
+      // We never remove it - we just add the descriptor before it
+      if (productParts.length == 1) {
+        baseProductName = productParts.first;
+      } else if (productParts.length >= 3) {
+        // Three or more words: check if first 2 words form a known descriptor
         final twoWordDescriptor = '${productParts[0]} ${productParts[1]}'.toLowerCase();
         if (allDescriptors.contains(twoWordDescriptor)) {
-          // First 2 words are a descriptor, remove them
+          // First 2 words are a known descriptor, remove them
           baseProductName = productParts.sublist(2).join(' ');
         } else {
-          // Check if first word is a descriptor
+          // Check if first word is a known descriptor
           final oneWordDescriptor = productParts[0].toLowerCase();
           if (allDescriptors.contains(oneWordDescriptor)) {
-            // First word is a descriptor, remove it
+            // First word is a known descriptor, remove it
             baseProductName = productParts.sublist(1).join(' ');
           } else {
-            // No known descriptor, assume first word might still be one (conservative)
-            baseProductName = productParts.sublist(1).join(' ');
+            // No known descriptor found, keep all words as base product name
+            // This ensures we don't accidentally remove the product name
+            baseProductName = productParts.join(' ');
           }
         }
-      } else if (productParts.length == 2) {
-        // Two words: check if first is a known descriptor
+      } else {
+        // Exactly two words: check if first is a known descriptor
         final oneWordDescriptor = productParts[0].toLowerCase();
         if (allDescriptors.contains(oneWordDescriptor)) {
+          // First word is a known descriptor, keep only the second word as base
           baseProductName = productParts.last;
         } else {
-          // Might still be a descriptor, but be conservative - keep both
+          // First word is NOT a known descriptor, so it's part of the product name
+          // Keep both words as the base product name
           baseProductName = productParts.join(' ');
         }
-      } else {
-        // Only one word: it's the base product name (no descriptor)
-        baseProductName = productParts.first;
       }
     } else {
       baseProductName = '';
