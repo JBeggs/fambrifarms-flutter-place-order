@@ -3894,11 +3894,14 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               
               // In-stock alternatives
               if (inStockAlternatives.isNotEmpty) ...[
-                Text(
-                  'In-Stock Alternatives:',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                // Non-clickable header - just informational text
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'In-Stock Alternatives:',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[800]),
+                  ),
                 ),
-                const SizedBox(height: 8),
                 ...inStockAlternatives.map((alt) {
                   final altStock = alt['stock'] as Map<String, dynamic>?;
                   final altAvailableCount = (altStock?['available_quantity_count'] as num?)?.toInt();
@@ -4004,18 +4007,23 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               ],
               
               // Use stock from another product option
-              Text(
-                'Or use stock from another product:',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              // Non-clickable header - just informational text
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Or use stock from another product:',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[800]),
+                ),
               ),
-              const SizedBox(height: 8),
               
               // Show all suggestions with stock for source product selection
-              Text(
-                'Select a source product:',
-                style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Select a source product:',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                ),
               ),
-              const SizedBox(height: 8),
               
               // List of all suggestions with stock (for source product selection)
               Builder(
@@ -4152,34 +4160,75 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               
               const SizedBox(height: 12),
               
-              // Quantity field (only shown if source product is selected)
-              if (_selectedSourceProducts[originalText] != null) ...[
-                TextField(
-                  controller: _sourceQuantityControllers[originalText] ??= TextEditingController(),
-                  keyboardType: TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    labelText: 'Quantity to Deduct *',
-                    labelStyle: TextStyle(fontSize: 11),
-                    hintText: 'e.g., 5',
-                    helperText: 'Enter amount to deduct from ${_selectedSourceProducts[originalText]?['name'] ?? 'source product'}',
-                    helperMaxLines: 2,
-                  ),
-                  style: TextStyle(fontSize: 11),
-                  onChanged: (value) {
-                    setModalState(() {
-                      final quantity = double.tryParse(value);
-                      if (quantity != null && quantity > 0) {
-                        _sourceQuantities[originalText] = quantity;
-                      } else {
-                        _sourceQuantities.remove(originalText);
-                      }
-                    });
-                  },
-                ),
-              ],
+              // Quantity field - always show when in "use stock from another product" section
+              // Show placeholder/hint when no source product selected, full field when selected
+              Builder(
+                builder: (context) {
+                  final selectedSourceProduct = _selectedSourceProducts[originalText];
+                  final hasSourceProduct = selectedSourceProduct != null;
+                  
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (!hasSourceProduct) ...[
+                        // Show hint when no source product selected
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.info_outline, size: 16, color: Colors.grey[600]),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Select a source product above, then enter quantity to deduct',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey[600], fontStyle: FontStyle.italic),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (hasSourceProduct) ...[
+                        // Show full input field when source product is selected
+                        TextField(
+                          controller: _sourceQuantityControllers[originalText] ??= TextEditingController(),
+                          keyboardType: TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            labelText: 'Quantity to Deduct (${selectedSourceProduct['unit'] ?? ''}) *',
+                            labelStyle: TextStyle(fontSize: 11),
+                            suffixText: selectedSourceProduct['unit'] as String? ?? '',
+                            hintText: 'e.g., 5',
+                            helperText: 'Enter amount to deduct from ${selectedSourceProduct['name'] ?? 'source product'}',
+                            helperMaxLines: 2,
+                            filled: true,
+                            fillColor: Colors.amber.withValues(alpha: 0.05),
+                          ),
+                          style: TextStyle(fontSize: 11),
+                          autofocus: false,
+                          onChanged: (value) {
+                            setModalState(() {
+                              final quantity = double.tryParse(value);
+                              if (quantity != null && quantity > 0) {
+                                _sourceQuantities[originalText] = quantity;
+                              } else {
+                                _sourceQuantities.remove(originalText);
+                              }
+                            });
+                          },
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
             ],
           ),
         ),
