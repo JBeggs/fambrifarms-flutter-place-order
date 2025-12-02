@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../models/whatsapp_message.dart';
 import 'customer_dropdown.dart';
+import '../utils/order_items_persistence.dart';
 
 class MessageCard extends StatefulWidget {
   final WhatsAppMessage message;
@@ -222,6 +223,44 @@ class _MessageCardState extends State<MessageCard> {
                             ),
                           ],
                         ),
+                      ),
+                    
+                    // Saved Progress Indicator (only for order messages)
+                    if (widget.message.type == MessageType.order && widget.message.messageId != null)
+                      FutureBuilder<Map<String, dynamic>?>(
+                        future: OrderItemsPersistence.loadSavedProgress(widget.message.messageId!),
+                        builder: (context, snapshot) {
+                          final hasSavedProgress = snapshot.hasData && snapshot.data != null;
+                          if (!hasSavedProgress) return const SizedBox.shrink();
+                          
+                          return Container(
+                            margin: const EdgeInsets.only(left: 8),
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.save,
+                                  size: 12,
+                                  color: Colors.blue.shade700,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'SAVED',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue.shade700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     
                     // Edited Indicator (only for non-stock messages)

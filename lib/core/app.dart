@@ -21,6 +21,7 @@ import '../features/inventory/inventory_page.dart';
 import '../features/inventory/bulk_stock_take_page.dart';
 import '../features/dashboard/dashboard_page.dart';
 import '../features/dashboard/android_dashboard_page.dart';
+import '../widgets/common/connectivity_overlay.dart';
 import 'professional_theme.dart';
 
 final routerProvider = Provider.family<GoRouter, String?>((ref, initialRoute) {
@@ -189,6 +190,12 @@ class PlaceOrderApp extends ConsumerWidget {
       themeMode: ThemeMode.dark,
       routerConfig: router,
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        // Wrap entire app with connectivity overlay
+        return ConnectivityOverlay(
+          child: child ?? const SizedBox(),
+        );
+      },
     );
   }
 }

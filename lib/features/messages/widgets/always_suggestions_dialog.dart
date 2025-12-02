@@ -39,7 +39,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   // Source product for stock deduction
   final Map<String, bool> _useSourceProduct = {}; // Track if source product is used per item
   final Map<String, Map<String, dynamic>> _selectedSourceProducts = {}; // Source product per item
-  final Map<String, double> _sourceQuantities = {}; // Source quantity per item
+  final Map<String, double> _sourceQuantities = {}; // Source quantity per item (in native unit after conversion)
+  final Map<String, String> _sourceQuantityUnits = {}; // Input unit: 'head' (native) or 'kg'
   final Map<String, TextEditingController> _sourceQuantityControllers = {};
   // Track edited original text and loading state for search
   final Map<String, String> _editedOriginalText = {}; // Store edited search terms
@@ -71,6 +72,11 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           _showCustomerInfo = true;
         });
       }
+    });
+    
+    // Check for saved progress and offer to restore
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkForSavedProgress();
     });
   }
 
@@ -204,6 +210,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             _useSourceProduct[newSearch] = _useSourceProduct.remove(originalText) ?? false;
             _selectedSourceProducts[newSearch] = _selectedSourceProducts.remove(originalText) ?? {};
             _sourceQuantities[newSearch] = _sourceQuantities.remove(originalText) ?? 0.0;
+            _sourceQuantityUnits[newSearch] = _sourceQuantityUnits.remove(originalText) ?? 'each';
             _updatedSuggestions[newSearch] = _updatedSuggestions.remove(originalText) ?? [];
             _editedOriginalText[newSearch] = newSearch;
             
@@ -228,8 +235,218 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     }
   }
 
+  /// Check for saved progress and offer to restore
+  Future<void> _checkForSavedProgress() async {
+    try {
+      final savedData = await OrderItemsPersistence.loadSavedProgress(widget.messageId);
+      if (savedData != null && mounted) {
+        final changedCount = (savedData['selectedSuggestions'] as Map<String, dynamic>? ?? {}).length;
+        final unprocessedCount = (savedData['unprocessedItems'] as List<dynamic>? ?? []).length;
+        
+        if (changedCount > 0 || unprocessedCount > 0) {
+          _showRestoreDialog(savedData, changedCount, unprocessedCount);
+        }
+      }
+    } catch (e) {
+      print('[ORDER_ITEMS] Error checking for saved progress: $e');
+    }
+  }
+  
+  /// Show restore dialog
+  Future<void> _showRestoreDialog(Map<String, dynamic> savedData, int changedCount, int unprocessedCount) async {
+    if (!mounted) return;
+    
+    final timestamp = savedData['timestamp'] as String?;
+    final timestampStr = timestamp != null 
+        ? DateTime.parse(timestamp).toString().split('.')[0]
+        : 'unknown time';
+    
+    final shouldRestore = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Restore Saved Progress?'),
+        content: Text(
+          'Found saved progress from $timestampStr with:\n'
+          '• $changedCount processed items\n'
+          '• $unprocessedCount unprocessed items\n\n'
+          'Restore it?'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('No, Start Fresh'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Yes, Restore'),
+          ),
+        ],
+      ),
+    );
+    
+    if (shouldRestore == true && mounted) {
+      _restoreProgress(savedData);
+    }
+  }
+  
+  /// Restore progress from saved data
+  void _restoreProgress(Map<String, dynamic> savedData) {
+    try {
+      print('[ORDER_ITEMS] Restoring saved progress');
+      
+      // Restore changed items
+      final savedSelectedSuggestions = savedData['selectedSuggestions'] as Map<String, dynamic>? ?? {};
+      final savedQuantities = savedData['quantities'] as Map<String, dynamic>? ?? {};
+      final savedUnits = savedData['units'] as Map<String, dynamic>? ?? {};
+      final savedStockActions = savedData['stockActions'] as Map<String, dynamic>? ?? {};
+      final savedSkippedItems = savedData['skippedItems'] as Map<String, dynamic>? ?? {};
+      final savedUseSourceProduct = savedData['useSourceProduct'] as Map<String, dynamic>? ?? {};
+      final savedSelectedSourceProducts = savedData['selectedSourceProducts'] as Map<String, dynamic>? ?? {};
+      final savedSourceQuantities = savedData['sourceQuantities'] as Map<String, dynamic>? ?? {};
+      final savedSourceQuantityUnits = savedData['sourceQuantityUnits'] as Map<String, dynamic>? ?? {};
+      final savedEditedOriginalText = savedData['editedOriginalText'] as Map<String, dynamic>? ?? {};
+      final unprocessedItems = (savedData['unprocessedItems'] as List<dynamic>? ?? []).cast<String>();
+      
+      setState(() {
+        // Restore changed items
+        for (final entry in savedSelectedSuggestions.entries) {
+          _selectedSuggestions[entry.key] = Map<String, dynamic>.from(entry.value as Map);
+        }
+        
+        for (final entry in savedQuantities.entries) {
+          _quantities[entry.key] = (entry.value as num).toDouble();
+        }
+        
+        for (final entry in savedUnits.entries) {
+          _units[entry.key] = entry.value as String;
+        }
+        
+        for (final entry in savedStockActions.entries) {
+          _stockActions[entry.key] = entry.value as String;
+        }
+        
+        for (final entry in savedSkippedItems.entries) {
+          if (entry.value.toString().toLowerCase() == 'true') {
+            _skippedItems[entry.key] = true;
+          }
+        }
+        
+        for (final entry in savedUseSourceProduct.entries) {
+          if (entry.value.toString().toLowerCase() == 'true') {
+            _useSourceProduct[entry.key] = true;
+          }
+        }
+        
+        for (final entry in savedSelectedSourceProducts.entries) {
+          _selectedSourceProducts[entry.key] = Map<String, dynamic>.from(entry.value as Map);
+        }
+        
+        for (final entry in savedSourceQuantities.entries) {
+          _sourceQuantities[entry.key] = (entry.value as num).toDouble();
+        }
+        
+        for (final entry in savedSourceQuantityUnits.entries) {
+          _sourceQuantityUnits[entry.key] = entry.value as String;
+        }
+        
+        for (final entry in savedEditedOriginalText.entries) {
+          _editedOriginalText[entry.key] = entry.value as String;
+        }
+        
+        // Restore controllers for changed items
+        for (final originalText in savedSelectedSuggestions.keys) {
+          // Restore quantity controller
+          if (_quantities[originalText] != null) {
+            final qty = _quantities[originalText]!;
+            _quantityControllers[originalText] = TextEditingController(
+              text: qty == qty.toInt() ? qty.toInt().toString() : qty.toString(),
+            );
+          }
+          
+          // Restore unit controller
+          if (_units[originalText] != null) {
+            _unitControllers[originalText] = TextEditingController(text: _units[originalText]);
+          }
+          
+          // Restore search controller
+          final editedText = _editedOriginalText[originalText] ?? originalText;
+          _unitControllers['${originalText}_search'] = TextEditingController(text: editedText);
+          
+          // Restore source quantity controller
+          if (_sourceQuantities[originalText] != null) {
+            final srcQty = _sourceQuantities[originalText]!;
+            _sourceQuantityControllers[originalText] = TextEditingController(
+              text: srcQty == srcQty.toInt() ? srcQty.toInt().toString() : srcQty.toString(),
+            );
+          } else {
+            _sourceQuantityControllers[originalText] = TextEditingController();
+          }
+        }
+        
+        // Ensure unprocessed items remain in _items (they should already be there)
+        // Filter _items to keep only items that are either changed or unprocessed
+        final allProcessedKeys = savedSelectedSuggestions.keys.toSet();
+        final unprocessedSet = unprocessedItems.toSet();
+        
+        // Keep items that are either changed or unprocessed
+        _items = _items.where((item) {
+          final originalText = item['original_text'] as String;
+          return allProcessedKeys.contains(originalText) || unprocessedSet.contains(originalText);
+        }).toList();
+        
+        // Ensure unprocessed items have their controllers initialized
+        for (final originalText in unprocessedItems) {
+          if (!_quantityControllers.containsKey(originalText)) {
+            final item = _items.firstWhere(
+              (i) => i['original_text'] == originalText,
+              orElse: () => <String, dynamic>{},
+            );
+            if (item.isNotEmpty) {
+              final parsed = item['parsed'] as Map<String, dynamic>? ?? {};
+              final qty = (parsed['quantity'] as num?)?.toDouble() ?? 1.0;
+              _quantities[originalText] = qty;
+              _units[originalText] = parsed['unit'] as String? ?? 'each';
+              _quantityControllers[originalText] = TextEditingController(
+                text: qty == qty.toInt() ? qty.toInt().toString() : qty.toString(),
+              );
+              _unitControllers[originalText] = TextEditingController(text: _units[originalText]);
+              _unitControllers['${originalText}_search'] = TextEditingController(text: originalText);
+              _sourceQuantityControllers[originalText] = TextEditingController();
+            }
+          }
+        }
+      });
+      
+      print('[ORDER_ITEMS] Restored ${savedSelectedSuggestions.length} changed items and ${unprocessedItems.length} unprocessed items');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Progress restored successfully'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print('[ORDER_ITEMS] Error restoring progress: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error restoring progress: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
+    // Auto-save progress on dispose
+    _saveProgressSilently();
+    
     // Dispose scroll controller
     _scrollController.dispose();
     // Dispose all text controllers
@@ -243,6 +460,96 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       controller.dispose();
     }
     super.dispose();
+  }
+  
+  /// Save progress silently (no snackbar) - used for auto-save
+  Future<void> _saveProgressSilently() async {
+    try {
+      // Filter only changed items
+      final changedItems = <String>[];
+      final unprocessedItems = <String>[];
+      
+      for (var item in _items) {
+        final originalText = item['original_text'] as String;
+        if (_isItemChanged(originalText)) {
+          changedItems.add(originalText);
+        } else {
+          unprocessedItems.add(originalText);
+        }
+      }
+      
+      // Only save if there are changed items
+      if (changedItems.isEmpty && unprocessedItems.isEmpty) {
+        return;
+      }
+      
+      // Build filtered maps for changed items only
+      final filteredSelectedSuggestions = <String, Map<String, dynamic>>{};
+      final filteredQuantities = <String, double>{};
+      final filteredUnits = <String, String>{};
+      final filteredStockActions = <String, String>{};
+      final filteredSkippedItems = <String, bool>{};
+      final filteredUseSourceProduct = <String, bool>{};
+      final filteredSelectedSourceProducts = <String, Map<String, dynamic>>{};
+      final filteredSourceQuantities = <String, double>{};
+      final filteredSourceQuantityUnits = <String, String>{};
+      final filteredEditedOriginalText = <String, String>{};
+      
+      for (final originalText in changedItems) {
+        if (_selectedSuggestions[originalText] != null) {
+          filteredSelectedSuggestions[originalText] = _selectedSuggestions[originalText]!;
+        }
+        if (_quantities[originalText] != null) {
+          filteredQuantities[originalText] = _quantities[originalText]!;
+        }
+        if (_units[originalText] != null) {
+          filteredUnits[originalText] = _units[originalText]!;
+        }
+        if (_stockActions[originalText] != null) {
+          filteredStockActions[originalText] = _stockActions[originalText]!;
+        }
+        if (_skippedItems[originalText] == true) {
+          filteredSkippedItems[originalText] = true;
+        }
+        if (_useSourceProduct[originalText] == true) {
+          filteredUseSourceProduct[originalText] = true;
+        }
+        if (_selectedSourceProducts[originalText] != null) {
+          filteredSelectedSourceProducts[originalText] = _selectedSourceProducts[originalText]!;
+        }
+        if (_sourceQuantities[originalText] != null) {
+          filteredSourceQuantities[originalText] = _sourceQuantities[originalText]!;
+        }
+        if (_sourceQuantityUnits[originalText] != null) {
+          filteredSourceQuantityUnits[originalText] = _sourceQuantityUnits[originalText]!;
+        }
+        if (_editedOriginalText[originalText] != null && _editedOriginalText[originalText] != originalText) {
+          filteredEditedOriginalText[originalText] = _editedOriginalText[originalText]!;
+        }
+      }
+      
+      await OrderItemsPersistence.saveProgress(
+        messageId: widget.messageId,
+        selectedSuggestions: filteredSelectedSuggestions,
+        quantities: filteredQuantities,
+        units: filteredUnits,
+        stockActions: filteredStockActions,
+        skippedItems: filteredSkippedItems,
+        useSourceProduct: filteredUseSourceProduct,
+        selectedSourceProducts: filteredSelectedSourceProducts,
+        sourceQuantities: filteredSourceQuantities,
+        sourceQuantityUnits: filteredSourceQuantityUnits,
+        editedOriginalText: filteredEditedOriginalText,
+        unprocessedItems: unprocessedItems,
+        showSnackbar: false,
+        context: null,
+      );
+      
+      print('[ORDER_ITEMS] Auto-saved progress on dispose');
+    } catch (e) {
+      print('[ORDER_ITEMS] Error auto-saving progress: $e');
+      // Don't show error on auto-save
+    }
   }
 
   String _formatProductDisplay(Map<String, dynamic> suggestion) {
@@ -1641,19 +1948,119 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     );
   }
 
+  /// Check if an item has been changed from its original state
+  bool _isItemChanged(String originalText) {
+    // Check if product selected
+    if (_selectedSuggestions[originalText] != null) return true;
+    
+    // Check if skipped
+    if (_skippedItems[originalText] == true) return true;
+    
+    // Check if original text edited
+    if (_editedOriginalText[originalText] != originalText) return true;
+    
+    // Find the original item
+    final originalItem = _items.firstWhere(
+      (i) => i['original_text'] == originalText,
+      orElse: () => <String, dynamic>{},
+    );
+    
+    if (originalItem.isEmpty) return false;
+    
+    // Check if quantity changed from parsed
+    final parsed = originalItem['parsed'] as Map<String, dynamic>? ?? {};
+    final parsedQuantity = (parsed['quantity'] as num?)?.toDouble() ?? 1.0;
+    final currentQuantity = _quantities[originalText] ?? parsedQuantity;
+    if ((currentQuantity - parsedQuantity).abs() > 0.001) return true;
+    
+    // Check if unit changed from parsed
+    final parsedUnit = parsed['unit'] as String? ?? 'each';
+    final currentUnit = _units[originalText] ?? parsedUnit;
+    if (currentUnit != parsedUnit) return true;
+    
+    // Check if stock action set (and not default 'reserve')
+    final stockAction = _stockActions[originalText];
+    if (stockAction != null && stockAction != 'reserve') return true;
+    
+    // Check if source product selected
+    if (_selectedSourceProducts[originalText] != null) return true;
+    
+    return false;
+  }
+
   Future<void> _saveProgress() async {
     try {
+      // Filter only changed items
+      final changedItems = <String>[];
+      final unprocessedItems = <String>[];
+      
+      for (var item in _items) {
+        final originalText = item['original_text'] as String;
+        if (_isItemChanged(originalText)) {
+          changedItems.add(originalText);
+        } else {
+          unprocessedItems.add(originalText);
+        }
+      }
+      
+      // Build filtered maps for changed items only
+      final filteredSelectedSuggestions = <String, Map<String, dynamic>>{};
+      final filteredQuantities = <String, double>{};
+      final filteredUnits = <String, String>{};
+      final filteredStockActions = <String, String>{};
+      final filteredSkippedItems = <String, bool>{};
+      final filteredUseSourceProduct = <String, bool>{};
+      final filteredSelectedSourceProducts = <String, Map<String, dynamic>>{};
+      final filteredSourceQuantities = <String, double>{};
+      final filteredSourceQuantityUnits = <String, String>{};
+      final filteredEditedOriginalText = <String, String>{};
+      
+      for (final originalText in changedItems) {
+        if (_selectedSuggestions[originalText] != null) {
+          filteredSelectedSuggestions[originalText] = _selectedSuggestions[originalText]!;
+        }
+        if (_quantities[originalText] != null) {
+          filteredQuantities[originalText] = _quantities[originalText]!;
+        }
+        if (_units[originalText] != null) {
+          filteredUnits[originalText] = _units[originalText]!;
+        }
+        if (_stockActions[originalText] != null) {
+          filteredStockActions[originalText] = _stockActions[originalText]!;
+        }
+        if (_skippedItems[originalText] == true) {
+          filteredSkippedItems[originalText] = true;
+        }
+        if (_useSourceProduct[originalText] == true) {
+          filteredUseSourceProduct[originalText] = true;
+        }
+        if (_selectedSourceProducts[originalText] != null) {
+          filteredSelectedSourceProducts[originalText] = _selectedSourceProducts[originalText]!;
+        }
+        if (_sourceQuantities[originalText] != null) {
+          filteredSourceQuantities[originalText] = _sourceQuantities[originalText]!;
+        }
+        if (_sourceQuantityUnits[originalText] != null) {
+          filteredSourceQuantityUnits[originalText] = _sourceQuantityUnits[originalText]!;
+        }
+        if (_editedOriginalText[originalText] != null && _editedOriginalText[originalText] != originalText) {
+          filteredEditedOriginalText[originalText] = _editedOriginalText[originalText]!;
+        }
+      }
+      
       await OrderItemsPersistence.saveProgress(
         messageId: widget.messageId,
-        selectedSuggestions: _selectedSuggestions,
-        quantities: _quantities,
-        units: _units,
-        stockActions: _stockActions,
-        skippedItems: _skippedItems,
-        useSourceProduct: _useSourceProduct,
-        selectedSourceProducts: _selectedSourceProducts,
-        sourceQuantities: _sourceQuantities,
-        editedOriginalText: _editedOriginalText,
+        selectedSuggestions: filteredSelectedSuggestions,
+        quantities: filteredQuantities,
+        units: filteredUnits,
+        stockActions: filteredStockActions,
+        skippedItems: filteredSkippedItems,
+        useSourceProduct: filteredUseSourceProduct,
+        selectedSourceProducts: filteredSelectedSourceProducts,
+        sourceQuantities: filteredSourceQuantities,
+        sourceQuantityUnits: filteredSourceQuantityUnits,
+        editedOriginalText: filteredEditedOriginalText,
+        unprocessedItems: unprocessedItems,
         showSnackbar: true,
         context: context,
       );
@@ -1919,6 +2326,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             _useSourceProduct[originalText] = false;
             _selectedSourceProducts.remove(originalText);
             _sourceQuantities.remove(originalText);
+            _sourceQuantityUnits.remove(originalText);
           }
           
           final itemData = {
@@ -1979,6 +2387,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             _useSourceProduct[originalText] = false;
             _selectedSourceProducts.remove(originalText);
             _sourceQuantities.remove(originalText);
+            _sourceQuantityUnits.remove(originalText);
           }
           
           orderItems.add(itemData);
@@ -2065,6 +2474,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               duration: const Duration(seconds: 4),
             ),
           );
+          
+          // Clear saved progress since order is complete
+          await OrderItemsPersistence.clearOrderProgress(widget.messageId);
+          print('[ORDER_ITEMS] Cleared saved progress after order confirmation');
           
           // Close dialog and refresh messages
           Navigator.of(context).pop();
@@ -2470,40 +2883,261 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             ),
           ),
           
-          // Always show quantity field when source is enabled
-          const SizedBox(height: 8),
-          TextField(
-            controller: _sourceQuantityControllers[originalText],
-            keyboardType: TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              isDense: true,
-              border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              labelText: selectedSourceProduct != null
-                  ? 'Quantity to Deduct (${selectedSourceProduct['unit'] ?? ''}) *'
-                  : 'Quantity to Deduct *',
-              labelStyle: TextStyle(fontSize: 11),
-              suffixText: selectedSourceProduct?['unit'] as String? ?? '',
-              hintText: selectedSourceProduct != null ? 'e.g., 5' : 'Select source product first',
-              helperText: selectedSourceProduct != null
-                  ? 'Required: Enter amount to deduct from ${selectedSourceProduct['name']}'
-                  : 'Select a source product above first, then enter quantity',
-              helperMaxLines: 2,
-            ),
-            style: TextStyle(fontSize: 11),
-            onTap: () {
-              // Ensure keyboard appears when tapping the field
-              FocusScope.of(context).requestFocus(FocusNode());
-            },
-            onChanged: (value) {
-              setState(() {
-                final quantity = double.tryParse(value);
-                if (quantity != null && quantity > 0) {
-                  _sourceQuantities[originalText] = quantity;
-                } else {
-                  _sourceQuantities.remove(originalText);
+          // Unit selector (head/kg toggle) - only show if packaging_size is available and source product is selected
+          if (selectedSourceProduct != null) ...[
+            Builder(
+              builder: (context) {
+                var packagingSize = selectedSourceProduct['packagingSize'] as String?;
+                
+                // Fallback: Try to extract from product name if packaging_size is missing
+                if (packagingSize == null || packagingSize.isEmpty) {
+                  final productName = selectedSourceProduct['name'] as String?;
+                  packagingSize = PackagingSizeParser.extractFromProductName(productName);
                 }
-              });
+                
+                final nativeUnit = selectedSourceProduct['unit'] as String? ?? 'each';
+                final canUseKg = packagingSize != null && 
+                               PackagingSizeParser.canCalculateWeight(packagingSize) &&
+                               (nativeUnit.toLowerCase() == 'head' || 
+                                nativeUnit.toLowerCase() == 'each' ||
+                                nativeUnit.toLowerCase() == 'bunch');
+                
+                final currentInputUnit = _sourceQuantityUnits[originalText] ?? nativeUnit;
+                
+                if (canUseKg) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Enter quantity in:',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[700]),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _sourceQuantityUnits[originalText] = nativeUnit;
+                                  _sourceQuantities.remove(originalText);
+                                  _sourceQuantityControllers[originalText]?.clear();
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                                decoration: BoxDecoration(
+                                  color: currentInputUnit == nativeUnit 
+                                      ? Colors.blue.withValues(alpha: 0.2)
+                                      : Colors.grey.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: currentInputUnit == nativeUnit 
+                                        ? Colors.blue.shade600
+                                        : Colors.grey.withValues(alpha: 0.3),
+                                    width: currentInputUnit == nativeUnit ? 2 : 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      currentInputUnit == nativeUnit ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                      size: 16,
+                                      color: currentInputUnit == nativeUnit ? Colors.blue.shade700 : Colors.grey,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      nativeUnit,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: currentInputUnit == nativeUnit ? FontWeight.w600 : FontWeight.normal,
+                                        color: currentInputUnit == nativeUnit ? Colors.blue.shade700 : Colors.grey[700],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: InkWell(
+                              onTap: () {
+                                setState(() {
+                                  _sourceQuantityUnits[originalText] = 'kg';
+                                  _sourceQuantities.remove(originalText);
+                                  _sourceQuantityControllers[originalText]?.clear();
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                                decoration: BoxDecoration(
+                                  color: currentInputUnit == 'kg' 
+                                      ? Colors.blue.withValues(alpha: 0.2)
+                                      : Colors.grey.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: currentInputUnit == 'kg' 
+                                        ? Colors.blue.shade600
+                                        : Colors.grey.withValues(alpha: 0.3),
+                                    width: currentInputUnit == 'kg' ? 2 : 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      currentInputUnit == 'kg' ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                      size: 16,
+                                      color: currentInputUnit == 'kg' ? Colors.blue.shade700 : Colors.grey,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'kg',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: currentInputUnit == 'kg' ? FontWeight.w600 : FontWeight.normal,
+                                        color: currentInputUnit == 'kg' ? Colors.blue.shade700 : Colors.grey[700],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
+          ],
+          // Quantity input field
+          const SizedBox(height: 8),
+          Builder(
+            builder: (context) {
+              if (selectedSourceProduct == null) {
+                return TextField(
+                  controller: _sourceQuantityControllers[originalText],
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    labelText: 'Quantity to Deduct *',
+                    labelStyle: TextStyle(fontSize: 11),
+                    hintText: 'Select source product first',
+                    helperText: 'Select a source product above first, then enter quantity',
+                    helperMaxLines: 2,
+                  ),
+                  style: TextStyle(fontSize: 11),
+                  enabled: false,
+                );
+              }
+              
+              final currentInputUnit = _sourceQuantityUnits[originalText] ?? selectedSourceProduct['unit'] ?? 'each';
+              final isKgInput = currentInputUnit == 'kg';
+              
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _sourceQuantityControllers[originalText],
+                    keyboardType: TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      labelText: 'Quantity to Deduct (${isKgInput ? 'kg' : selectedSourceProduct['unit'] ?? ''}) *',
+                      labelStyle: TextStyle(fontSize: 11),
+                      suffixText: isKgInput ? 'kg' : (selectedSourceProduct['unit'] as String? ?? ''),
+                      hintText: isKgInput ? 'e.g., 5.0' : 'e.g., 5',
+                      helperText: 'Required: Enter amount to deduct from ${selectedSourceProduct['name']}',
+                      helperMaxLines: 2,
+                      filled: true,
+                      fillColor: Colors.amber.withValues(alpha: 0.05),
+                    ),
+                    style: TextStyle(fontSize: 11),
+                    onTap: () {
+                      // Ensure keyboard appears when tapping the field
+                      FocusScope.of(context).requestFocus(FocusNode());
+                    },
+                    onChanged: (value) {
+                      setState(() {
+                        final inputValue = double.tryParse(value);
+                        if (inputValue != null && inputValue > 0) {
+                          if (isKgInput) {
+                            // Convert kg to native unit (head/each/bunch)
+                            final packagingSize = selectedSourceProduct['packagingSize'] as String?;
+                            final weightPerUnitKg = PackagingSizeParser.parseToKg(packagingSize);
+                            
+                            if (weightPerUnitKg != null && weightPerUnitKg > 0) {
+                              // Convert: kg entered / kg per unit = number of units
+                              final convertedQuantity = inputValue / weightPerUnitKg;
+                              _sourceQuantities[originalText] = convertedQuantity;
+                            } else {
+                              // Can't convert, remove quantity
+                              _sourceQuantities.remove(originalText);
+                            }
+                          } else {
+                            // Direct input in native unit
+                            _sourceQuantities[originalText] = inputValue;
+                          }
+                        } else {
+                          _sourceQuantities.remove(originalText);
+                        }
+                      });
+                    },
+                  ),
+                  // Show conversion calculation if kg input
+                  if (isKgInput) ...[
+                    Builder(
+                      builder: (context) {
+                        final inputValue = double.tryParse(_sourceQuantityControllers[originalText]?.text ?? '');
+                        final packagingSize = selectedSourceProduct['packagingSize'] as String?;
+                        final weightPerUnitKg = PackagingSizeParser.parseToKg(packagingSize);
+                        final nativeUnit = selectedSourceProduct['unit'] as String? ?? 'each';
+                        
+                        if (inputValue != null && inputValue > 0 && weightPerUnitKg != null && weightPerUnitKg > 0) {
+                          final convertedQuantity = inputValue / weightPerUnitKg;
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.calculate, size: 14, color: Colors.blue.shade700),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      '${inputValue.toStringAsFixed(2)} kg = ${convertedQuantity.toStringAsFixed(2)} $nativeUnit (at ${weightPerUnitKg.toStringAsFixed(2)} kg per $nativeUnit)',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.blue.shade700,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      },
+                    ),
+                  ],
+                ],
+              );
             },
           ),
         ],
@@ -3607,6 +4241,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                             _selectedSourceProducts.remove(originalText);
                             _useSourceProduct[originalText] = false;
                             _sourceQuantities.remove(originalText);
+                            _sourceQuantityUnits.remove(originalText);
                             _sourceQuantityControllers[originalText]?.clear();
                             
                             // Use values from modal
@@ -3919,6 +4554,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                           _selectedSourceProducts.remove(originalText);
                           _useSourceProduct[originalText] = false;
                           _sourceQuantities.remove(originalText);
+                          _sourceQuantityUnits.remove(originalText);
                           _sourceQuantityControllers[originalText]?.clear();
                           
                           final newUnit = alt['unit'] as String? ?? 'each';
@@ -4071,13 +4707,26 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                           child: InkWell(
                             onTap: () {
                               setModalState(() {
+                                final packagingSize = sourceSuggestion['packaging_size'] as String?;
+                                print('[SOURCE PRODUCT SELECT] Product: ${sourceSuggestion['product_name']}, Unit: ${sourceSuggestion['unit']}, PackagingSize: $packagingSize');
+                                print('[SOURCE PRODUCT SELECT] Full suggestion keys: ${sourceSuggestion.keys.toList()}');
+                                
                                 _selectedSourceProducts[originalText] = {
                                   'id': sourceProductId,
                                   'name': sourceSuggestion['product_name'] ?? '',
                                   'unit': sourceSuggestion['unit'] ?? '',
+                                  'packagingSize': packagingSize,
                                   'stockLevel': (sourceAvailableCount ?? 0) > 0 ? sourceAvailableCount : (sourceAvailableWeightKg ?? 0.0),
+                                  'availableCount': sourceAvailableCount,
+                                  'availableWeightKg': sourceAvailableWeightKg,
                                 };
+                                print('[SOURCE PRODUCT SELECT] Stored packagingSize: ${_selectedSourceProducts[originalText]?['packagingSize']}');
                                 _useSourceProduct[originalText] = true;
+                                // Reset quantity unit to native unit when selecting new source product
+                                _sourceQuantityUnits[originalText] = sourceSuggestion['unit'] ?? 'each';
+                                // Clear previous quantity
+                                _sourceQuantities.remove(originalText);
+                                _sourceQuantityControllers[originalText]?.clear();
                               });
                             },
                             child: Container(
@@ -4194,34 +4843,255 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                         ),
                       ],
                       if (hasSourceProduct) ...[
-                        // Show full input field when source product is selected
-                        TextField(
-                          controller: _sourceQuantityControllers[originalText] ??= TextEditingController(),
-                          keyboardType: TextInputType.numberWithOptions(decimal: true),
-                          decoration: InputDecoration(
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            labelText: 'Quantity to Deduct (${selectedSourceProduct['unit'] ?? ''}) *',
-                            labelStyle: TextStyle(fontSize: 11),
-                            suffixText: selectedSourceProduct['unit'] as String? ?? '',
-                            hintText: 'e.g., 5',
-                            helperText: 'Enter amount to deduct from ${selectedSourceProduct['name'] ?? 'source product'}',
-                            helperMaxLines: 2,
-                            filled: true,
-                            fillColor: Colors.amber.withValues(alpha: 0.05),
-                          ),
-                          style: TextStyle(fontSize: 11),
-                          autofocus: false,
-                          onChanged: (value) {
-                            setModalState(() {
-                              final quantity = double.tryParse(value);
-                              if (quantity != null && quantity > 0) {
-                                _sourceQuantities[originalText] = quantity;
-                              } else {
-                                _sourceQuantities.remove(originalText);
-                              }
-                            });
+                        // Unit selector (head/kg toggle) - only show if packaging_size is available
+                        Builder(
+                          builder: (context) {
+                            var packagingSize = selectedSourceProduct['packagingSize'] as String?;
+                            
+                            // Fallback: Try to extract from product name if packaging_size is missing
+                            if (packagingSize == null || packagingSize.isEmpty) {
+                              final productName = selectedSourceProduct['name'] as String?;
+                              packagingSize = PackagingSizeParser.extractFromProductName(productName);
+                            }
+                            
+                            final nativeUnit = selectedSourceProduct['unit'] as String? ?? 'each';
+                            final canUseKg = packagingSize != null && 
+                                           PackagingSizeParser.canCalculateWeight(packagingSize) &&
+                                           (nativeUnit.toLowerCase() == 'head' || 
+                                            nativeUnit.toLowerCase() == 'each' ||
+                                            nativeUnit.toLowerCase() == 'bunch');
+                            
+                            final currentInputUnit = _sourceQuantityUnits[originalText] ?? nativeUnit;
+                            
+                            if (canUseKg) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Enter quantity in:',
+                                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey[700]),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: InkWell(
+                                          onTap: () {
+                                            setModalState(() {
+                                              _sourceQuantityUnits[originalText] = nativeUnit;
+                                              _sourceQuantities.remove(originalText);
+                                              _sourceQuantityControllers[originalText]?.clear();
+                                            });
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                                            decoration: BoxDecoration(
+                                              color: currentInputUnit == nativeUnit 
+                                                  ? Colors.blue.withValues(alpha: 0.2)
+                                                  : Colors.grey.withValues(alpha: 0.1),
+                                              borderRadius: BorderRadius.circular(6),
+                                              border: Border.all(
+                                                color: currentInputUnit == nativeUnit 
+                                                    ? Colors.blue.shade600
+                                                    : Colors.grey.withValues(alpha: 0.3),
+                                                width: currentInputUnit == nativeUnit ? 2 : 1,
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Icon(
+                                                  currentInputUnit == nativeUnit ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                                  size: 16,
+                                                  color: currentInputUnit == nativeUnit ? Colors.blue.shade700 : Colors.grey,
+                                                ),
+                                                const SizedBox(width: 6),
+                                                Text(
+                                                  nativeUnit,
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: currentInputUnit == nativeUnit ? FontWeight.w600 : FontWeight.normal,
+                                                    color: currentInputUnit == nativeUnit ? Colors.blue.shade700 : Colors.grey[700],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: InkWell(
+                                          onTap: () {
+                                            setModalState(() {
+                                              _sourceQuantityUnits[originalText] = 'kg';
+                                              _sourceQuantities.remove(originalText);
+                                              _sourceQuantityControllers[originalText]?.clear();
+                                            });
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                                            decoration: BoxDecoration(
+                                              color: currentInputUnit == 'kg' 
+                                                  ? Colors.blue.withValues(alpha: 0.2)
+                                                  : Colors.grey.withValues(alpha: 0.1),
+                                              borderRadius: BorderRadius.circular(6),
+                                              border: Border.all(
+                                                color: currentInputUnit == 'kg' 
+                                                    ? Colors.blue.shade600
+                                                    : Colors.grey.withValues(alpha: 0.3),
+                                                width: currentInputUnit == 'kg' ? 2 : 1,
+                                              ),
+                                            ),
+                                            child: Row(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Icon(
+                                                  currentInputUnit == 'kg' ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                                  size: 16,
+                                                  color: currentInputUnit == 'kg' ? Colors.blue.shade700 : Colors.grey,
+                                                ),
+                                                const SizedBox(width: 6),
+                                                Text(
+                                                  'kg',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    fontWeight: currentInputUnit == 'kg' ? FontWeight.w600 : FontWeight.normal,
+                                                    color: currentInputUnit == 'kg' ? Colors.blue.shade700 : Colors.grey[700],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+                              );
+                            }
+                            return const SizedBox.shrink();
+                          },
+                        ),
+                        // Quantity input field
+                        Builder(
+                          builder: (context) {
+                            final currentInputUnit = _sourceQuantityUnits[originalText] ?? selectedSourceProduct['unit'] ?? 'each';
+                            final isKgInput = currentInputUnit == 'kg';
+                            
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                TextField(
+                                  controller: _sourceQuantityControllers[originalText] ??= TextEditingController(),
+                                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                                  decoration: InputDecoration(
+                                    isDense: true,
+                                    border: OutlineInputBorder(),
+                                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    labelText: 'Quantity to Deduct (${isKgInput ? 'kg' : selectedSourceProduct['unit'] ?? ''}) *',
+                                    labelStyle: TextStyle(fontSize: 11),
+                                    suffixText: isKgInput ? 'kg' : (selectedSourceProduct['unit'] as String? ?? ''),
+                                    hintText: isKgInput ? 'e.g., 5.0' : 'e.g., 5',
+                                    helperText: 'Enter amount to deduct from ${selectedSourceProduct['name'] ?? 'source product'}',
+                                    helperMaxLines: 2,
+                                    filled: true,
+                                    fillColor: Colors.amber.withValues(alpha: 0.05),
+                                  ),
+                                  style: TextStyle(fontSize: 11),
+                                  autofocus: false,
+                                  onChanged: (value) {
+                                    // Re-read current input unit inside callback to ensure we have latest value
+                                    final currentUnit = _sourceQuantityUnits[originalText] ?? selectedSourceProduct['unit'] ?? 'each';
+                                    final isKg = currentUnit == 'kg';
+                                    
+                                    final inputValue = double.tryParse(value);
+                                    
+                                    setModalState(() {
+                                      if (inputValue != null && inputValue > 0) {
+                                        if (isKg) {
+                                          // Convert kg to native unit (head/each/bunch)
+                                          var packagingSize = selectedSourceProduct['packagingSize'] as String?;
+                                          
+                                          // Fallback: Try to extract from product name if packaging_size is missing
+                                          if (packagingSize == null || packagingSize.isEmpty) {
+                                            final productName = selectedSourceProduct['name'] as String?;
+                                            packagingSize = PackagingSizeParser.extractFromProductName(productName);
+                                            print('[SOURCE PRODUCT CONVERT] Extracted packaging size from name: "$packagingSize" (from "$productName")');
+                                          }
+                                          
+                                          print('[SOURCE PRODUCT CONVERT] Input: $inputValue kg, PackagingSize: $packagingSize');
+                                          
+                                          final weightPerUnitKg = PackagingSizeParser.parseToKg(packagingSize);
+                                          print('[SOURCE PRODUCT CONVERT] Parsed weightPerUnitKg: $weightPerUnitKg');
+                                          
+                                          if (weightPerUnitKg != null && weightPerUnitKg > 0) {
+                                            // Convert: kg entered / kg per unit = number of units
+                                            final convertedQuantity = inputValue / weightPerUnitKg;
+                                            _sourceQuantities[originalText] = convertedQuantity;
+                                            print('[SOURCE PRODUCT] ✅ Converted $inputValue kg to $convertedQuantity ${selectedSourceProduct['unit']} (${weightPerUnitKg} kg per unit)');
+                                          } else {
+                                            // Can't convert, remove quantity
+                                            _sourceQuantities.remove(originalText);
+                                            print('[SOURCE PRODUCT] ❌ Cannot convert - packaging size: "$packagingSize", parsed: $weightPerUnitKg');
+                                          }
+                                        } else {
+                                          // Direct input in native unit
+                                          _sourceQuantities[originalText] = inputValue;
+                                          print('[SOURCE PRODUCT] Direct input: $inputValue ${selectedSourceProduct['unit']}');
+                                        }
+                                      } else {
+                                        _sourceQuantities.remove(originalText);
+                                      }
+                                    });
+                                  },
+                                ),
+                                // Show conversion calculation if kg input
+                                if (isKgInput) ...[
+                                  Builder(
+                                    builder: (context) {
+                                      final inputValue = double.tryParse(_sourceQuantityControllers[originalText]?.text ?? '');
+                                      final packagingSize = selectedSourceProduct['packagingSize'] as String?;
+                                      final weightPerUnitKg = PackagingSizeParser.parseToKg(packagingSize);
+                                      final nativeUnit = selectedSourceProduct['unit'] as String? ?? 'each';
+                                      
+                                      if (inputValue != null && inputValue > 0 && weightPerUnitKg != null && weightPerUnitKg > 0) {
+                                        final convertedQuantity = inputValue / weightPerUnitKg;
+                                        return Padding(
+                                          padding: const EdgeInsets.only(top: 6),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(8),
+                                            decoration: BoxDecoration(
+                                              color: Colors.blue.withValues(alpha: 0.1),
+                                              borderRadius: BorderRadius.circular(4),
+                                              border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.calculate, size: 14, color: Colors.blue.shade700),
+                                                const SizedBox(width: 6),
+                                                Expanded(
+                                                  child: Text(
+                                                    '${inputValue.toStringAsFixed(2)} kg = ${convertedQuantity.toStringAsFixed(2)} $nativeUnit (at ${weightPerUnitKg.toStringAsFixed(2)} kg per $nativeUnit)',
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      color: Colors.blue.shade700,
+                                                      fontWeight: FontWeight.w500,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                      return const SizedBox.shrink();
+                                    },
+                                  ),
+                                ],
+                              ],
+                            );
                           },
                         ),
                       ],
@@ -4248,6 +5118,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                 _selectedSourceProducts.remove(originalText);
                 _useSourceProduct[originalText] = false;
                 _sourceQuantities.remove(originalText);
+                _sourceQuantityUnits.remove(originalText);
                 _sourceQuantityControllers[originalText]?.clear();
                 
                 final newUnit = outOfStockSuggestion['unit'] as String? ?? 'each';
@@ -4268,13 +5139,42 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             ),
             child: const Text('Continue'),
           ),
-          Builder(
-            builder: (context) {
+          // Use StatefulBuilder's setModalState to ensure button rebuilds when quantity changes
+          StatefulBuilder(
+            builder: (context, setButtonState) {
+              // Force rebuild by reading current values
               final hasSourceProduct = _selectedSourceProducts[originalText] != null;
-              final hasSourceQuantity = _sourceQuantities[originalText] != null && _sourceQuantities[originalText]! > 0;
+              final sourceQuantity = _sourceQuantities[originalText];
+              final hasSourceQuantity = sourceQuantity != null && sourceQuantity > 0;
+              
+              // Also check controller text as fallback for immediate feedback
+              final controllerText = _sourceQuantityControllers[originalText]?.text ?? '';
+              final inputValue = double.tryParse(controllerText);
+              final hasValidInput = inputValue != null && inputValue > 0;
+              
+              // Button is enabled if we have source product AND (stored quantity OR valid input)
+              final isEnabled = hasSourceProduct && (hasSourceQuantity || hasValidInput);
+              
+              print('[USE SOURCE BUTTON] hasSourceProduct=$hasSourceProduct, sourceQuantity=$sourceQuantity, hasSourceQuantity=$hasSourceQuantity, inputValue=$inputValue, isEnabled=$isEnabled');
               
               return ElevatedButton(
-                onPressed: (hasSourceProduct && hasSourceQuantity) ? () {
+                onPressed: isEnabled ? () {
+                  // Ensure quantity is set if we only have input value
+                  if (!hasSourceQuantity && hasValidInput) {
+                    final currentUnit = _sourceQuantityUnits[originalText] ?? _selectedSourceProducts[originalText]?['unit'] ?? 'each';
+                    final isKg = currentUnit == 'kg';
+                    
+                    if (isKg) {
+                      final packagingSize = _selectedSourceProducts[originalText]?['packagingSize'] as String?;
+                      final weightPerUnitKg = PackagingSizeParser.parseToKg(packagingSize);
+                      if (weightPerUnitKg != null && weightPerUnitKg > 0) {
+                        _sourceQuantities[originalText] = inputValue! / weightPerUnitKg;
+                      }
+                    } else {
+                      _sourceQuantities[originalText] = inputValue!;
+                    }
+                  }
+                  
                   Navigator.pop(context);
                   setState(() {
                     // Set the out-of-stock product as selected
@@ -4291,7 +5191,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                   });
                 } : null,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: (hasSourceProduct && hasSourceQuantity) 
+                  backgroundColor: isEnabled 
                       ? Colors.amber.shade600 
                       : Colors.grey,
                 ),

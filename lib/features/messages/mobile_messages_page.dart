@@ -6,6 +6,7 @@ import '../../services/api_service.dart';
 import 'widgets/customer_dropdown.dart';
 import 'widgets/always_suggestions_dialog.dart';
 import 'widgets/message_editor.dart';
+import 'utils/order_items_persistence.dart';
 
 /// Mobile-optimized WhatsApp messages/orders placement page
 /// Allows viewing messages and placing orders on Android
@@ -540,6 +541,26 @@ class _MobileMessagesPageState extends ConsumerState<MobileMessagesPage> {
                   ),
                 ),
                 const Spacer(),
+                // Saved Progress Indicator (only for order messages)
+                if (message.type == MessageType.order && message.messageId != null)
+                  FutureBuilder<Map<String, dynamic>?>(
+                    future: OrderItemsPersistence.loadSavedProgress(message.messageId!),
+                    builder: (context, snapshot) {
+                      final hasSavedProgress = snapshot.hasData && snapshot.data != null;
+                      if (hasSavedProgress) {
+                        return Container(
+                          margin: const EdgeInsets.only(right: 8),
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.save, color: Colors.blue, size: 16),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    },
+                  ),
                 // Processed Badge
                 if (message.processed)
                   const Icon(Icons.check_circle, color: Colors.green, size: 20),

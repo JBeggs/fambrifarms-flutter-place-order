@@ -19,6 +19,7 @@ class OrderItemsPersistence {
   }
   
   /// Save current progress for a specific order (messageId)
+  /// Only saves changed items, tracks unprocessed items separately
   static Future<void> saveProgress({
     required String messageId,
     required Map<String, Map<String, dynamic>> selectedSuggestions,
@@ -29,7 +30,9 @@ class OrderItemsPersistence {
     required Map<String, bool> useSourceProduct,
     required Map<String, Map<String, dynamic>> selectedSourceProducts,
     required Map<String, double> sourceQuantities,
+    Map<String, String> sourceQuantityUnits = const {},
     required Map<String, String> editedOriginalText,
+    List<String> unprocessedItems = const [],
     bool showSnackbar = false,
     BuildContext? context,
   }) async {
@@ -64,8 +67,12 @@ class OrderItemsPersistence {
         'useSourceProduct': useSourceProduct.map((key, value) => MapEntry(key, value.toString())),
         'selectedSourceProducts': selectedSourceProducts.map((key, value) => MapEntry(key, value)),
         'sourceQuantities': sourceQuantities.map((key, value) => MapEntry(key, value)),
+        'sourceQuantityUnits': sourceQuantityUnits.map((key, value) => MapEntry(key, value)),
         'editedOriginalText': editedOriginalText.map((key, value) => MapEntry(key, value)),
+        'unprocessedItems': unprocessedItems,
       };
+      
+      print('[ORDER_PERSISTENCE] Saving ${selectedSuggestions.length} changed items, ${unprocessedItems.length} unprocessed items');
       
       // Store this order's data
       allOrdersData[messageId] = orderData;

@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:internet_connection_checker/internet_connection_checker.dart';
 import '../models/whatsapp_message.dart';
 import '../models/order.dart';
 import '../models/pricing_rule.dart';
@@ -64,11 +66,30 @@ class ApiService {
   late final Dio _djangoDio;
   late final Dio _whatsappDio;
   
+  // Connectivity checker
+  final Connectivity _connectivity = Connectivity();
+  final InternetConnectionChecker _internetChecker = InternetConnectionChecker.instance;
+  
   // Authentication tokens
   String? _accessToken;
   String? _refreshToken;
   DateTime? _tokenExpiry;
   Timer? _tokenRefreshTimer;
+  
+  /// Check if device has internet connectivity
+  Future<bool> _checkConnectivity() async {
+    try {
+      final connectivityResult = await _connectivity.checkConnectivity();
+      if (connectivityResult.isEmpty || connectivityResult.first == ConnectivityResult.none) {
+        return false;
+      }
+      // Check if we have actual internet access
+      return await _internetChecker.hasConnection;
+    } catch (e) {
+      debugPrint('[CONNECTIVITY] Error checking connectivity: $e');
+      return false;
+    }
+  }
   
   // Expose Dio instance for specialized services
   Dio get dio => _djangoDio;
@@ -135,7 +156,22 @@ class ApiService {
     
     // Add authentication interceptor for Django
     _djangoDio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) {
+      onRequest: (options, handler) async {
+        // Check connectivity before making request (skip for auth endpoints)
+        if (!options.path.contains('/auth/')) {
+          final hasConnection = await _checkConnectivity();
+          if (!hasConnection) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.connectionError,
+                error: 'No internet connection. Please check your network and try again.',
+              ),
+            );
+            return;
+          }
+        }
+        
         if (_accessToken != null) {
           options.headers['Authorization'] = 'Bearer $_accessToken';
           debugPrint('[AUTH] Adding token to request: ${options.path}');
