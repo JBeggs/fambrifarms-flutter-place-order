@@ -241,42 +241,37 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
       final countedProductIds = entries.map((entry) => entry['product_id'] as int).toSet();
       print('[INVENTORY] Products being counted: ${countedProductIds.length}');
       
-      // Step 2: Reset ALL products to zero first (only for 'set' mode)
+      // 🚀 PERFORMANCE FIX: Collect all adjustments and send in bulk instead of individual calls
       final allProducts = state.products;
-      int resetCount = 0;
-      if (adjustmentMode == 'set') {
-        print('[INVENTORY] Resetting all products to zero for complete stock take (SET mode)');
-        
-        // Process resets sequentially with better error handling
-        for (final product in allProducts) {
-          if (product.stockLevel > 0) {
-            try {
-              await _apiService.adjustStock(product.id, {
-                'adjustment_type': 'finished_waste',
-                'quantity': product.stockLevel,
-                'reason': 'complete_stock_take_reset',
-                'notes': 'Complete stock take: Reset to zero before setting counted quantities',
-              });
-              resetCount++;
-            } catch (e) {
-              print('[INVENTORY] ⚠️ Failed to reset product ${product.name} (ID: ${product.id}, stock: ${product.stockLevel}): $e');
-              // Continue with other products even if one fails
-            }
-          }
-        }
-        print('[INVENTORY] Reset $resetCount products to zero');
-      } else {
-        print('[INVENTORY] Skipping reset (ADD mode - will add to existing stock)');
-      }
-      
-      // Step 3: Process wastage and set counted quantities
-      print('[INVENTORY] Processing wastage and setting counted quantities');
+      final allAdjustments = <Map<String, dynamic>>[];
       
       // Generate reference_number in same format as management command: STOCK-TAKE-YYYYMMDD
       final now = DateTime.now();
       final referenceNumber = 'STOCK-TAKE-${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
       
-      int adjustmentCount = 0;
+      // Step 2: Collect reset adjustments (only for 'set' mode)
+      if (adjustmentMode == 'set') {
+        print('[INVENTORY] Collecting reset adjustments for complete stock take (SET mode)');
+        for (final product in allProducts) {
+          if (product.stockLevel > 0) {
+            allAdjustments.add({
+              'adjustment_type': 'finished_waste',
+              'product_id': product.id,
+              'quantity': product.stockLevel,
+              'reason': 'complete_stock_take_reset',
+              'notes': 'Complete stock take: Reset to zero before setting counted quantities',
+              'reference_number': referenceNumber,
+            });
+          }
+        }
+        print('[INVENTORY] Collected ${allAdjustments.length} reset adjustments');
+      } else {
+        print('[INVENTORY] Skipping reset (ADD mode - will add to existing stock)');
+      }
+      
+      // Step 3: Collect wastage and stock adjustments from entries
+      print('[INVENTORY] Collecting wastage and stock adjustments from ${entries.length} entries');
+      
       for (final entry in entries) {
         final productId = entry['product_id'] as int;
         final countedQuantity = (entry['counted_quantity'] as double);
@@ -286,124 +281,72 @@ class InventoryNotifier extends StateNotifier<InventoryState> {
         final weight = entry['weight'] as double? ?? 0.0;
         final comment = entry['comment'] as String? ?? '';
         
-        // Get product name from entry first (most reliable), then fallback to state lookup
-        String productName = entry['product_name'] as String? ?? 'Unknown';
-        if (productName == 'Unknown') {
-          final product = allProducts.where((p) => p.id == productId).firstOrNull;
-          if (product != null) {
-            productName = product.name;
-          } else {
-            // Product not in current state, log the entry data for debugging
-            print('[INVENTORY] ⚠️ Product ID $productId not found in state.products (${allProducts.length} products)');
-            print('[INVENTORY] Entry data: counted=$countedQuantity, wastage=$wastageQuantity, current_stock=${entry['current_stock']}');
-          }
-        }
-        
-        // Record wastage if any - use wastage weight for kg products, wastage quantity for others
-        final hasWastage = wastageQuantity > 0 || wastageWeight > 0;
-        if (hasWastage) {
-          // Get product to check unit type for wastage
-          final wastageProduct = allProducts.where((p) => p.id == productId).firstOrNull;
-          final wastageProductUnit = (wastageProduct?.unit ?? '').toLowerCase().trim();
-          final isKgProduct = wastageProductUnit == 'kg';
-          
-          // For kg products: use wastage weight, for others: use wastage quantity
-          final wastageValue = isKgProduct ? wastageWeight : wastageQuantity;
-          
-          if (wastageValue > 0) {
-            try {
-              await _apiService.adjustStock(productId, {
-                'adjustment_type': 'finished_waste',
-                'quantity': wastageQuantity,  // Always send quantity (for non-kg or reference)
-                'reason': 'stock_take_wastage',
-                'notes': wastageReason, // Just the reason value, no prefix
-                'reference_number': referenceNumber,
-                if (wastageWeight > 0) 'weight': wastageWeight,  // Send weight for kg products
-              });
-              adjustmentCount++;
-              if (isKgProduct) {
-                print('[INVENTORY] ✓ Recorded wastage for $productName (ID: $productId): ${wastageWeight}kg');
-              } else {
-                print('[INVENTORY] ✓ Recorded wastage for $productName (ID: $productId): $wastageQuantity');
-              }
-            } catch (e) {
-              if (isKgProduct) {
-                print('[INVENTORY] ⚠️ Failed wastage for $productName (ID: $productId, weight: $wastageWeight): $e');
-              } else {
-                print('[INVENTORY] ⚠️ Failed wastage for $productName (ID: $productId, qty: $wastageQuantity): $e');
-              }
-              // Continue with other products
-            }
-          }
-        }
-        
         // Get product to check unit type
         final product = allProducts.where((p) => p.id == productId).firstOrNull;
         final productUnit = (product?.unit ?? '').toLowerCase().trim();
         final isKgProduct = productUnit == 'kg';
         
-        // For kg products: weight replaces quantity, weight is required
-        // For other products: prefer weight if provided, otherwise quantity is required
+        // Record wastage if any
+        final hasWastage = wastageQuantity > 0 || wastageWeight > 0;
+        if (hasWastage) {
+          allAdjustments.add({
+            'adjustment_type': 'finished_waste',
+            'product_id': productId,
+            'quantity': wastageQuantity,
+            'reason': 'stock_take_wastage',
+            'notes': wastageReason,
+            'reference_number': referenceNumber,
+            if (wastageWeight > 0) 'weight': wastageWeight,
+          });
+        }
+        
+        // Collect stock set/adjust adjustment
         final hasValidData = isKgProduct 
-            ? (weight > 0)  // Kg products require weight
-            : (weight > 0 || countedQuantity > 0);  // Other products: weight preferred, quantity fallback
+            ? (weight > 0)
+            : (weight > 0 || countedQuantity > 0);
         
         if (hasValidData) {
           final adjustmentType = adjustmentMode == 'set' ? 'finished_set' : 'finished_adjust';
           final actionText = adjustmentMode == 'set' ? 'Set' : 'Added';
           
-          try {
-            // Build notes with comment if provided
-            String notes;
-            if (isKgProduct) {
-              notes = 'Complete stock take: $actionText weight to ${weight}kg';
-            } else if (weight > 0) {
-              // For discrete units: store count, weight is for audit trail
-              notes = 'Complete stock take: $actionText counted quantity to $countedQuantity ${productUnit} (weight: ${weight} kg)';
-            } else {
-              notes = 'Complete stock take: $actionText counted quantity to $countedQuantity';
-            }
-            if (comment.isNotEmpty) {
-              notes += '. $comment';
-            }
-            
-            // For discrete units: Always send quantity (count) as primary value
-            // Weight is sent for audit trail but backend will use quantity (count) for available_quantity
-            await _apiService.adjustStock(productId, {
-              'adjustment_type': adjustmentType,
-              'quantity': countedQuantity,  // For discrete units: this is count (e.g., 12 bags)
-              'reason': adjustmentMode == 'set' ? 'complete_stock_take_set' : 'complete_stock_take_add',
-              'notes': notes,
-              'reference_number': referenceNumber,
-              if (weight > 0) 'weight': weight,  // Stored in movement for audit trail, but doesn't replace count
-            });
-            adjustmentCount++;
-            if (isKgProduct) {
-              print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): ${weight}kg');
-            } else if (weight > 0) {
-              print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): ${weight} (using weight)');
-            } else {
-              print('[INVENTORY] ✓ $actionText stock for $productName (ID: $productId): $countedQuantity');
-            }
-          } catch (e) {
-            if (isKgProduct) {
-              print('[INVENTORY] ⚠️ Failed to $actionText stock for $productName (ID: $productId, weight: $weight): $e');
-            } else {
-              print('[INVENTORY] ⚠️ Failed to $actionText stock for $productName (ID: $productId, qty: $countedQuantity): $e');
-            }
-            // Continue with other products
+          // Build notes with comment if provided
+          String notes;
+          if (isKgProduct) {
+            notes = 'Complete stock take: $actionText weight to ${weight}kg';
+          } else if (weight > 0) {
+            notes = 'Complete stock take: $actionText counted quantity to $countedQuantity ${productUnit} (weight: ${weight} kg)';
+          } else {
+            notes = 'Complete stock take: $actionText counted quantity to $countedQuantity';
           }
-        } else {
-          // Log warning for missing required data
-          if (isKgProduct && weight == 0) {
-            print('[INVENTORY] ⚠️ Skipping kg product $productName (ID: $productId) - weight is required but not provided');
-          } else if (!isKgProduct && countedQuantity == 0 && weight == 0) {
-            print('[INVENTORY] ⚠️ Skipping $productName (ID: $productId) - quantity or weight is required but not provided');
+          if (comment.isNotEmpty) {
+            notes += '. $comment';
           }
+          
+          allAdjustments.add({
+            'adjustment_type': adjustmentType,
+            'product_id': productId,
+            'quantity': countedQuantity,
+            'reason': adjustmentMode == 'set' ? 'complete_stock_take_set' : 'complete_stock_take_add',
+            'notes': notes,
+            'reference_number': referenceNumber,
+            if (weight > 0) 'weight': weight,
+          });
         }
       }
       
-      print('[INVENTORY] Processed $adjustmentCount stock adjustments (wastage + counts)');
+      print('[INVENTORY] Collected ${allAdjustments.length} total adjustments (resets + wastage + counts)');
+      
+      // 🚀 PERFORMANCE FIX: Send all adjustments in one bulk API call
+      if (allAdjustments.isNotEmpty) {
+        print('[INVENTORY] Sending ${allAdjustments.length} adjustments in bulk...');
+        final result = await _apiService.bulkStockAdjustment(allAdjustments, adjustmentMode: adjustmentMode);
+        print('[INVENTORY] Bulk adjustment result: ${result['processed_count']}/${result['total_count']} processed');
+        if (result['errors'] != null && (result['errors'] as List).isNotEmpty) {
+          print('[INVENTORY] ⚠️ Errors: ${result['errors']}');
+        }
+      } else {
+        print('[INVENTORY] No adjustments to process');
+      }
 
       // Force a complete refresh after all operations are done
       await Future.delayed(const Duration(milliseconds: 1000)); // Give backend time to process

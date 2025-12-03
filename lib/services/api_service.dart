@@ -1117,6 +1117,18 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> bulkStockAdjustment(List<Map<String, dynamic>> adjustments, {String adjustmentMode = 'set'}) async {
+    try {
+      final response = await _djangoDio.post('/inventory/actions/bulk-stock-adjustment/', data: {
+        'adjustments': adjustments,
+        'adjustment_mode': adjustmentMode,
+      });
+      return response.data;
+    } catch (e) {
+      throw ApiException('Failed to bulk adjust stock: $e');
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getStockAlerts() async {
     try {
       print('[API] Calling /inventory/alerts/...');

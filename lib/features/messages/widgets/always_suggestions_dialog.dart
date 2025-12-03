@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -1339,7 +1340,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                         child: TextFormField(
                           key: ValueKey('${originalText}_quantity'), // Stable key for quantity field
                           controller: _quantityControllers[originalText],
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: false),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                          ],
                           style: const TextStyle(fontSize: 11),
                           textAlign: TextAlign.center,
                           decoration: const InputDecoration(
@@ -2344,7 +2348,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           // Only require source product if explicitly enabled AND user hasn't chosen to continue without alternatives
           if (_useSourceProduct[originalText] == true && stockAction != 'no_reserve') {
             final sourceProduct = _selectedSourceProducts[originalText];
-            final sourceQuantity = _sourceQuantities[originalText];
+            var sourceQuantity = _sourceQuantities[originalText];
             
             // STRICT VALIDATION: Source product and quantity are REQUIRED
             if (sourceProduct == null) {
@@ -2361,6 +2365,21 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                 );
               }
               return;
+            }
+            
+            // FIX: Check controller text as fallback if map value is null
+            // This handles cases where conversion failed but user entered valid number
+            if (sourceQuantity == null || sourceQuantity <= 0) {
+              final controllerText = _sourceQuantityControllers[originalText]?.text ?? '';
+              final controllerValue = double.tryParse(controllerText);
+              
+              if (controllerValue != null && controllerValue > 0) {
+                // Use controller value as fallback
+                sourceQuantity = controllerValue;
+                // Also update the map for consistency
+                _sourceQuantities[originalText] = controllerValue;
+                print('[SOURCE QTY] Using controller value as fallback: $controllerValue');
+              }
             }
             
             if (sourceQuantity == null || sourceQuantity <= 0) {
@@ -2382,6 +2401,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             itemData['source_product_id'] = sourceProduct['id'];
             itemData['source_quantity'] = sourceQuantity;
             itemData['source_unit'] = sourceProduct['unit'] ?? 'each';
+            
+            // Debug logging
+            print('[ORDER CREATE] Sending source product: ID=${sourceProduct['id']}, Name=${sourceProduct['name']}, Quantity=$sourceQuantity');
+            print('[ORDER CREATE] Ordered product: ID=${selectedSuggestion['product_id']}, Name=${selectedSuggestion['product_name']}');
           } else if (_useSourceProduct[originalText] == true && stockAction == 'no_reserve') {
             // User clicked Continue but _useSourceProduct is still true - clear it
             _useSourceProduct[originalText] = false;
@@ -2483,8 +2506,13 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           Navigator.of(context).pop();
           
           // Refresh the messages list to show the new order
+          // Preserve current pagination state to avoid hiding messages
           final messagesNotifier = ref.read(messagesProvider.notifier);
-          await messagesNotifier.loadMessages();
+          final currentState = ref.read(messagesProvider);
+          await messagesNotifier.loadMessages(
+            page: currentState.currentPage,
+            pageSize: currentState.pageSize,
+          );
           
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -3047,7 +3075,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                 children: [
                   TextField(
                     controller: _sourceQuantityControllers[originalText],
-                    keyboardType: TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: TextInputType.numberWithOptions(decimal: true, signed: false),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                    ],
                     decoration: InputDecoration(
                       isDense: true,
                       border: OutlineInputBorder(),
@@ -3073,15 +3104,20 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                           if (isKgInput) {
                             // Convert kg to native unit (head/each/bunch)
                             final packagingSize = selectedSourceProduct['packagingSize'] as String?;
-                            final weightPerUnitKg = PackagingSizeParser.parseToKg(packagingSize);
+                            // Fallback: Try to extract from product name if packaging_size is missing
+                            final finalPackagingSize = packagingSize ?? 
+                                PackagingSizeParser.extractFromProductName(selectedSourceProduct['name'] as String?);
+                            final weightPerUnitKg = PackagingSizeParser.parseToKg(finalPackagingSize);
                             
                             if (weightPerUnitKg != null && weightPerUnitKg > 0) {
                               // Convert: kg entered / kg per unit = number of units
                               final convertedQuantity = inputValue / weightPerUnitKg;
                               _sourceQuantities[originalText] = convertedQuantity;
                             } else {
-                              // Can't convert, remove quantity
-                              _sourceQuantities.remove(originalText);
+                              // FIX: Store raw kg value instead of removing
+                              // This allows validation to pass, backend can handle conversion
+                              _sourceQuantities[originalText] = inputValue;
+                              print('[SOURCE QTY] ⚠️ Cannot convert kg to native unit (packaging_size missing), storing raw kg value: $inputValue');
                             }
                           } else {
                             // Direct input in native unit
@@ -3934,12 +3970,23 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       
       if (packageVariants.isNotEmpty) {
         // Show breakdown confirmation dialog
-        await _showBreakdownConfirmationDialog(
+        final breakdownResult = await _showBreakdownConfirmationDialog(
           originalText,
           suggestion,
           packageVariants.first,
         );
-        return;
+        
+        // Handle user's choice
+        if (breakdownResult == null) {
+          // User cancelled - return without selecting
+          return;
+        } else if (breakdownResult == false) {
+          // User chose to continue without breaking down - proceed to normal selection modal
+          // Don't return, continue to show normal selection modal below
+        } else if (breakdownResult == true) {
+          // User chose to break down - breakdown already handled in dialog, reload suggestions
+          return;
+        }
       }
     }
     
@@ -4084,7 +4131,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                   text: (suggestion['quantity'] as num?)?.toString() ?? 
                                         _quantities[originalText]?.toString() ?? '1',
                                 ),
-                                keyboardType: TextInputType.numberWithOptions(decimal: true),
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: false),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                                ],
                                 decoration: InputDecoration(
                                   labelText: 'Quantity',
                                   border: OutlineInputBorder(),
@@ -4335,7 +4385,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   }
 
   // Show confirmation dialog for breaking down a bag/packet into kg
-  Future<void> _showBreakdownConfirmationDialog(
+  // Returns: null (cancel), false (continue without), true (break down)
+  Future<bool?> _showBreakdownConfirmationDialog(
     String originalText,
     Map<String, dynamic> kgProduct,
     Map<String, dynamic> packageProduct,
@@ -4356,7 +4407,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           backgroundColor: Colors.red,
         ),
       );
-      return;
+      return null; // Return null to indicate cancellation/error
     }
     
     final kgProductName = kgProduct['product_name'] as String? ?? 'Unknown';
@@ -4370,10 +4421,11 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           backgroundColor: Colors.red,
         ),
       );
-      return;
+      return null; // Return null to indicate cancellation/error
     }
     
-    final confirmed = await showDialog<bool>(
+    // Return value: null (cancel), false (continue without), true (break down)
+    final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Row(
@@ -4401,15 +4453,40 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               'Available: $packageAvailableCount $packageUnit',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
             ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: Colors.orange.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'You can also continue without breaking down and select the product with "no reserve" stock action.',
+                      style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(context).pop(null), // Cancel
             child: const Text('Cancel'),
           ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false), // Continue without breaking down
+            child: const Text('Continue without breaking down'),
+          ),
           ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(context).pop(true), // Break down
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.blue,
               foregroundColor: Colors.white,
@@ -4420,7 +4497,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       ),
     );
     
-    if (confirmed == true) {
+    // If user chose to break down, process it
+    if (result == true) {
       // Show loading indicator
       showDialog(
         context: context,
@@ -4468,6 +4546,9 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         }
       }
     }
+    
+    // Return the user's choice: null (cancel), false (continue without), true (break down)
+    return result;
   }
 
   // Show modal with in-stock alternatives and source product option
@@ -4985,7 +5066,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                               children: [
                                 TextField(
                                   controller: _sourceQuantityControllers[originalText] ??= TextEditingController(),
-                                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                                  keyboardType: TextInputType.numberWithOptions(decimal: true, signed: false),
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                                  ],
                                   decoration: InputDecoration(
                                     isDense: true,
                                     border: OutlineInputBorder(),
@@ -5032,9 +5116,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                                             _sourceQuantities[originalText] = convertedQuantity;
                                             print('[SOURCE PRODUCT] ✅ Converted $inputValue kg to $convertedQuantity ${selectedSourceProduct['unit']} (${weightPerUnitKg} kg per unit)');
                                           } else {
-                                            // Can't convert, remove quantity
-                                            _sourceQuantities.remove(originalText);
-                                            print('[SOURCE PRODUCT] ❌ Cannot convert - packaging size: "$packagingSize", parsed: $weightPerUnitKg');
+                                            // FIX: Store raw kg value instead of removing
+                                            // This allows validation to pass, backend can handle conversion
+                                            _sourceQuantities[originalText] = inputValue;
+                                            print('[SOURCE PRODUCT] ⚠️ Cannot convert - packaging size: "$packagingSize", parsed: $weightPerUnitKg. Storing raw kg value: $inputValue');
                                           }
                                         } else {
                                           // Direct input in native unit

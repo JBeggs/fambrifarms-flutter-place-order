@@ -32,6 +32,22 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
     });
   }
 
+  /// Format quantity to show up to 2 decimal places, removing trailing zeros
+  /// Examples: 1.0 → "1", 0.75 → "0.75", 1.5 → "1.5"
+  static String formatQuantity(double quantity) {
+    if (quantity == quantity.toInt()) {
+      return quantity.toInt().toString();
+    }
+    // Format to 2 decimal places and remove trailing zeros
+    final formatted = quantity.toStringAsFixed(2);
+    if (formatted.endsWith('.00')) {
+      return quantity.toInt().toString();
+    } else if (formatted.endsWith('0')) {
+      return formatted.substring(0, formatted.length - 1);
+    }
+    return formatted;
+  }
+
   List<Order> get filteredOrders {
     var orders = ref.watch(ordersProvider).orders;
     final inventory = ref.watch(inventoryProvider);
@@ -286,8 +302,8 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
                                           ordersNotifier.refreshOrders();
                                         },
                                         onOrderDeleted: () {
-                                          // Refresh orders when an order is deleted
-                                          ordersNotifier.refreshOrders();
+                                          // OPTIMIZATION: Provider already removes order from state
+                                          // No need to refresh all orders
                                         },
                                       ),
                                     );
@@ -778,7 +794,7 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('${item.quantity} ${item.unit} × R${item.price.toStringAsFixed(2)}'),
+                            Text('${formatQuantity(item.quantity)} ${item.unit} × R${item.price.toStringAsFixed(2)}'),
                             if (item.originalText != null && item.originalText!.isNotEmpty)
                               Text(
                                 'Original: "${item.originalText}"',
@@ -845,7 +861,7 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
                                     '${item.price > item.product.price ? '+' : ''}R${(item.price - item.product.price).toStringAsFixed(2)}',
                                     valueColor: item.price > item.product.price ? Colors.red : Colors.green,
                                   ),
-                                _buildDetailRow(context, 'Quantity', '${item.quantity} ${item.unit}'),
+                                _buildDetailRow(context, 'Quantity', '${formatQuantity(item.quantity)} ${item.unit}'),
                                 _buildDetailRow(context, 'Line Total', 'R${item.totalPrice.toStringAsFixed(2)}'),
                                 
                                 // Source product info if available
@@ -876,7 +892,7 @@ class _OrdersPageState extends ConsumerState<OrdersPage> {
                                         ),
                                         const SizedBox(height: 8),
                                         _buildDetailRow(context, 'Source Product', item.sourceProductName!),
-                                        _buildDetailRow(context, 'Reserved Quantity', '${item.sourceQuantity}${item.sourceProductUnit ?? ''}'),
+                                        _buildDetailRow(context, 'Reserved Quantity', '${item.sourceQuantity != null ? formatQuantity(item.sourceQuantity!) : '0'}${item.sourceProductUnit ?? ''}'),
                                         _buildDetailRow(context, 'Status', '✅ Reserved'),
                                       ],
                                     ),

@@ -16,6 +16,22 @@ class OrderItemsList extends StatelessWidget {
     this.onEditItem,
   });
 
+  /// Format quantity to show up to 2 decimal places, removing trailing zeros
+  /// Examples: 1.0 → "1", 0.75 → "0.75", 1.5 → "1.5"
+  static String formatQuantity(double quantity) {
+    if (quantity == quantity.toInt()) {
+      return quantity.toInt().toString();
+    }
+    // Format to 2 decimal places and remove trailing zeros
+    final formatted = quantity.toStringAsFixed(2);
+    if (formatted.endsWith('.00')) {
+      return quantity.toInt().toString();
+    } else if (formatted.endsWith('0')) {
+      return formatted.substring(0, formatted.length - 1);
+    }
+    return formatted;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
@@ -212,7 +228,7 @@ class OrderItemsList extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Text(
-                    item.quantity.toStringAsFixed(item.quantity == item.quantity.toInt() ? 0 : 1),
+                    formatQuantity(item.quantity),
                     style: TextStyle(
                       color: AppColors.textPrimary,
                       fontWeight: FontWeight.w500,
@@ -249,7 +265,7 @@ class OrderItemsList extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                '${item.quantity.toStringAsFixed(item.quantity == item.quantity.toInt() ? 0 : 1)} ${item.unit}',
+                '${formatQuantity(item.quantity)} ${item.unit}',
                 style: TextStyle(
                   color: AppColors.textSecondary,
                   fontSize: 12,

@@ -42,6 +42,22 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
     });
   }
 
+  /// Format quantity to show up to 2 decimal places, removing trailing zeros
+  /// Examples: 1.0 → "1", 0.75 → "0.75", 1.5 → "1.5"
+  static String formatQuantity(double quantity) {
+    if (quantity == quantity.toInt()) {
+      return quantity.toInt().toString();
+    }
+    // Format to 2 decimal places and remove trailing zeros
+    final formatted = quantity.toStringAsFixed(2);
+    if (formatted.endsWith('.00')) {
+      return quantity.toInt().toString();
+    } else if (formatted.endsWith('0')) {
+      return formatted.substring(0, formatted.length - 1);
+    }
+    return formatted;
+  }
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -2018,7 +2034,7 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
                         ),
                       ),
                       Text(
-                        'Quantity: ${item.quantity} ${item.product.unit}',
+                        'Quantity: ${formatQuantity(item.quantity)} ${item.product.unit}',
                         style: TextStyle(
                           color: Colors.grey[600],
                           fontSize: 14,
@@ -2331,8 +2347,8 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
             ),
           );
 
-          // Refresh orders and inventory
-          await ref.read(ordersProvider.notifier).refreshOrders();
+          // OPTIMIZATION: Don't refresh all orders - provider already removes from state
+          // Only refresh inventory to update stock levels
           await ref.read(inventoryProvider.notifier).loadStockLevels();
         }
       } catch (e) {
@@ -2489,7 +2505,7 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
               item.product.name,
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
-            Text('Quantity: ${item.quantity} ${item.product.unit}'),
+            Text('Quantity: ${formatQuantity(item.quantity)} ${item.product.unit}'),
             if (item.stockAction == 'reserve') ...[
               const SizedBox(height: 12),
               Container(
@@ -2561,8 +2577,8 @@ class _MobileOrdersPageState extends ConsumerState<MobileOrdersPage>
             ),
           );
 
-          // Refresh orders
-          await ref.read(ordersProvider.notifier).refreshOrders();
+          // OPTIMIZATION: Provider already refreshes order details after item delete
+          // Only refresh inventory to update stock levels
           await ref.read(inventoryProvider.notifier).loadStockLevels();
         }
       } catch (e) {

@@ -772,9 +772,14 @@ class _EnhancedProcessingResultDialogState extends ConsumerState<EnhancedProcess
           debugPrint('✅ FLUTTER: Immediate reprocess completed successfully');
           
           // Refresh messages to show updated content
+          // Preserve current pagination state to avoid hiding messages
           debugPrint('🔄 FLUTTER: Refreshing messages after single correction...');
           final messagesNotifier = ref.read(messagesProvider.notifier);
-          await messagesNotifier.loadMessages();
+          final currentState = ref.read(messagesProvider);
+          await messagesNotifier.loadMessages(
+            page: currentState.currentPage,
+            pageSize: currentState.pageSize,
+          );
           debugPrint('✅ FLUTTER: Messages refreshed after single correction');
         } catch (e) {
           debugPrint('❌ FLUTTER: Error during immediate reprocess: $e');
@@ -859,9 +864,14 @@ class _EnhancedProcessingResultDialogState extends ConsumerState<EnhancedProcess
           debugPrint('✅ FLUTTER: Reprocess completed successfully');
           
           // Refresh messages to show updated content
+          // Preserve current pagination state to avoid hiding messages
           debugPrint('🔄 FLUTTER: Refreshing messages to show updated content...');
           final messagesNotifier = ref.read(messagesProvider.notifier);
-          await messagesNotifier.loadMessages();
+          final currentState = ref.read(messagesProvider);
+          await messagesNotifier.loadMessages(
+            page: currentState.currentPage,
+            pageSize: currentState.pageSize,
+          );
           debugPrint('✅ FLUTTER: Messages refreshed successfully');
           
           // Close this dialog and show success

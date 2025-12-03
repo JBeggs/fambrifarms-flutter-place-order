@@ -32,6 +32,22 @@ class _EditOrderPageState extends ConsumerState<EditOrderPage> {
     _lockOrder();
   }
 
+  /// Format quantity to show up to 2 decimal places, removing trailing zeros
+  /// Examples: 1.0 → "1", 0.75 → "0.75", 1.5 → "1.5"
+  static String formatQuantity(double quantity) {
+    if (quantity == quantity.toInt()) {
+      return quantity.toInt().toString();
+    }
+    // Format to 2 decimal places and remove trailing zeros
+    final formatted = quantity.toStringAsFixed(2);
+    if (formatted.endsWith('.00')) {
+      return quantity.toInt().toString();
+    } else if (formatted.endsWith('0')) {
+      return formatted.substring(0, formatted.length - 1);
+    }
+    return formatted;
+  }
+
   Future<void> _lockOrder() async {
     try {
       final apiService = ref.read(apiServiceProvider);
@@ -832,6 +848,22 @@ class _EditableOrderItemState extends State<_EditableOrderItem> {
     _loadUnits();
   }
 
+  /// Format quantity to show up to 2 decimal places, removing trailing zeros
+  /// Examples: 1.0 → "1", 0.75 → "0.75", 1.5 → "1.5"
+  static String formatQuantity(double quantity) {
+    if (quantity == quantity.toInt()) {
+      return quantity.toInt().toString();
+    }
+    // Format to 2 decimal places and remove trailing zeros
+    final formatted = quantity.toStringAsFixed(2);
+    if (formatted.endsWith('.00')) {
+      return quantity.toInt().toString();
+    } else if (formatted.endsWith('0')) {
+      return formatted.substring(0, formatted.length - 1);
+    }
+    return formatted;
+  }
+
   void _loadUnits() async {
     setState(() {
       _isLoadingUnits = true;
@@ -1177,7 +1209,7 @@ class _EditableOrderItemState extends State<_EditableOrderItem> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${widget.item.quantity} ${widget.item.unit} × R${widget.item.price.toStringAsFixed(2)}'),
+            Text('${formatQuantity(widget.item.quantity)} ${widget.item.unit} × R${widget.item.price.toStringAsFixed(2)}'),
             if (widget.item.sourceProductName != null && widget.item.sourceQuantity != null) ...[
               const SizedBox(height: 4),
               Container(

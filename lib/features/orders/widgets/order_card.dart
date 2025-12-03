@@ -31,6 +31,22 @@ class OrderCard extends ConsumerWidget {
     this.onOrderDeleted,
   });
 
+  /// Format quantity to show up to 2 decimal places, removing trailing zeros
+  /// Examples: 1.0 → "1", 0.75 → "0.75", 1.5 → "1.5"
+  static String formatQuantity(double quantity) {
+    if (quantity == quantity.toInt()) {
+      return quantity.toInt().toString();
+    }
+    // Format to 2 decimal places and remove trailing zeros
+    final formatted = quantity.toStringAsFixed(2);
+    if (formatted.endsWith('.00')) {
+      return quantity.toInt().toString();
+    } else if (formatted.endsWith('0')) {
+      return formatted.substring(0, formatted.length - 1);
+    }
+    return formatted;
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Card(
@@ -357,7 +373,7 @@ class OrderCard extends ConsumerWidget {
                                 Row(
                                   children: [
                                     Text(
-                                      '${item.quantity} ${item.unit} × R${item.price.toStringAsFixed(2)}',
+                                      '${formatQuantity(item.quantity)} ${item.unit} × R${item.price.toStringAsFixed(2)}',
                                       style: Theme.of(context).textTheme.bodyMedium,
                                     ),
                                     const Spacer(),
@@ -1413,7 +1429,7 @@ class OrderCard extends ConsumerWidget {
               ...order.items.map((item) => TableRow(
                 children: [
                   _buildTableCell(item.product.name),
-                  _buildTableCell('${item.quantity.toStringAsFixed(item.quantity.truncateToDouble() == item.quantity ? 0 : 1)} ${item.unit ?? ''}'),
+                  _buildTableCell('${formatQuantity(item.quantity)} ${item.unit ?? ''}'),
                   _buildTableCell('R${item.price.toStringAsFixed(2)}'),
                   _buildTableCell('R${item.totalPrice.toStringAsFixed(2)}', bold: true),
                   _buildStockStatusCell(item),

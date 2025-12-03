@@ -110,6 +110,16 @@ class BulkStockTakePdfGenerator {
   
   // ========== PRIVATE HELPERS ==========
   
+  /// Format quantity to show up to 2 decimal places, removing trailing zeros
+  /// Whole numbers are shown without decimals (e.g., 5.0 -> "5", 0.75 -> "0.75", 0.750 -> "0.75")
+  static String _formatQuantity(double quantity) {
+    if (quantity == quantity.toInt()) {
+      return quantity.toInt().toString();
+    }
+    // Show up to 2 decimal places, remove trailing zeros
+    return quantity.toStringAsFixed(2).replaceAll(RegExp(r'\.0*$'), '');
+  }
+  
   /// Sort entries alphabetically by product name
   static List<Map<String, dynamic>> _sortEntries(
     List<Map<String, dynamic>> entries,
@@ -334,10 +344,10 @@ class BulkStockTakePdfGenerator {
       
       // Format stock counted - show count only (not combined with weight)
       // For discrete units: show whole numbers
-      // For continuous units: show decimals
+      // For continuous units: show up to 2 decimal places without rounding
       final productUnit = (product.unit ?? '').toLowerCase().trim();
       final stockCountedDisplay = (productUnit == 'kg' || productUnit == 'g' || productUnit == 'ml' || productUnit == 'l')
-          ? (countedStock > 0 ? countedStock.toStringAsFixed(1) : '0.0')
+          ? (countedStock > 0 ? _formatQuantity(countedStock) : '0')
           : (countedStock > 0 ? countedStock.toInt().toString() : '0');
       
       final commentDisplay = comment.isNotEmpty ? comment : '-';
@@ -412,7 +422,7 @@ class BulkStockTakePdfGenerator {
                 alignment: pw.Alignment.centerRight,
                 child: pw.Text(
                   weight > 0 
-                    ? weight.toStringAsFixed(1)
+                    ? _formatQuantity(weight)
                     : '-',
                   style: pw.TextStyle(
                     fontSize: 11,
@@ -453,7 +463,7 @@ class BulkStockTakePdfGenerator {
                 alignment: pw.Alignment.centerRight,
                 child: pw.Text(
                   wastageQuantity > 0 
-                    ? (wastageQuantity % 1 == 0 ? wastageQuantity.toInt().toString() : wastageQuantity.toStringAsFixed(1))
+                    ? _formatQuantity(wastageQuantity)
                     : '-',
                   style: pw.TextStyle(
                     fontSize: 11,
@@ -471,7 +481,7 @@ class BulkStockTakePdfGenerator {
                 alignment: pw.Alignment.centerRight,
                 child: pw.Text(
                   wastageWeight > 0 
-                    ? wastageWeight.toStringAsFixed(1)
+                    ? _formatQuantity(wastageWeight)
                     : '-',
                   style: pw.TextStyle(
                     fontSize: 11,
@@ -594,7 +604,7 @@ class BulkStockTakePdfGenerator {
               ),
               pw.SizedBox(height: 2),
               pw.Text(
-                '${totalWastageWeight.toStringAsFixed(1)} kg',
+                '${_formatQuantity(totalWastageWeight)} kg',
                 style: pw.TextStyle(
                   fontSize: 16,
                   fontWeight: pw.FontWeight.bold,
@@ -661,26 +671,24 @@ class BulkStockTakePdfGenerator {
     
     // Format stock counted - show count only (not combined with weight)
     // For discrete units: show whole numbers
-    // For continuous units: show decimals
+    // For continuous units: show up to 2 decimal places without rounding
     final productUnit = (product.unit ?? '').toLowerCase().trim();
     final stockCountedDisplay = (productUnit == 'kg' || productUnit == 'g' || productUnit == 'ml' || productUnit == 'l')
-        ? (countedStock > 0 ? countedStock.toStringAsFixed(1) : '0.0')
+        ? (countedStock > 0 ? _formatQuantity(countedStock) : '0')
         : (countedStock > 0 ? countedStock.toInt().toString() : '0');
     final stockCountedValue = excel.TextCellValue(stockCountedDisplay);
     final commentValue = comment.isNotEmpty 
         ? excel.TextCellValue(comment)
         : excel.TextCellValue('-');
     final weightValue = weight > 0 
-        ? excel.TextCellValue(weight.toStringAsFixed(1))
+        ? excel.TextCellValue(_formatQuantity(weight))
         : excel.TextCellValue('-');
     
     final wastageQtyValue = wastageQuantity > 0 
-        ? excel.TextCellValue(wastageQuantity % 1 == 0 
-            ? wastageQuantity.toInt().toString() 
-            : wastageQuantity.toStringAsFixed(1))
+        ? excel.TextCellValue(_formatQuantity(wastageQuantity))
         : excel.TextCellValue('-');
     final wastageWeightValue = wastageWeight > 0 
-        ? excel.TextCellValue(wastageWeight.toStringAsFixed(1))
+        ? excel.TextCellValue(_formatQuantity(wastageWeight))
         : excel.TextCellValue('-');
     
     // Extract error information
@@ -851,8 +859,8 @@ class BulkStockTakePdfGenerator {
       
       final rowData = [
         excel.TextCellValue(product.name),
-        excel.DoubleCellValue(countedStock),
-        weight > 0 ? excel.DoubleCellValue(weight) : excel.TextCellValue('-'),
+        excel.TextCellValue(_formatQuantity(countedStock)),
+        weight > 0 ? excel.TextCellValue(_formatQuantity(weight)) : excel.TextCellValue('-'),
         excel.TextCellValue(product.unit),
         excel.TextCellValue(errorType),
         excel.TextCellValue(errorDetails),
