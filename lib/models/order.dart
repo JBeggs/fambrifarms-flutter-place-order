@@ -200,6 +200,10 @@ class OrderItem {
   final double? sourceQuantity;
   final String? sourceProductUnit;
   final double? sourceProductStockLevel;
+  
+  // Multiple source products for mixed products (e.g., Mixed Lettuce, Green Mixed Lettuce)
+  // Format: [{"product_id": 123, "quantity": 3.0, "unit": "kg"}, ...]
+  final List<Map<String, dynamic>>? sourceProducts;
 
   const OrderItem({
     required this.id,
@@ -221,6 +225,7 @@ class OrderItem {
     this.sourceQuantity,
     this.sourceProductUnit,
     this.sourceProductStockLevel,
+    this.sourceProducts,
   });
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
@@ -283,6 +288,9 @@ class OrderItem {
         sourceQuantity: _parseDouble(json['source_quantity']),
         sourceProductUnit: json['source_product_unit'] as String?,
         sourceProductStockLevel: _parseDouble(json['source_product_stock_level']),
+        sourceProducts: json['source_products'] != null
+            ? List<Map<String, dynamic>>.from(json['source_products'] as List)
+            : null,
       );
     } catch (e) {
       print('[ERROR] OrderItem.fromJson - Failed: $e');
@@ -312,6 +320,7 @@ class OrderItem {
       'source_quantity': sourceQuantity,
       'source_product_unit': sourceProductUnit,
       'source_product_stock_level': sourceProductStockLevel,
+      'source_products': sourceProducts,
     };
   }
 
