@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:excel/excel.dart' hide Border;
 import 'dart:io';
+import 'dart:async';
 import '../../../services/api_service.dart';
 import '../../../services/pdf_service.dart';
 import '../../../services/excel_service.dart';
@@ -52,6 +53,9 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   late List<Map<String, dynamic>> _items; // Mutable list of items
   final ScrollController _scrollController = ScrollController();
   bool _showCustomerInfo = true; // Show initially
+  
+  // Performance optimization: Debounce timers for search
+  final Map<String, Timer?> _searchDebounceTimers = {};
 
   @override
   void initState() {
@@ -62,23 +66,53 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     _initializeSelections();
     _initializeEditedText();
     
-    // Listen to scroll to hide customer info after scrolling
+    // Listen to scroll to hide customer info after scrolling (optimized with debounce)
+    Timer? scrollTimer;
     _scrollController.addListener(() {
-      if (_scrollController.offset > 100 && _showCustomerInfo) {
-        setState(() {
-          _showCustomerInfo = false;
-        });
-      } else if (_scrollController.offset <= 100 && !_showCustomerInfo) {
-        setState(() {
-          _showCustomerInfo = true;
-        });
-      }
+      scrollTimer?.cancel();
+      scrollTimer = Timer(const Duration(milliseconds: 100), () {
+        if (!mounted) return;
+        final shouldShow = _scrollController.offset <= 100;
+        if (shouldShow != _showCustomerInfo) {
+          setState(() {
+            _showCustomerInfo = shouldShow;
+          });
+        }
+      });
     });
     
     // Check for saved progress and offer to restore
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkForSavedProgress();
     });
+  }
+
+  @override
+  void dispose() {
+    // Auto-save progress on dispose
+    _saveProgressSilently();
+    
+    // Cancel all debounce timers
+    for (var timer in _searchDebounceTimers.values) {
+      timer?.cancel();
+    }
+    _searchDebounceTimers.clear();
+    
+    // Dispose scroll controller
+    _scrollController.dispose();
+    
+    // Dispose all text controllers
+    for (var controller in _quantityControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _unitControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _sourceQuantityControllers.values) {
+      controller.dispose();
+    }
+    
+    super.dispose();
   }
 
   // Initialize edited original text map with original values
@@ -149,8 +183,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         _skippedItems[searchText] = false;
       });
 
-      // Use existing search functionality
-      await _rerunSearch(searchText, searchText);
+      // Use existing search functionality (immediate for new items)
+      await _rerunSearch(searchText, searchText, immediate: true);
     }
   }
 
@@ -231,8 +265,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         }
       });
 
-      // Fetch new suggestions using existing search method
-      await _rerunSearch(newSearch, newSearch);
+      // Fetch new suggestions using existing search method (immediate for edited items)
+      await _rerunSearch(newSearch, newSearch, immediate: true);
     }
   }
 
@@ -443,25 +477,6 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     }
   }
 
-  @override
-  void dispose() {
-    // Auto-save progress on dispose
-    _saveProgressSilently();
-    
-    // Dispose scroll controller
-    _scrollController.dispose();
-    // Dispose all text controllers
-    for (var controller in _unitControllers.values) {
-      controller.dispose();
-    }
-    for (var controller in _quantityControllers.values) {
-      controller.dispose();
-    }
-    for (var controller in _sourceQuantityControllers.values) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
   
   /// Save progress silently (no snackbar) - used for auto-save
   Future<void> _saveProgressSilently() async {
@@ -608,6 +623,44 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
       count: count,
       weightKg: weightKg,
     );
+  }
+
+  // Helper function to check if product has stock (checks all stock fields)
+  bool _hasStock(Map<String, dynamic>? stock) {
+    if (stock == null) return false;
+    
+    final availableCount = (stock['available_quantity_count'] as num?)?.toInt();
+    final availableWeightKg = (stock['available_quantity_kg'] as num?)?.toDouble();
+    final availableQuantity = (stock['available_quantity'] as num?)?.toDouble() ?? 0.0;
+    
+    // Check all three fields - product has stock if any field > 0
+    return (availableCount != null && availableCount > 0) ||
+           (availableWeightKg != null && availableWeightKg > 0) ||
+           availableQuantity > 0;
+  }
+
+  // Helper function to get available quantity (prioritizes count for discrete units, kg for weight units)
+  double _getAvailableQuantity(Map<String, dynamic>? stock, String unit) {
+    if (stock == null) return 0.0;
+    
+    final unitLower = unit.toLowerCase();
+    
+    // For discrete units, prefer count
+    if (unitLower == 'head' || unitLower == 'each' || unitLower == 'bunch' || 
+        unitLower == 'piece' || unitLower == 'bag' || unitLower == 'box' || 
+        unitLower == 'punnet' || unitLower == 'packet') {
+      final count = (stock['available_quantity_count'] as num?)?.toInt();
+      if (count != null && count > 0) return count.toDouble();
+    }
+    
+    // For weight units, prefer kg
+    if (unitLower == 'kg' || unitLower == 'g' || unitLower == 'ml' || unitLower == 'l') {
+      final kg = (stock['available_quantity_kg'] as num?)?.toDouble();
+      if (kg != null && kg > 0) return kg;
+    }
+    
+    // Fallback to available_quantity
+    return (stock['available_quantity'] as num?)?.toDouble() ?? 0.0;
   }
 
   Widget _buildStockStatusBadge(Map<String, dynamic> suggestion) {
@@ -1437,12 +1490,14 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                         Builder(
                           builder: (context) {
                             final stock = selectedSuggestion['stock'] as Map<String, dynamic>?;
-                            final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+                            final unit = selectedSuggestion['unit'] as String? ?? 'each';
+                            final hasStock = _hasStock(stock);
+                            final availableQuantity = _getAvailableQuantity(stock, unit);
                             final inStock = selectedSuggestion['in_stock'] as bool? ?? false;
                             final unlimitedStock = selectedSuggestion['unlimited_stock'] as bool? ?? false;
                             final stockAction = _stockActions[originalText] ?? 'reserve';
                             // Don't auto-enable source product if user chose 'no_reserve' (continue without alternatives)
-                            if (!inStock && !unlimitedStock && availableQuantity <= 0 && stockAction != 'no_reserve') {
+                            if (!inStock && !unlimitedStock && !hasStock && stockAction != 'no_reserve') {
                               // Auto-enable source product when out of stock (unless user chose to continue)
                               if (_useSourceProduct[originalText] != true) {
                                 WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1632,10 +1687,11 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     final selectedSourceProduct = _selectedSourceProducts[originalText];
     final isSourceSelected = useSource && selectedSourceProduct != null && selectedSourceProduct['id'] == suggestionProductId;
     
-    // Check if product has stock
+    // Check if product has stock (using helper that checks all fields)
     final stock = suggestion['stock'] as Map<String, dynamic>?;
-    final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
-    final hasStock = availableQuantity > 0;
+    final unit = suggestion['unit'] as String? ?? 'each';
+    final hasStock = _hasStock(stock);
+    final availableQuantity = _getAvailableQuantity(stock, unit);
     
     return GestureDetector(
       onTap: () {
@@ -1837,10 +1893,11 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     final selectedSourceProduct = _selectedSourceProducts[originalText];
     final isSourceSelected = useSource && selectedSourceProduct != null && selectedSourceProduct['id'] == suggestionProductId;
     
-    // Check if product has stock
+    // Check if product has stock (using helper that checks all fields)
     final stock = suggestion['stock'] as Map<String, dynamic>?;
-    final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
-    final hasStock = availableQuantity > 0;
+    final unit = suggestion['unit'] as String? ?? 'each';
+    final hasStock = _hasStock(stock);
+    final availableQuantity = _getAvailableQuantity(stock, unit);
     
     return GestureDetector(
       onTap: () {
@@ -2317,10 +2374,12 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
         if (selectedSuggestion != null) {
           // Check if product is out of stock
           final stock = selectedSuggestion['stock'] as Map<String, dynamic>?;
-          final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+          final unit = selectedSuggestion['unit'] as String? ?? 'each';
+          final hasStock = _hasStock(stock);
+          final availableQuantity = _getAvailableQuantity(stock, unit);
           final inStock = selectedSuggestion['in_stock'] as bool? ?? false;
           final unlimitedStock = selectedSuggestion['unlimited_stock'] as bool? ?? false;
-          final isOutOfStock = !inStock && !unlimitedStock && availableQuantity <= 0;
+          final isOutOfStock = !inStock && !unlimitedStock && !hasStock;
           
           // Determine stock action - if out of stock and no source product selected, use 'no_reserve'
           var stockAction = _stockActions[originalText] ?? 'reserve';
@@ -2620,9 +2679,10 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
   Widget _buildStockActionSelector(String originalText, Map<String, dynamic>? selectedSuggestion, {VoidCallback? onChanged}) {
     final currentAction = _stockActions[originalText] ?? 'reserve';
     final productName = selectedSuggestion?['product_name'] as String? ?? '';
-    final unit = selectedSuggestion?['unit'] as String? ?? '';
+    final unit = selectedSuggestion?['unit'] as String? ?? 'each';
     final stock = selectedSuggestion?['stock'] as Map<String, dynamic>?;
-    final availableQuantity = (stock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
+    final hasStock = _hasStock(stock);
+    final availableQuantity = _getAvailableQuantity(stock, unit);
     final inStock = selectedSuggestion?['in_stock'] as bool? ?? false;
     final unlimitedStock = selectedSuggestion?['unlimited_stock'] as bool? ?? false;
     
@@ -3365,7 +3425,7 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
                               )
                             : IconButton(
                                 icon: const Icon(Icons.search, size: 18),
-                                onPressed: () => _rerunSearch(originalText, searchController.text),
+                                onPressed: () => _rerunSearch(originalText, searchController.text, immediate: true),
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
                               ),
@@ -3766,37 +3826,67 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     await _rerunSearch(originalText, updatedSearchTerm);
   }
 
-  // Rerun search for a specific item
-  Future<void> _rerunSearch(String originalText, String newSearchTerm) async {
+  // Rerun search for a specific item (with debouncing for performance)
+  Future<void> _rerunSearch(String originalText, String newSearchTerm, {bool immediate = false}) async {
     if (newSearchTerm.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a search term'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+      // Cancel any pending search
+      _searchDebounceTimers[originalText]?.cancel();
+      _searchDebounceTimers.remove(originalText);
+      
+      if (mounted) {
+        setState(() {
+          _isSearching[originalText] = false;
+        });
+      }
       return;
     }
 
-    // Update controller text before setState
+    // Update controller text immediately (no API call yet)
     final searchController = _unitControllers['${originalText}_search'];
     if (searchController != null && searchController.text != newSearchTerm.trim()) {
       searchController.text = newSearchTerm.trim();
     }
     
+    // Update UI state immediately
+    if (mounted) {
+      setState(() {
+        _isEditingSearch[originalText] = false; // Exit edit mode
+        _editedOriginalText[originalText] = newSearchTerm.trim();
+      });
+    }
+
+    // Cancel previous debounce timer for this item
+    _searchDebounceTimers[originalText]?.cancel();
+    
+    // If immediate, skip debounce
+    if (immediate) {
+      await _performSearch(originalText, newSearchTerm.trim());
+      return;
+    }
+    
+    // Debounce: Wait 500ms before making API call (user might still be typing)
+    _searchDebounceTimers[originalText] = Timer(const Duration(milliseconds: 500), () {
+      _searchDebounceTimers.remove(originalText);
+      _performSearch(originalText, newSearchTerm.trim());
+    });
+  }
+
+  // Perform the actual search API call
+  Future<void> _performSearch(String originalText, String searchTerm) async {
+    if (!mounted) return;
+    
     setState(() {
       _isSearching[originalText] = true;
-      _isEditingSearch[originalText] = false; // Exit edit mode
-      _editedOriginalText[originalText] = newSearchTerm.trim();
     });
 
     try {
       final apiService = ref.read(apiServiceProvider);
-      final result = await apiService.getProductSuggestions(newSearchTerm.trim());
+      final result = await apiService.getProductSuggestions(searchTerm);
 
       if (result['status'] == 'success' && mounted) {
         final suggestions = result['suggestions'] as List<dynamic>? ?? [];
         
+        // Batch all state updates in a single setState
         setState(() {
           _updatedSuggestions[originalText] = suggestions;
           _isSearching[originalText] = false;
@@ -3860,26 +3950,27 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
           // }
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Found ${suggestions.length} suggestions for "$newSearchTerm"'),
-            backgroundColor: suggestions.isNotEmpty ? Colors.green : Colors.orange,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      } else {
-        throw Exception('Failed to get suggestions');
+        // Show snackbar only if we have results (reduced verbosity for better UX)
+        if (mounted && suggestions.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Found ${suggestions.length} suggestions'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 1),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isSearching[originalText] = false;
         });
-        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to search: ${e.toString()}'),
+            content: Text('Error searching: $e'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
@@ -3904,23 +3995,15 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
     
     // Check if there are in-stock alternatives if this product is out of stock
     final allSuggestions = _getSuggestionsForItem(originalText);
+    final suggestionProductId = suggestion['product_id'];
+    // Optimized: Use helper function for stock checking
     final inStockAlternatives = allSuggestions.where((s) {
       final sStock = s['stock'] as Map<String, dynamic>?;
-      // Check all stock fields: count, weight, and legacy available_quantity
-      final sAvailableCount = (sStock?['available_quantity_count'] as num?)?.toInt();
-      final sAvailableWeightKg = (sStock?['available_quantity_kg'] as num?)?.toDouble();
-      final sAvailableQuantity = (sStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
       final sInStock = s['in_stock'] as bool? ?? false;
       final sUnlimitedStock = s['unlimited_stock'] as bool? ?? false;
-      
-      // Product has stock if any of these conditions are true:
-      final hasStock = sInStock || 
-                      sUnlimitedStock || 
-                      (sAvailableCount != null && sAvailableCount > 0) ||
-                      (sAvailableWeightKg != null && sAvailableWeightKg > 0) ||
-                      sAvailableQuantity > 0;
-      
-      return hasStock && s['product_id'] != suggestion['product_id'];
+      // Use helper function for consistent stock checking
+      return (sInStock || sUnlimitedStock || _hasStock(sStock)) && 
+             s['product_id'] != suggestionProductId;
     }).toList();
     
     // Check if this is a kg product with no stock, but has bag/packet variants available
@@ -4527,8 +4610,8 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
             ),
           );
           
-          // Reload suggestions for this item
-          await _rerunSearch(originalText, _editedOriginalText[originalText] ?? originalText);
+          // Reload suggestions for this item (immediate after correction)
+          await _rerunSearch(originalText, _editedOriginalText[originalText] ?? originalText, immediate: true);
         } else {
           throw Exception(result['error'] as String? ?? 'Unknown error');
         }
@@ -4746,21 +4829,12 @@ class _AlwaysSuggestionsDialogState extends ConsumerState<AlwaysSuggestionsDialo
               Builder(
                 builder: (context) {
                   final allSuggestions = _getSuggestionsForItem(originalText);
+                  // Optimized: Use helper function for stock checking
                   final productsWithStock = allSuggestions.where((s) {
                     final sStock = s['stock'] as Map<String, dynamic>?;
-                    // Check all stock fields: count, weight, and legacy available_quantity
-                    final sAvailableCount = (sStock?['available_quantity_count'] as num?)?.toInt();
-                    final sAvailableWeightKg = (sStock?['available_quantity_kg'] as num?)?.toDouble();
-                    final sAvailableQuantity = (sStock?['available_quantity'] as num?)?.toDouble() ?? 0.0;
                     final sInStock = s['in_stock'] as bool? ?? false;
                     final sUnlimitedStock = s['unlimited_stock'] as bool? ?? false;
-                    
-                    // Product has stock if any of these conditions are true:
-                    return sInStock || 
-                           sUnlimitedStock || 
-                           (sAvailableCount != null && sAvailableCount > 0) ||
-                           (sAvailableWeightKg != null && sAvailableWeightKg > 0) ||
-                           sAvailableQuantity > 0;
+                    return sInStock || sUnlimitedStock || _hasStock(sStock);
                   }).toList();
                   
                   return ConstrainedBox(
